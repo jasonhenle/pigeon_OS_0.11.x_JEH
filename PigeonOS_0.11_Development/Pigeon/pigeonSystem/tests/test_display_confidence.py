@@ -33,15 +33,15 @@ class PlayerMetadataTests(unittest.TestCase):
 
     def test_foreground_app_without_title_stays_active(self) -> None:
         md = {"app_name": "Netflix", "query": "", "device_state": "Idle"}
-        self.assertTrue(dc.content_should_stay_active(md, hdmi_on=True))
-        self.assertFalse(dc.content_should_stay_active(md, hdmi_on=False))
+        self.assertTrue(dc.content_should_stay_active(md, hdmi_present=True))
+        self.assertFalse(dc.content_should_stay_active(md, hdmi_present=False))
 
     def test_hdmi_not_in_charge_when_dongle_missing(self) -> None:
         md = {"query": "", "app_name": "Netflix", "identity_source": "stale"}
-        self.assertTrue(dc.hdmi_in_charge(md, hdmi_on=True, hdmi_present=True))
-        self.assertFalse(dc.hdmi_in_charge(md, hdmi_on=True, hdmi_present=False))
+        self.assertTrue(dc.hdmi_in_charge(md, hdmi_present=True))
+        self.assertFalse(dc.hdmi_in_charge(md, hdmi_present=False))
         self.assertFalse(
-            dc.content_should_stay_active(md, hdmi_on=True, hdmi_present=False)
+            dc.content_should_stay_active(md, hdmi_present=False)
         )
 
     def test_idle_poll_holds_last_title(self) -> None:

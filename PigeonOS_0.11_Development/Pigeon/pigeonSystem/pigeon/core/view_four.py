@@ -27,29 +27,14 @@ def _view_four_text_is_placeholder(s: str) -> bool:
 
 
 def _view_four_display_metadata(*, apple_tv_auto_state) -> dict[str, object] | None:
-    """last_metadata with disabled METADATA / HDMI sources removed."""
+    """Copy of last_metadata for View 4 / the [4] inspector."""
     md = apple_tv_auto_state.get("last_metadata")
     if not isinstance(md, dict):
         return None
-    try:
-        from pigeon.source_toggles import redact_disabled_source_fields
-
-        redacted = redact_disabled_source_fields(md)
-    except Exception:
-        redacted = dict(md)
-    return redacted if isinstance(redacted, dict) else dict(md)
+    return dict(md)
 
 
-def _view_four_metadata_source_on() -> bool:
-    try:
-        from pigeon.source_toggles import source_enabled
-
-        return bool(source_enabled("metadata"))
-    except Exception:
-        return True
-
-
-def _collect_view_four_raw_title_lines(*, _tmdb_info_current_and_available, _view_four_display_metadata, _view_four_has_value, _view_four_metadata_source_on, _view_four_text_is_placeholder, apple_tv_auto_state, apple_tv_playback_clock, receiver_telnet_debug_holder, streaming_badge_state) -> list[tuple[str, bool]]:
+def _collect_view_four_raw_title_lines(*, _tmdb_info_current_and_available, _view_four_display_metadata, _view_four_has_value, _view_four_text_is_placeholder, apple_tv_auto_state, apple_tv_playback_clock, receiver_telnet_debug_holder, streaming_badge_state) -> list[tuple[str, bool]]:
     """View 4: streaming label, rawTitle fields that have a value, last TMDb fetch."""
     rows: list[tuple[str, bool]] = []
 
@@ -59,12 +44,10 @@ def _collect_view_four_raw_title_lines(*, _tmdb_info_current_and_available, _vie
         rows.append((s, False))
 
     lm_rt = _view_four_display_metadata()
-    metadata_on = _view_four_metadata_source_on()
     if isinstance(lm_rt, dict):
         try:
             from pigeon.display_confidence import scores_for_metadata
             from pigeon.hdmi_capture import hdmi_capture_available
-            from pigeon.source_toggles import source_enabled
             from pigeon.tmdb_poster import last_trt_comparison
 
             clk = apple_tv_playback_clock
@@ -76,7 +59,6 @@ def _collect_view_four_raw_title_lines(*, _tmdb_info_current_and_available, _vie
                 lm_rt,
                 position_advancing=advancing,
                 tmdb_matches=tmdb_ok,
-                hdmi_on=bool(source_enabled("hdmi")),
                 hdmi_present=hdmi_capture_available(),
                 player_duration_s=trt_cmp.get("player_s"),
                 tmdb_runtime_s=trt_cmp.get("tmdb_s"),
@@ -103,72 +85,66 @@ def _collect_view_four_raw_title_lines(*, _tmdb_info_current_and_available, _vie
                 _ln("hdmi.charge=true")
         except Exception:
             pass
-    if metadata_on:
-        _svc_label = str(streaming_badge_state.get("label") or "").strip()
-        _svc_app = (
-            str(lm_rt.get("app_name") or "").strip()
-            if isinstance(lm_rt, dict)
-            else ""
-        )
-        if _svc_label:
-            _ln(f"streamingService={_svc_label!r}")
-        elif _svc_app:
-            _ln(f"streamingService={_svc_app!r}")
+    _svc_label = str(streaming_badge_state.get("label") or "").strip()
+    _svc_app = (
+        str(lm_rt.get("app_name") or "").strip()
+        if isinstance(lm_rt, dict)
+        else ""
+    )
+    if _svc_label:
+        _ln(f"streamingService={_svc_label!r}")
+    elif _svc_app:
+        _ln(f"streamingService={_svc_app!r}")
 
     if not isinstance(lm_rt, dict):
         _ln("rawTitle: (no last_metadata dict)")
     else:
-        if metadata_on:
-            try:
-                from pigeon.raw_title import raw_title_from_metadata_dict
+        try:
+            from pigeon.raw_title import raw_title_from_metadata_dict
 
-                rt = raw_title_from_metadata_dict(lm_rt)
-                if _view_four_has_value(rt.source):
-                    _ln(f"rawTitle.source={rt.source!r}")
-                for fn in (
-                    "raw_title",
-                    "raw_series_name",
-                    "raw_artist",
-                    "raw_album",
-                    "raw_episode_title",
-                    "raw_query",
-                    "season_index",
-                    "episode_index",
-                    "layer_series_title",
-                    "layer_series_number",
-                    "layer_episode_number",
-                    "layer_episode_title",
-                    "media_type_label",
-                ):
-                    val = getattr(rt, fn, None)
-                    if _view_four_has_value(val):
-                        _ln(f"rawTitle.{fn}={val!r}")
-                if rt.notes:
-                    _ln(f"rawTitle.notes={rt.notes!r}")
-                sig = rt.training_signature_normalized()
-                if sig:
-                    _ln(f"rawTitle.training_signature_normalized={sig!r}")
-            except Exception as e:
-                _ln(f"rawTitle err={e}")
-    if metadata_on and isinstance(lm_rt, dict):
+            rt = raw_title_from_metadata_dict(lm_rt)
+            if _view_four_has_value(rt.source):
+                _ln(f"rawTitle.source={rt.source!r}")
+            for fn in (
+                "raw_title",
+                "raw_series_name",
+                "raw_artist",
+                "raw_album",
+                "raw_episode_title",
+                "raw_query",
+                "season_index",
+                "episode_index",
+                "layer_series_title",
+                "layer_series_number",
+                "layer_episode_number",
+                "layer_episode_title",
+                "media_type_label",
+            ):
+                val = getattr(rt, fn, None)
+                if _view_four_has_value(val):
+                    _ln(f"rawTitle.{fn}={val!r}")
+            if rt.notes:
+                _ln(f"rawTitle.notes={rt.notes!r}")
+            sig = rt.training_signature_normalized()
+            if sig:
+                _ln(f"rawTitle.training_signature_normalized={sig!r}")
+        except Exception as e:
+            _ln(f"rawTitle err={e}")
+    if isinstance(lm_rt, dict):
         _pp = str(lm_rt.get("prefer_pyatv_media") or "").strip().lower()
         if _pp in ("auto", "tv", "movie"):
             _ln(f"metadata.prefer_pyatv_media={_pp!r}")
         _ip = str(lm_rt.get("inferred_prefer") or "").strip().lower()
         if _ip in ("auto", "tv", "movie"):
             _ln(f"metadata.prefer_tmdb={_ip!r}")
-    def _tmdb_row_allowed(q: object) -> bool:
-        # With player metadata off nothing else names the show, so hide TMDb rows.
-        return bool(metadata_on)
-
     _ti = apple_tv_auto_state.get("last_tmdb_fetch_input")
     _tr = apple_tv_auto_state.get("last_tmdb_fetch_refined")
     _tp = apple_tv_auto_state.get("last_tmdb_fetch_prefer")
-    if _ti is not None and str(_ti).strip() and _tmdb_row_allowed(_ti):
+    if _ti is not None and str(_ti).strip():
         _ln(f"tmdbFetch.input_query={str(_ti)!r}")
-    if _tr is not None and str(_tr).strip() and _tmdb_row_allowed(_tr):
+    if _tr is not None and str(_tr).strip():
         _ln(f"tmdbFetch.refined_query={str(_tr)!r}")
-    if _tp is not None and str(_tp).strip() and (_tmdb_row_allowed(_ti) or _tmdb_row_allowed(_tr)):
+    if _tp is not None and str(_tp).strip():
         _ln(f"tmdbFetch.prefer={str(_tp)!r}")
     rx_dbg = receiver_telnet_debug_holder[0] if receiver_telnet_debug_holder else {}
     if isinstance(rx_dbg, dict) and rx_dbg:
@@ -183,7 +159,7 @@ def _collect_view_four_raw_title_lines(*, _tmdb_info_current_and_available, _vie
     return rows
 
 
-def _collect_view_four_source_lines(*, _view_four_display_metadata, _view_four_has_value, _view_four_metadata_source_on, _view_four_text_is_placeholder, receiver_overlay_state) -> list[tuple[str, bool]]:
+def _collect_view_four_source_lines(*, _view_four_display_metadata, _view_four_has_value, _view_four_text_is_placeholder, receiver_overlay_state) -> list[tuple[str, bool]]:
     """View 4 subview: best-effort file/stream stats from poll metadata + receiver text hints."""
     from math import gcd
 
@@ -342,11 +318,10 @@ def _collect_view_four_source_lines(*, _view_four_display_metadata, _view_four_h
     proto = _md_pick(md, "protocol")
     if proto:
         _ln(f"Poll protocol: {proto}", False)
-    if _view_four_metadata_source_on():
-        appn = str(md.get("app_name") or "").strip()
-        appid = str(md.get("app_id") or "").strip()
-        if appn or appid:
-            _ln(f"App: {appn!r} id={appid!r}", False)
+    appn = str(md.get("app_name") or "").strip()
+    appid = str(md.get("app_id") or "").strip()
+    if appn or appid:
+        _ln(f"App: {appn!r} id={appid!r}", False)
 
     if inc:
         _ln(f"Receiver incoming (raw): {inc}", False)
@@ -378,7 +353,7 @@ def _collect_view_four_source_lines(*, _view_four_display_metadata, _view_four_h
         and not str(k).startswith("_")
         and _view_four_has_value(md.get(k))
     ]
-    if extra_keys and _view_four_metadata_source_on():
+    if extra_keys:
         _ln("other metadata keys", False)
         for k in extra_keys[:36]:
             try:

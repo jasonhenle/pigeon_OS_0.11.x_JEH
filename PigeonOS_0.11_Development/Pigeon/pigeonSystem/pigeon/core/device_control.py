@@ -90,13 +90,6 @@ def end_apple_tv_operation(*, suffix: str | None = None, apple_tv_busy, describe
 def _apply_hdmi_frame_check(changed, *, _bump_clock_saver_significant_device, _note_metadata_activity, _sync_now_playing_screen_state, apple_tv_auto_state) -> None:
     """A changed HDMI picture postpones the 2-minute metadata-idle saver."""
     apple_tv_auto_state["hdmi_check_in_flight"] = False
-    try:
-        from pigeon.source_toggles import source_enabled
-
-        if not source_enabled("hdmi"):
-            return
-    except Exception:
-        pass
     if changed:
         _note_metadata_activity()
         _bump_clock_saver_significant_device()
@@ -108,13 +101,6 @@ def _apply_hdmi_frame_check(changed, *, _bump_clock_saver_significant_device, _n
 
 def _schedule_hdmi_frame_check_from_poll(*, _on_hdmi_frame_checked, apple_tv_auto_state) -> None:
     """Fingerprint an HDMI frame every few seconds (feeds the HDMI clock saver)."""
-    try:
-        from pigeon.source_toggles import source_enabled
-
-        if not source_enabled("hdmi"):
-            return
-    except Exception:
-        pass
     try:
         from pigeon.hdmi_capture import frame_check_due, request_frame_check
     except Exception:

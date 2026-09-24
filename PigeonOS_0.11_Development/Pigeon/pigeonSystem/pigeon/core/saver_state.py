@@ -148,13 +148,6 @@ def _metadata_drives_clock_saver(*, apple_tv_auto_state, apple_tv_playback_clock
     Position progress is the primary signal. When metadata is driving, the
     HDMI 24-frame unchanged rule is ignored.
     """
-    try:
-        from pigeon.source_toggles import source_enabled
-
-        if not source_enabled("metadata"):
-            return False
-    except Exception:
-        pass
     if bool(apple_tv_playback_clock.get("has_sync")):
         return True
     md = apple_tv_auto_state.get("last_metadata")

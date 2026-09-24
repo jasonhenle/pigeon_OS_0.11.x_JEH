@@ -230,11 +230,10 @@ def player_metadata_adequate(metadata: Mapping[str, Any] | None) -> bool:
 def hdmi_in_charge(
     metadata: Mapping[str, Any] | None,
     *,
-    hdmi_on: bool = True,
     hdmi_present: bool = True,
 ) -> bool:
-    """No usable player title, but HDMI is on and carrying a picture."""
-    if not hdmi_on or not hdmi_present:
+    """No usable player title, but HDMI is carrying a picture."""
+    if not hdmi_present:
         return False
     return not player_metadata_adequate(metadata)
 
@@ -300,7 +299,6 @@ def app_confidence(metadata: Mapping[str, Any] | None) -> float:
 def content_should_stay_active(
     metadata: Mapping[str, Any] | None,
     *,
-    hdmi_on: bool = True,
     hdmi_present: bool = True,
 ) -> bool:
     """Keep now-playing chrome up when we have something we can show or watch."""
@@ -309,7 +307,7 @@ def content_should_stay_active(
     if playback_detected(metadata):
         return True
     if has_foreground_app(metadata) and hdmi_in_charge(
-        metadata, hdmi_on=hdmi_on, hdmi_present=hdmi_present
+        metadata, hdmi_present=hdmi_present
     ):
         return True
     return False
@@ -429,7 +427,6 @@ def scores_for_metadata(
     *,
     position_advancing: bool = False,
     tmdb_matches: bool = False,
-    hdmi_on: bool = True,
     hdmi_present: bool = True,
     player_duration_s: float | None = None,
     tmdb_runtime_s: float | list[float] | tuple[float, ...] | None = None,
@@ -454,7 +451,7 @@ def scores_for_metadata(
         "app": app_confidence(md),
         "trt": None if trt is None else float(trt),
         "hdmi_charge": 1.0
-        if hdmi_in_charge(md, hdmi_on=hdmi_on, hdmi_present=hdmi_present)
+        if hdmi_in_charge(md, hdmi_present=hdmi_present)
         else 0.0,
     }
 

@@ -373,11 +373,9 @@ def _atv_metadata_is_content_idle(metadata: dict[str, object], *, metadata_has_p
     try:
         from pigeon.display_confidence import content_should_stay_active
         from pigeon.hdmi_capture import hdmi_capture_available
-        from pigeon.source_toggles import source_enabled
 
         if content_should_stay_active(
             metadata,
-            hdmi_on=bool(source_enabled("hdmi")),
             hdmi_present=hdmi_capture_available(),
         ):
             return False

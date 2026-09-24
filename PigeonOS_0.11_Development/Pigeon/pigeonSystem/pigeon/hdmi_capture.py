@@ -160,14 +160,7 @@ def frame_check_due(now: float | None = None) -> bool:
 
 
 def request_frame_check(on_done: OnFrameChecked) -> bool:
-    """Start one background frame check. False if HDMI is off, absent, or busy."""
-    try:
-        from pigeon.source_toggles import source_enabled
-
-        if not source_enabled("hdmi"):
-            return False
-    except Exception:
-        pass
+    """Start one background frame check. False if HDMI is absent or busy."""
     if not hdmi_capture_available():
         # Keep probing so a re-plug (or signal return) can turn the LED green.
         probe_hdmi_presence()

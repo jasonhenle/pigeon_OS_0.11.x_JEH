@@ -2530,13 +2530,6 @@ def main() -> int:
 
         def _has_playback_position() -> bool:
             """True when zone5 can draw a real progress bar (not LIVE / empty)."""
-            try:
-                from pigeon.source_toggles import source_enabled
-
-                if not source_enabled("metadata"):
-                    return False
-            except Exception:
-                pass
             return _playback_progress_fraction_for_bar() is not None
 
         _metadata_is_netflix_app = _core_now_playing._metadata_is_netflix_app
@@ -3321,9 +3314,7 @@ def main() -> int:
             if not _metadata_drives_clock_saver():
                 try:
                     from pigeon.hdmi_capture import hdmi_clock_saver_due
-                    from pigeon.source_toggles import source_enabled
-
-                    if source_enabled("hdmi") and hdmi_clock_saver_due():
+                    if hdmi_clock_saver_due():
                         return True
                 except Exception:
                     pass
@@ -3628,8 +3619,6 @@ def main() -> int:
             if bool(getattr(st, "show_preferences", False)):
                 return False
             if bool(getattr(st, "show_metadata_debug", False)):
-                return False
-            if not bool(getattr(st, "source_audio_on", True)):
                 return False
             return True
 
@@ -6077,14 +6066,11 @@ def main() -> int:
             apple_tv_auto_state=apple_tv_auto_state,
         )
 
-        _view_four_metadata_source_on = _core_view_four._view_four_metadata_source_on
-
         _collect_view_four_raw_title_lines = _bind_deps(
             _core_view_four._collect_view_four_raw_title_lines,
             _tmdb_info_current_and_available=_tmdb_info_current_and_available,
             _view_four_display_metadata=_view_four_display_metadata,
             _view_four_has_value=_view_four_has_value,
-            _view_four_metadata_source_on=_view_four_metadata_source_on,
             _view_four_text_is_placeholder=_view_four_text_is_placeholder,
             apple_tv_auto_state=apple_tv_auto_state,
             apple_tv_playback_clock=apple_tv_playback_clock,
@@ -6095,23 +6081,19 @@ def main() -> int:
         def _metadata_debug_provider() -> dict[str, object]:
             """Rows for the [4] metadata inspector (player / hdmi / pigeon pages)."""
             from pigeon.hdmi_capture import hdmi_capture_available
-            from pigeon.source_toggles import source_enabled
 
             lm = _view_four_display_metadata() or {}
-            metadata_on = _view_four_metadata_source_on()
             try:
-                player_active = bool(metadata_on and _content_indicator_ok())
+                player_active = bool(_content_indicator_ok())
             except Exception:
                 player_active = False
             try:
-                hdmi_active = bool(source_enabled("hdmi")) and bool(
-                    hdmi_capture_available()
-                )
+                hdmi_active = bool(hdmi_capture_available())
             except Exception:
                 hdmi_active = False
 
             rt = None
-            if metadata_on and lm:
+            if lm:
                 try:
                     from pigeon.raw_title import raw_title_from_metadata_dict
 
@@ -6123,8 +6105,8 @@ def main() -> int:
                 return str(getattr(rt, field, "") or "").strip() if rt is not None else ""
 
             # --- player: network metadata exactly as the box broadcasts it ---
-            p_title = str(lm.get("title") or "").strip() if metadata_on else ""
-            p_series = str(lm.get("series_name") or "").strip() if metadata_on else ""
+            p_title = str(lm.get("title") or "").strip()
+            p_series = str(lm.get("series_name") or "").strip()
             is_tv = bool(p_series) or "tv" in _rt("media_type_label").casefold()
             if is_tv and not p_series:
                 # layer_series_title falls back to the plain title for movies,
@@ -6136,7 +6118,7 @@ def main() -> int:
                 else p_title
             )
             player_rows = {
-                "service": str(lm.get("app_name") or "").strip() if metadata_on else "",
+                "service": str(lm.get("app_name") or "").strip(),
                 "series": p_series,
                 "title": p_title,
                 "episode": p_episode,
@@ -6207,7 +6189,6 @@ def main() -> int:
                     lm,
                     position_advancing=advancing,
                     tmdb_matches=bool(_tmdb_info_current_and_available()),
-                    hdmi_on=bool(source_enabled("hdmi")),
                     hdmi_present=hdmi_capture_available(),
                     player_duration_s=trt_cmp.get("player_s"),
                     tmdb_runtime_s=trt_cmp.get("tmdb_s"),
@@ -6242,7 +6223,6 @@ def main() -> int:
             _core_view_four._collect_view_four_source_lines,
             _view_four_display_metadata=_view_four_display_metadata,
             _view_four_has_value=_view_four_has_value,
-            _view_four_metadata_source_on=_view_four_metadata_source_on,
             _view_four_text_is_placeholder=_view_four_text_is_placeholder,
             receiver_overlay_state=receiver_overlay_state,
         )
@@ -7188,14 +7168,6 @@ def main() -> int:
                 if _vv_is_youtube():
                     _clear_tmdb_missing_art()
                 return
-
-            try:
-                from pigeon.source_toggles import source_enabled
-
-                if not source_enabled("wifi"):
-                    return
-            except Exception:
-                pass
 
             q_in = (query or "").strip()
             q = refine_tmdb_search_query(q_in) or ""
@@ -8560,22 +8532,6 @@ def main() -> int:
                 return
             st = main_settings_widget.state
 
-            if str(action or "").startswith("source_toggle:"):
-                parts = str(action).split(":")
-                kind = parts[1] if len(parts) > 1 else ""
-                on = parts[2] == "1" if len(parts) > 2 else True
-                md = apple_tv_auto_state.get("last_metadata")
-                if isinstance(md, dict) and not on:
-                    if kind == "metadata":
-                        try:
-                            from pigeon.source_toggles import strip_streaming_identity
-
-                            strip_streaming_identity(md)
-                        except Exception:
-                            pass
-                skip_cache = None
-                return
-
             if action == "pigeon_settings":
                 # Entered settings_pigeon — seed update badge and refresh in background.
                 def _prefetch_pigeon_update_badge() -> None:
@@ -8703,9 +8659,9 @@ def main() -> int:
                 st.pigeon_hdmi_ok = False
                 st.pigeon_audio_ok = False
                 try:
-                    from pigeon.source_toggles import apply_toggles_to_settings_state
+                    from pigeon.source_status import apply_source_status_to_settings_state
 
-                    apply_toggles_to_settings_state(st)
+                    apply_source_status_to_settings_state(st)
                 except Exception:
                     pass
                 try:
@@ -10932,19 +10888,6 @@ def main() -> int:
                         merged_md["app_name"] = str(metadata_w.get("app_name") or "").strip()
                         merged_md["app_id"] = str(metadata_w.get("app_id") or "").strip()
                         merged_md["volume_percent"] = metadata_w.get("volume_percent")
-                        try:
-                            from pigeon.source_toggles import (
-                                source_enabled,
-                                strip_streaming_identity,
-                            )
-
-                            if not source_enabled("metadata"):
-                                strip_streaming_identity(merged_md)
-                                merged_md["content_key"] = _content_key_from_metadata(
-                                    merged_md
-                                )
-                        except Exception:
-                            pass
                         prev_md = apple_tv_auto_state.get("last_metadata")
                         try:
                             from pigeon.display_confidence import (
@@ -10970,8 +10913,6 @@ def main() -> int:
                                 mark_stale,
                                 player_metadata_adequate,
                             )
-                            from pigeon.source_toggles import source_enabled
-
                             prev_app = ""
                             if isinstance(prev_md, dict):
                                 prev_app = str(
@@ -11014,7 +10955,7 @@ def main() -> int:
                                         )
                                 except Exception:
                                     pass
-                            if source_enabled("hdmi") and app_changed and not player_ok:
+                            if app_changed and not player_ok:
                                 # Metadata-rich app → no-meta app: drop stale
                                 # identity/art.
                                 mark_stale(merged_md)
@@ -11140,13 +11081,9 @@ def main() -> int:
                             _return_to_landing_if_atv_idle(md_for_spawn)
                     if not pyatv_tmdb_eligible and wk_roku_title is not None:
                         try:
-                            from pigeon.source_toggles import source_enabled
                             from pigeon.tmdb_poster import is_degenerate_tmdb_query
 
-                            if not source_enabled("metadata"):
-                                r_ok, _rmsg, rtitle = False, "", None
-                            else:
-                                r_ok, _rmsg, rtitle = wk_roku_title
+                            r_ok, _rmsg, rtitle = wk_roku_title
                             if (
                                 r_ok
                                 and rtitle

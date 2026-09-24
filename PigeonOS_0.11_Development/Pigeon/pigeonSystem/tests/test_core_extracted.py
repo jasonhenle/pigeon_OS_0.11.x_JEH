@@ -238,23 +238,21 @@ class HdmiFrameCheckWiringTests(unittest.TestCase):
             _sync_now_playing_screen_state=lambda: calls.append("sync"),
             apple_tv_auto_state=state,
         )
-        with mock.patch("pigeon.source_toggles.source_enabled", return_value=True):
-            _apply_hdmi_frame_check(True, **kw)
-            self.assertEqual(calls, ["activity", "bump", "sync"])
-            calls.clear()
-            _apply_hdmi_frame_check(False, **kw)
-            self.assertEqual(calls, ["sync"])
+        _apply_hdmi_frame_check(True, **kw)
+        self.assertEqual(calls, ["activity", "bump", "sync"])
+        calls.clear()
+        _apply_hdmi_frame_check(False, **kw)
+        self.assertEqual(calls, ["sync"])
         self.assertFalse(state["hdmi_check_in_flight"])
 
-    def test_schedule_respects_cadence_and_gate(self):
+    def test_schedule_respects_cadence(self):
         from pigeon.core.device_control import _schedule_hdmi_frame_check_from_poll
 
         started = []
         state = {}
         kw = dict(_on_hdmi_frame_checked=lambda c: None, apple_tv_auto_state=state)
-        with mock.patch("pigeon.source_toggles.source_enabled", return_value=True), \
-                mock.patch.object(self.hc, "request_frame_check",
-                                  side_effect=lambda cb: started.append(cb) or True):
+        with mock.patch.object(self.hc, "request_frame_check",
+                               side_effect=lambda cb: started.append(cb) or True):
             _schedule_hdmi_frame_check_from_poll(**kw)
             self.assertEqual(len(started), 1)
             self.assertTrue(state["hdmi_check_in_flight"])
@@ -263,15 +261,22 @@ class HdmiFrameCheckWiringTests(unittest.TestCase):
             _schedule_hdmi_frame_check_from_poll(**kw)  # not due yet
             self.assertEqual(len(started), 1)
 
-    def test_hdmi_off_never_checks(self):
-        from pigeon.core.device_control import _schedule_hdmi_frame_check_from_poll
 
-        with mock.patch("pigeon.source_toggles.source_enabled", return_value=False), \
-                mock.patch.object(self.hc, "request_frame_check") as req:
-            _schedule_hdmi_frame_check_from_poll(
-                _on_hdmi_frame_checked=lambda c: None, apple_tv_auto_state={}
-            )
-        req.assert_not_called()
+class SourceTilesAreStatusOnlyTests(unittest.TestCase):
+    """WIFI / METADATA / HDMI / AUDIO tiles report status; they are not toggles."""
+
+    def test_source_tiles_not_in_focus_ring(self):
+        from pigeon.widgets.pigeon_settings import pigeon_focus_ring
+
+        ring = pigeon_focus_ring()
+        for fid in ("wifi_button", "metadata_button", "hdmi_button", "audio_button"):
+            self.assertNotIn(fid, ring)
+        self.assertIn("update_button", ring)
+
+    def test_no_toggle_module(self):
+        import importlib.util
+
+        self.assertIsNone(importlib.util.find_spec("pigeon.source_toggles"))
 
 
 if __name__ == "__main__":

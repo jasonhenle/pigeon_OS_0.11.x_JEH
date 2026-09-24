@@ -520,15 +520,10 @@ class MainSettingsState:
     pigeon_focus_index: int = 0
     # Silent GitHub poll when opening settings_pigeon (badge without popup).
     pigeon_needs_update_prefetch: bool = False
-    # Status LEDs for tiles 6–9 (None → derive wifi/metadata; hdmi/audio follow toggles).
+    # Status LEDs for tiles 6–9 (None → derive wifi/metadata; hdmi/audio are live).
     pigeon_metadata_ok: bool | None = None
     pigeon_hdmi_ok: bool = False
     pigeon_audio_ok: bool = False
-    # User toggles for WIFI / METADATA / HDMI / AUDIO (persisted in state.json).
-    source_wifi_on: bool = True
-    source_metadata_on: bool = True
-    source_hdmi_on: bool = True
-    source_audio_on: bool = True
     show_preferences: bool = False
     # Metadata inspector ([4]): pages 0=player, 1=hdmi, 2=pigeon.
     show_metadata_debug: bool = False
@@ -1039,9 +1034,9 @@ class MainSettingsState:
         self.close_metadata_debug()
         load_persisted_theme_into_state(self)
         try:
-            from pigeon.source_toggles import apply_toggles_to_settings_state
+            from pigeon.source_status import apply_source_status_to_settings_state
 
-            apply_toggles_to_settings_state(self)
+            apply_source_status_to_settings_state(self)
         except Exception:
             pass
         try:
@@ -6715,10 +6710,6 @@ class MainSettingsWidget:
             st.pigeon_metadata_ok,
             bool(st.pigeon_hdmi_ok),
             bool(st.pigeon_audio_ok),
-            bool(st.source_wifi_on),
-            bool(st.source_metadata_on),
-            bool(st.source_hdmi_on),
-            bool(st.source_audio_on),
             bool(st.wifi_configured),
             bool(st.show_preferences),
             self._metadata_debug_sig(),
@@ -8535,29 +8526,6 @@ class MainSettingsWidget:
                 st.open_options()
                 self.invalidate()
                 return "options_open"
-            if focused in (
-                "wifi_button",
-                "metadata_button",
-                "hdmi_button",
-                "audio_button",
-            ):
-                kind = focused.removesuffix("_button")
-                from pigeon.source_toggles import (
-                    apply_toggles_to_settings_state,
-                    toggle_source,
-                )
-
-                on = toggle_source(kind)
-                apply_toggles_to_settings_state(st)
-                if kind == "hdmi" and not on:
-                    try:
-                        from pigeon.hdmi_capture import release_capture
-
-                        release_capture()
-                    except Exception:
-                        pass
-                self.invalidate()
-                return f"source_toggle:{kind}:{int(on)}"
             return f"pigeon_activate:{focused}"
 
         focused = st.focused_id

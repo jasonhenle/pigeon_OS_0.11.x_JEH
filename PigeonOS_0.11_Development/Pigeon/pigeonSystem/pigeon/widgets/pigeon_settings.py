@@ -2,7 +2,7 @@
 Pigeon device settings — ``settings_0.8/settings_pigeon.svg``.
 
 Opened from main settings box1. Selectable tiles 1–5 + BACK; tiles 6–9
-(WIFI / METADATA / HDMI / AUDIO) toggle those data sources on and off.
+(WIFI / METADATA / HDMI / AUDIO) only show whether each source is active.
 Uses the shared settings theme background (SVG ``background`` / menu
 containers are disabled).
 """
@@ -89,7 +89,8 @@ _RESET_EXCLUDE_RECTS: tuple[tuple[float, float, float, float, float, float, floa
 
 XLINK_NS = "http://www.w3.org/1999/xlink"
 
-# Focus ring: BACK + tiles 1–9 (actions 1–5, source toggles 6–9).
+# Focus ring: BACK + action tiles 1–5. Source tiles 6–9 (wifi / metadata /
+# hdmi / audio) only report status, so focus skips them.
 _PIGEON_FOCUS_RING: tuple[str, ...] = (
     "pigeon_back",
     "color_button",
@@ -97,10 +98,6 @@ _PIGEON_FOCUS_RING: tuple[str, ...] = (
     "general_button",
     "reset_button",
     "update_button",
-    "wifi_button",
-    "metadata_button",
-    "hdmi_button",
-    "audio_button",
 )
 
 # Legacy aliases from the old 12-tile Pillow grid.
@@ -278,7 +275,6 @@ def _sync_selectable_tile(
     focus_id: str,
     *,
     selected: bool,
-    source_on: bool = True,
     dimmed: bool = False,
 ) -> None:
     for fid, _tg, button_id, text_id in _SELECTABLE_TILES:
@@ -286,7 +282,7 @@ def _sync_selectable_tile(
             continue
         button = _find_by_logical_id(root, button_id)
         text = _find_by_logical_id(root, text_id)
-        label_dimmed = dimmed or not source_on
+        label_dimmed = dimmed
         if selected:
             _paint_button(button, fill=_COLOR_WHITE, stroke=_COLOR_BLACK)
             _paint_text(text, _COLOR_TEXT_OFF if label_dimmed else _COLOR_BLACK)
@@ -297,7 +293,7 @@ def _sync_selectable_tile(
 
 
 def _sync_hdmi_icon(root: ET.Element, *, dimmed: bool) -> None:
-    """Gray the HDMI plug glyph when there is no live signal or the source is off."""
+    """Gray the HDMI plug glyph when there is no live signal."""
     group = _find_by_logical_id(root, "settings_pigeon_08_hdmi_icon_group")
     if group is None:
         return
@@ -319,21 +315,13 @@ def _sync_hdmi_icon(root: ET.Element, *, dimmed: bool) -> None:
         _set_paint(el, fill=color, stroke="none")
 
 
-def _source_on(state: MainSettingsState, kind: str) -> bool:
-    return bool(getattr(state, f"source_{kind}_on", True))
-
-
 def _wifi_status_ok(state: MainSettingsState) -> bool:
-    """Green when internet is allowed and a network is configured."""
-    if not _source_on(state, "wifi"):
-        return False
+    """Green when a network is configured."""
     return bool(getattr(state, "wifi_configured", False))
 
 
 def _metadata_status_ok(state: MainSettingsState) -> bool:
-    """Green when Apple TV / Roku metadata is allowed and a source is present."""
-    if not _source_on(state, "metadata"):
-        return False
+    """Green when an Apple TV / Roku metadata source is present."""
     flagged = getattr(state, "pigeon_metadata_ok", None)
     if flagged is not None:
         return bool(flagged)
@@ -358,16 +346,12 @@ def _hdmi_device_present(state: MainSettingsState) -> bool:
 
 
 def _hdmi_status_ok(state: MainSettingsState) -> bool:
-    """Green when HDMI is enabled and a live signal can reach Pigeon."""
-    if not _source_on(state, "hdmi"):
-        return False
+    """Green when a live HDMI signal can reach Pigeon."""
     return _hdmi_device_present(state)
 
 
 def _audio_status_ok(state: MainSettingsState) -> bool:
-    """Green when the tile is on and program audio is above the visualizer gate."""
-    if not _source_on(state, "audio"):
-        return False
+    """Green when program audio is above the capture gate."""
     try:
         from pigeon.widgets.audio_meter_saver import program_audio_present
 
@@ -394,9 +378,6 @@ def _sync_status_icons(root: ET.Element, state: MainSettingsState) -> None:
     for kind, lid in _STATUS_ICONS:
         el = _find_by_logical_id(root, lid)
         if el is None:
-            continue
-        if not _source_on(state, kind):
-            _set_visible(el, False)
             continue
         _set_visible(el, True)
         ok = _status_ok_for(kind, state)
@@ -486,16 +467,14 @@ def apply_pigeon_settings_svg_state(root: ET.Element, state: MainSettingsState) 
     hdmi_present = _hdmi_device_present(state)
     for fid, _tg, _b, _t in _SELECTABLE_TILES:
         kind = _SOURCE_TILE_KINDS.get(fid)
-        source_on = _source_on(state, kind) if kind else True
-        dimmed = kind == "hdmi" and (not source_on or not hdmi_present)
+        dimmed = kind == "hdmi" and not hdmi_present
         _sync_selectable_tile(
             root,
             fid,
             selected=(focused == fid),
-            source_on=source_on,
             dimmed=dimmed,
         )
-    _sync_hdmi_icon(root, dimmed=(not _source_on(state, "hdmi") or not hdmi_present))
+    _sync_hdmi_icon(root, dimmed=not hdmi_present)
     _sync_info_label(root)
     _sync_status_icons(root, state)
     _sync_update_badge(root, state)
