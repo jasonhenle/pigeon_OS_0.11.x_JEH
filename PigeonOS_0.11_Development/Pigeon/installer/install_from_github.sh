@@ -86,11 +86,52 @@ install_from_zip() {
   local zip_url="https://codeload.github.com/${REPO}/zip/refs/heads/${BRANCH}"
   echo "==> Downloading ${zip_url}" >&2
   curl -fsSL -o "${WORKDIR}/pigeon.zip" "${zip_url}"
-  python3 - <<'PY' "${WORKDIR}/pigeon.zip" "${WORKDIR}/extract"
-import sys, zipfile
+  python3 - <<'PY' "${WORKDIR}/pigeon.zip" "${WORKDIR}/extract" "${APP_PREFIX}" || {
+import sys
+import zipfile
 from pathlib import Path
-zipfile.ZipFile(sys.argv[1]).extractall(Path(sys.argv[2]))
+
+zip_path, out, app_rel = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
+marker = app_rel.rstrip("/") + "/"
+out.mkdir(parents=True, exist_ok=True)
+root = out.resolve()
+
+
+def safe_target(member_name):
+    """Resolve a ZIP member under root; refuse anything that escapes it
+    (``../`` segments, absolute paths, backslash tricks)."""
+    if "\\" in member_name or member_name.startswith("/"):
+        return None
+    target = (root / member_name).resolve()
+    if target == root or root not in target.parents:
+        return None
+    return target
+
+
+with zipfile.ZipFile(zip_path) as zf:
+    # Validate every member before writing anything, so a crafted archive
+    # cannot leave a partial extraction behind.
+    for info in zf.infolist():
+        if safe_target(info.filename) is None:
+            sys.exit(f"unsafe path in install archive: {info.filename!r}")
+    for info in zf.infolist():
+        name = info.filename
+        if marker not in name:
+            continue
+        target = safe_target(name)
+        if info.is_dir() or name.endswith("/"):
+            target.mkdir(parents=True, exist_ok=True)
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with zf.open(info) as src, open(target, "wb") as dst:
+            dst.write(src.read())
+        mode = (info.external_attr >> 16) & 0o777  # no setuid/setgid/sticky
+        if mode:
+            target.chmod(mode)
 PY
+    echo "pigeon: archive extraction failed or was rejected as unsafe." >&2
+    exit 1
+  }
   local app=""
   for d in "${WORKDIR}/extract"/*/"${APP_PREFIX}"; do
     if [[ -f "${d}/pigeonSystem/pigeon_0_9.py" || -f "${d}/pigeonSystem/pigeon_0_8.py" ]]; then
@@ -111,9 +152,49 @@ install_pi_linux() {
     echo "==> Downloading release tarball" >&2
     echo "    ${tarball_url}" >&2
     curl -fsSL -o "${WORKDIR}/pigeon.tar.gz" "${tarball_url}"
-    tar -xzf "${WORKDIR}/pigeon.tar.gz" -C "${WORKDIR}"
+    if ! python3 - <<'PY' "${WORKDIR}/pigeon.tar.gz" "${WORKDIR}/release"; then
+import posixpath
+import sys
+import tarfile
+from pathlib import Path
+
+tar_path, out = Path(sys.argv[1]), Path(sys.argv[2])
+out.mkdir(parents=True, exist_ok=True)
+root = out.resolve()
+
+
+def bad_path(name):
+    """Absolute, backslash, or any ``..`` segment. Rejecting ``..`` outright
+    (rather than resolving it) also closes symlink-then-``..`` escapes."""
+    if not name or name.startswith("/") or "\\" in name:
+        return True
+    return ".." in name.split("/")
+
+
+with tarfile.open(tar_path, "r:gz") as tf:
+    members = tf.getmembers()
+    # Validate everything before writing anything.
+    for m in members:
+        if bad_path(m.name):
+            sys.exit(f"unsafe path in release tarball: {m.name!r}")
+        if not (m.isreg() or m.isdir() or m.issym() or m.islnk()):
+            sys.exit(f"unsupported member type in release tarball: {m.name!r}")
+        if (m.issym() or m.islnk()) and bad_path(m.linkname):
+            sys.exit(f"unsafe link in release tarball: {m.name!r} -> {m.linkname!r}")
+        m.mode &= 0o777  # drop setuid/setgid/sticky
+        m.uid = m.gid = 0
+        m.uname = m.gname = ""
+    if hasattr(tarfile, "data_filter"):
+        # Python 3.12+ (and security backports): stdlib's own safety filter.
+        tf.extractall(root, members=members, filter="data")
+    else:
+        tf.extractall(root, members=members)
+PY
+      echo "pigeon: release tarball extraction failed or was rejected as unsafe." >&2
+      exit 1
+    fi
     local app=""
-    for d in "${WORKDIR}"/Pigeon_*; do
+    for d in "${WORKDIR}/release"/Pigeon_*; do
       if [[ -f "${d}/pigeonSystem/pigeon_0_9.py" || -f "${d}/pigeonSystem/pigeon_0_8.py" ]]; then
         app="${d}"
         break
