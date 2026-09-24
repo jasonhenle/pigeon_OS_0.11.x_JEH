@@ -421,3 +421,129 @@ def _program_audio_session(*, _program_audio_present, program_audio_session_pres
         except Exception:
             pass
     return _program_audio_present()
+
+
+def _np_widgets_content_active(*, incoming: str = "", config: str = "", _apple_tv_is_off, _atv_metadata_is_content_idle, _program_audio_session, _show_paused_row_overlay, _something_playing_now, apple_tv_auto_state, apple_tv_playback_clock, receiver_standby_holder) -> bool:
+    """True when NP should show more than the clock (title / play / AVR / audio)."""
+    if _program_audio_session():
+        return True
+    if _apple_tv_is_off():
+        return False
+    if _something_playing_now() or _show_paused_row_overlay():
+        return True
+    if bool(apple_tv_playback_clock.get("live_mode")):
+        return True
+    lm = apple_tv_auto_state.get("last_metadata")
+    if isinstance(lm, dict) and not _atv_metadata_is_content_idle(lm):
+        return True
+    if apple_tv_auto_state.get("tmdb_fetch_in_flight") or apple_tv_auto_state.get(
+        "pending_tmdb"
+    ):
+        q = ""
+        if isinstance(lm, dict):
+            q = str(lm.get("query") or lm.get("title") or lm.get("ocr_title") or "").strip()
+        if not q:
+            q = str(apple_tv_auto_state.get("query") or "").strip()
+        if q:
+            return True
+    if not bool(receiver_standby_holder[0]):
+        if str(incoming or "").strip() or str(config or "").strip():
+            return True
+    return False
+
+
+def _store_music_artwork_from_metadata(md: dict[str, object] | None, *, _atv_metadata_is_content_idle, _clear_music_artwork_cache, _clear_playback_artwork_caches, _clear_video_artwork_cache, _decode_artwork_bytes_bgra, _music_artwork_track_key, _vv_is_youtube, apple_tv_auto_state) -> None:
+    """Decode/store pyatv artwork for Music covers or YouTube 16×9 thumbs."""
+    if not isinstance(md, dict):
+        _clear_playback_artwork_caches()
+        return
+    if _atv_metadata_is_content_idle(md):
+        # YouTube often reports Idle on MRP while HDMI/Companion still play.
+        # Keep a thumb we already have instead of flashing an empty zone 6.
+        if not _vv_is_youtube():
+            _clear_playback_artwork_caches()
+            return
+        if not md.get("artwork_bytes"):
+            return
+    mt = str(md.get("media_type") or "").strip().lower()
+    is_music = mt == "music" or mt.endswith(".music")
+    is_youtube = False
+    try:
+        from pigeon.streaming_service_badges import is_youtube_streaming_service
+
+        is_youtube = bool(
+            is_youtube_streaming_service(
+                app_name=str(md.get("app_name") or ""),
+                app_id=str(md.get("app_id") or ""),
+            )
+        )
+    except Exception:
+        blob = f"{md.get('app_name') or ''} {md.get('app_id') or ''}".lower()
+        is_youtube = "youtube" in blob
+    if not is_youtube:
+        try:
+            is_youtube = bool(_vv_is_youtube())
+        except Exception:
+            pass
+    track_key = _music_artwork_track_key(md)
+    art_bytes = md.get("artwork_bytes")
+    art_id = md.get("artwork_id")
+    sig = (
+        track_key,
+        str(art_id or ""),
+        int(len(art_bytes)) if isinstance(art_bytes, (bytes, bytearray)) else 0,
+    )
+    have = apple_tv_auto_state.get("music_artwork_bgra")
+    if not isinstance(have, np.ndarray) or have.size == 0:
+        have = apple_tv_auto_state.get("video_artwork_bgra")
+    if (
+        apple_tv_auto_state.get("decoded_artwork_sig") == sig
+        and isinstance(have, np.ndarray)
+        and have.size > 0
+    ):
+        return
+    bgra = _decode_artwork_bytes_bgra(art_bytes)
+    apple_tv_auto_state["decoded_artwork_sig"] = sig
+    if is_music:
+        _clear_video_artwork_cache()
+        prev_key = apple_tv_auto_state.get("music_artwork_key")
+        if bgra is not None:
+            apple_tv_auto_state["music_artwork_bgra"] = bgra
+            apple_tv_auto_state["music_artwork_key"] = track_key
+            return
+        if track_key != prev_key:
+            apple_tv_auto_state["music_artwork_bgra"] = None
+            apple_tv_auto_state["music_artwork_key"] = track_key
+        return
+    if is_youtube:
+        _clear_music_artwork_cache()
+        prev_key = apple_tv_auto_state.get("video_artwork_key")
+        if bgra is not None:
+            apple_tv_auto_state["video_artwork_bgra"] = bgra
+            apple_tv_auto_state["video_artwork_key"] = track_key
+            return
+        if track_key != prev_key:
+            apple_tv_auto_state["video_artwork_bgra"] = None
+            apple_tv_auto_state["video_artwork_key"] = track_key
+        return
+    # Unknown-app landscape art from pyatv is treated as a 16×9 thumb.
+    try:
+        from pigeon.np_layout import poster_image_is_16x9
+
+        landscape = bool(bgra is not None and poster_image_is_16x9(bgra))
+    except Exception:
+        landscape = False
+    if landscape:
+        _clear_music_artwork_cache()
+        apple_tv_auto_state["video_artwork_bgra"] = bgra
+        apple_tv_auto_state["video_artwork_key"] = track_key
+        return
+    _clear_playback_artwork_caches()
+
+
+def _update_status_bar_from_metadata(metadata: dict[str, object] | None, *, _apply_playback_clock_from_poll, _sync_trt_text_to_true_once) -> None:
+    if metadata:
+        _apply_playback_clock_from_poll(metadata)
+    # Sync TRT digits to the latest polled integer second. The steady 1 Hz metronome
+    # continues stepping from this anchor.
+    _sync_trt_text_to_true_once()

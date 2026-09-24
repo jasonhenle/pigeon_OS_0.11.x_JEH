@@ -1,0 +1,7 @@
+{
+ "device_control": ["_denon_telnet_audio_fallback", "_resolve_receiver_lines_for_now_playing", "_resolve_receiver_input_label", "_on_hdmi_ocr_clues"],
+ "now_playing": ["_np_widgets_content_active", "_store_music_artwork_from_metadata", "_update_status_bar_from_metadata"],
+ "saver_state": ["_clock_saver_layer_opacity"],
+ "tmdb_flow": ["_adjust_tmdb_quality_failure_delta", "on_reset_tmdb_match_quality_stats"],
+ "settings_ui": ["_remove_saved_player_device"]
+}

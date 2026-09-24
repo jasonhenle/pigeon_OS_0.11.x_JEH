@@ -15,6 +15,7 @@ import numpy as np
 from pigeon.app_state import read_app_state
 from pigeon.runtime_paths import pigeon_state_dir
 import sys
+from pigeon.app_state import write_app_state
 
 
 def _trigger_tmdb_quality_toggle_overlay(mode: str, *, tmdb_quality_overlay_mode, tmdb_quality_overlay_t0) -> None:
@@ -386,3 +387,30 @@ def _read_tmdb_quality_counts(*, _PIGEON_EXT) -> tuple[int, int]:
         return (s, f)
     except Exception:
         return (0, 0)
+
+
+def _adjust_tmdb_quality_failure_delta(delta: int, *, _PIGEON_EXT, _refresh_match_quality_glance_label, match_quality_glance_sig) -> None:
+    """Persist ±1 failure immediately (⌘⇧X flag on / undo); refreshes Settings glance."""
+    if not _PIGEON_EXT or int(delta) == 0:
+        return
+    try:
+        st = read_app_state()
+        s = int(st.get("tmdb_quality_successes", 0) or 0)
+        f = max(0, int(st.get("tmdb_quality_failures", 0) or 0) + int(delta))
+        write_app_state(tmdb_quality_successes=s, tmdb_quality_failures=f)
+        match_quality_glance_sig[0] = ""
+        _refresh_match_quality_glance_label()
+    except Exception:
+        pass
+
+
+def on_reset_tmdb_match_quality_stats(*, _PIGEON_EXT, _refresh_match_quality_glance_label, match_quality_glance_sig) -> None:
+    """Zero the Settings success/fail counters (state.json only). Logs and desktop reports unchanged."""
+    if not _PIGEON_EXT:
+        return
+    try:
+        write_app_state(tmdb_quality_successes=0, tmdb_quality_failures=0)
+        match_quality_glance_sig[0] = ""
+        _refresh_match_quality_glance_label()
+    except Exception:
+        pass

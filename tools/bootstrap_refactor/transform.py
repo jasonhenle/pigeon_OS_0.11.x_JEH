@@ -74,6 +74,7 @@ def norm(fn):
 
 modules_out = {}
 replacements = []  # (start_line, end_line, new_text)
+inserts = []  # (after_line, original_def_line, text)
 report = []
 for mod, names in PLAN.items():
     for name in names:
@@ -101,13 +102,45 @@ for mod, names in PLAN.items():
             if len(one) <= 100: b = one
         else:
             b = f"{IND}{name} = _core_{mod}.{name}\n"
-        replacements.append((fn.lineno, fn.end_lineno, b))
+        if r.get("bind_after") is None:
+            replacements.append((fn.lineno, fn.end_lineno, b))
+        else:
+            # pass 3: bind later, after the last forward dep; comments above the def move too
+            start = fn.lineno
+            while start > 1 and lines[start - 2].strip().startswith("#") and lines[start - 2].startswith(IND) and not lines[start - 2].startswith(IND + " "):
+                start -= 1
+            moved = "".join(lines[start - 1: fn.lineno - 1])
+            replacements.append((start, fn.end_lineno, ""))
+            after = boot.body[r["bind_after"]].end_lineno
+            inserts.append((after, fn.lineno, "\n" + moved + b))
         report.append((mod, name, fn.end_lineno - fn.lineno + 1, len(deps)))
 
-# apply replacements bottom-up
-for s, e, b in sorted(replacements, reverse=True):
-    lines[s - 1: e] = [b]
-src2 = "".join(lines)
+# apply edits on original line numbers
+drop = {}
+for s_, e_, b in replacements:
+    drop[s_] = (e_, b)
+ins = {}
+for after, order, text in sorted(inserts):
+    ins.setdefault(after, []).append(text)
+out, k = [], 1
+while k <= len(lines):
+    if k in drop:
+        e_, b = drop[k]
+        if b: out.append(b)
+        elif out and not out[-1].strip() and e_ < len(lines) and not lines[e_].strip():
+            k_end = e_ + 1  # drop one of the two blank lines around a removed def
+            e_ = k_end
+        for a in range(k, e_ + 1):
+            assert a not in ins, "insert inside a removed range"
+        k = e_ + 1
+        continue
+    out.append(lines[k - 1])
+    for text in ins.get(k, []):
+        out.append(text)
+    if k in ins and k < len(lines) and lines[k].strip():
+        out.append("\n")
+    k += 1
+src2 = "".join(out)
 # add module imports
 for mod in PLAN:
     imp = f"from pigeon.core import {mod} as _core_{mod}\n"

@@ -91,7 +91,6 @@ from pigeon.app_state import (
     write_last_apple_tv,
     write_last_receiver,
     write_saved_av_receiver,
-    write_saved_streaming_device,
     write_location_wifi,
     advance_delegation_active,
     append_delegation_log_lines,
@@ -2571,83 +2570,6 @@ def main() -> int:
             apple_tv_playback_clock=apple_tv_playback_clock,
         )
 
-        def _denon_telnet_audio_fallback() -> tuple[str, str]:
-            """Telnet snapshot when HTTP/XML left incoming/config empty."""
-            dbg = receiver_telnet_debug_holder[0]
-            if not isinstance(dbg, dict) or not dbg:
-                return "", ""
-            inc = str(
-                dbg.get("SYSDA") or dbg.get("SSINFAISFOR") or dbg.get("DC") or ""
-            ).strip()
-            cfg = str(dbg.get("MS") or "").strip()
-            if inc:
-                inc = inc.lower()
-            if cfg:
-                cfg = cfg.lower()
-            return inc, cfg
-
-        def _resolve_receiver_lines_for_now_playing() -> tuple[str, str, str]:
-            """Incoming/config/volume for View 1, with Denon telnet fallback."""
-            standby = bool(receiver_standby_holder[0])
-            inc = ""
-            cfg = ""
-            if not standby:
-                inc = str(receiver_overlay_state.get("incoming") or "").strip()
-                cfg = str(receiver_overlay_state.get("config") or "").strip()
-                if not inc and not cfg:
-                    fb_inc, fb_cfg = _denon_telnet_audio_fallback()
-                    inc, cfg = fb_inc, fb_cfg
-            vol = _clock_saver_volume_raw()
-            if not vol and compose_playback_volume_widget_line is not None:
-                vol = compose_playback_volume_widget_line(
-                    stream_row=streaming_slot_holder[0],
-                    apple_tv_last_metadata=apple_tv_auto_state.get("last_metadata")
-                    if isinstance(apple_tv_auto_state.get("last_metadata"), dict)
-                    else None,
-                    denon_vol_effective=str(denon_vol_cache.get("effective") or ""),
-                    roku_tv_volume_percent="",
-                )
-            if not vol:
-                raw_vol = str(receiver_overlay_state.get("volume") or "").strip()
-                if raw_vol:
-                    # Accept dB, mute, percent, and bare 0–100 (player-reported).
-                    low = raw_vol.lower()
-                    if (
-                        low in ("mute", "muted", "off")
-                        or "db" in low
-                        or raw_vol.endswith("%")
-                        or (raw_vol.isdigit() and 0 <= int(raw_vol) <= 100)
-                        or raw_vol[:1] in "+-"
-                    ):
-                        vol = raw_vol
-            if vol:
-                denon_vol_cache["np_hold"] = vol
-            else:
-                # Keep last good readout so zone3 does not flash an empty ring
-                # between AVR polls / while Apple TV reports volume_percent=0.
-                held = str(denon_vol_cache.get("np_hold") or "").strip()
-                if not held:
-                    held = str(denon_vol_cache.get("effective") or "").strip()
-                vol = held
-            return inc, cfg, vol
-
-        def _resolve_receiver_input_label() -> str:
-            """Current AVR input label for the volume-widget caption."""
-            if receiver_standby_holder[0]:
-                return ""
-            lab = str(receiver_overlay_state.get("input") or "").strip()
-            if lab:
-                return lab
-            dbg = receiver_telnet_debug_holder[0]
-            if isinstance(dbg, dict) and dbg:
-                try:
-                    from pigeon.receiver_denon import pick_receiver_input_label
-
-                    return pick_receiver_input_label(dbg)
-                except Exception:
-                    return ""
-            return ""
-
         apple_tv_dashboard_track: dict[str, object] = {"last_poll_ok": None, "consecutive_fail": 0}
         content_indicator_cv_holder: list[tk.Canvas | None] = [None]
         _LISTBOX_BG = "#1a1a1e"
@@ -3233,34 +3155,6 @@ def main() -> int:
             apple_tv_playback_clock=apple_tv_playback_clock,
         )
 
-        def _np_widgets_content_active(*, incoming: str = "", config: str = "") -> bool:
-            """True when NP should show more than the clock (title / play / AVR / audio)."""
-            if _program_audio_session():
-                return True
-            if _apple_tv_is_off():
-                return False
-            if _something_playing_now() or _show_paused_row_overlay():
-                return True
-            if bool(apple_tv_playback_clock.get("live_mode")):
-                return True
-            lm = apple_tv_auto_state.get("last_metadata")
-            if isinstance(lm, dict) and not _atv_metadata_is_content_idle(lm):
-                return True
-            if apple_tv_auto_state.get("tmdb_fetch_in_flight") or apple_tv_auto_state.get(
-                "pending_tmdb"
-            ):
-                q = ""
-                if isinstance(lm, dict):
-                    q = str(lm.get("query") or lm.get("title") or lm.get("ocr_title") or "").strip()
-                if not q:
-                    q = str(apple_tv_auto_state.get("query") or "").strip()
-                if q:
-                    return True
-            if not bool(receiver_standby_holder[0]):
-                if str(incoming or "").strip() or str(config or "").strip():
-                    return True
-            return False
-
         def _tmdb_info_current_and_available() -> bool:
             """True when live TMDb art/title matches the current show and is ready."""
             if apple_tv_auto_state.get("tmdb_missing_art"):
@@ -3477,17 +3371,6 @@ def main() -> int:
             post_splash_mono=post_splash_mono,
             startup_ph=startup_ph,
         )
-
-        def _clock_saver_layer_opacity(now: float) -> float:
-            intro = _clock_startup_intro_opacity(now)
-            if intro is not None:
-                return float(intro)
-            if now < clock_saver_peek_until_mono[0]:
-                return 1.0
-            # Boot / splash-reveal: full-on clock (no ease from black, no idle dim).
-            if _boot_clock_saver_until_playback[0] or _splash_reveal_clock[0]:
-                return 1.0
-            return CLOCK_SAVER_DIM_OPACITY
 
         def _backdrop_active_for_view() -> bool:
             """True when backdrop scene should be used by the current effective view."""
@@ -3897,6 +3780,16 @@ def main() -> int:
         }
         prev_dev_phase_for_location_toast: list[DevPhase] = [DevPhase.OFF]
         clock_saver_peek_until_mono: list[float] = [0.0]
+
+        _clock_saver_layer_opacity = _bind_deps(
+            _core_saver_state._clock_saver_layer_opacity,
+            CLOCK_SAVER_DIM_OPACITY=CLOCK_SAVER_DIM_OPACITY,
+            _boot_clock_saver_until_playback=_boot_clock_saver_until_playback,
+            _clock_startup_intro_opacity=_clock_startup_intro_opacity,
+            _splash_reveal_clock=_splash_reveal_clock,
+            clock_saver_peek_until_mono=clock_saver_peek_until_mono,
+        )
+
         # Manual [2] force: True = show saver until toggled off (ignores idle timers).
         clock_saver_force_on: list[bool] = [False]
         black_photo: ImageTk.PhotoImage | None = None
@@ -3991,6 +3884,12 @@ def main() -> int:
             "input": "",
         }
         receiver_telnet_debug_holder: list[dict[str, str]] = [{}]
+
+        _denon_telnet_audio_fallback = _bind_deps(
+            _core_device_control._denon_telnet_audio_fallback,
+            receiver_telnet_debug_holder=receiver_telnet_debug_holder,
+        )
+
         # Track the last usable Denon volume reading so the Apple TV metadata poll (which
         # reports ``volume_percent=0`` when an AV receiver owns the volume line) does not
         # briefly overwrite the authoritative dB value on its own cadence. The receiver
@@ -4007,6 +3906,38 @@ def main() -> int:
         # True when the last Denon poll answered but reported OFF/STANDBY — hide all
         # receiver metadata and treat the receiver indicator as inactive.
         receiver_standby_holder: list[bool] = [False]
+
+        _resolve_receiver_lines_for_now_playing = _bind_deps(
+            _core_device_control._resolve_receiver_lines_for_now_playing,
+            _clock_saver_volume_raw=_clock_saver_volume_raw,
+            _denon_telnet_audio_fallback=_denon_telnet_audio_fallback,
+            apple_tv_auto_state=apple_tv_auto_state,
+            compose_playback_volume_widget_line=compose_playback_volume_widget_line,
+            denon_vol_cache=denon_vol_cache,
+            receiver_overlay_state=receiver_overlay_state,
+            receiver_standby_holder=receiver_standby_holder,
+            streaming_slot_holder=streaming_slot_holder,
+        )
+
+        _resolve_receiver_input_label = _bind_deps(
+            _core_device_control._resolve_receiver_input_label,
+            receiver_overlay_state=receiver_overlay_state,
+            receiver_standby_holder=receiver_standby_holder,
+            receiver_telnet_debug_holder=receiver_telnet_debug_holder,
+        )
+
+        _np_widgets_content_active = _bind_deps(
+            _core_now_playing._np_widgets_content_active,
+            _apple_tv_is_off=_apple_tv_is_off,
+            _atv_metadata_is_content_idle=_atv_metadata_is_content_idle,
+            _program_audio_session=_program_audio_session,
+            _show_paused_row_overlay=_show_paused_row_overlay,
+            _something_playing_now=_something_playing_now,
+            apple_tv_auto_state=apple_tv_auto_state,
+            apple_tv_playback_clock=apple_tv_playback_clock,
+            receiver_standby_holder=receiver_standby_holder,
+        )
+
         # Volume knob requested PWON; keep sending power-on even if a poll
         # briefly reports STANDBY again before the AVR finishes waking.
         receiver_power_on_pending: list[bool] = [False]
@@ -4925,94 +4856,6 @@ def main() -> int:
 
         _decode_artwork_bytes_bgra = _core_now_playing._decode_artwork_bytes_bgra
 
-        def _store_music_artwork_from_metadata(md: dict[str, object] | None) -> None:
-            """Decode/store pyatv artwork for Music covers or YouTube 16×9 thumbs."""
-            if not isinstance(md, dict):
-                _clear_playback_artwork_caches()
-                return
-            if _atv_metadata_is_content_idle(md):
-                # YouTube often reports Idle on MRP while HDMI/Companion still play.
-                # Keep a thumb we already have instead of flashing an empty zone 6.
-                if not _vv_is_youtube():
-                    _clear_playback_artwork_caches()
-                    return
-                if not md.get("artwork_bytes"):
-                    return
-            mt = str(md.get("media_type") or "").strip().lower()
-            is_music = mt == "music" or mt.endswith(".music")
-            is_youtube = False
-            try:
-                from pigeon.streaming_service_badges import is_youtube_streaming_service
-
-                is_youtube = bool(
-                    is_youtube_streaming_service(
-                        app_name=str(md.get("app_name") or ""),
-                        app_id=str(md.get("app_id") or ""),
-                    )
-                )
-            except Exception:
-                blob = f"{md.get('app_name') or ''} {md.get('app_id') or ''}".lower()
-                is_youtube = "youtube" in blob
-            if not is_youtube:
-                try:
-                    is_youtube = bool(_vv_is_youtube())
-                except Exception:
-                    pass
-            track_key = _music_artwork_track_key(md)
-            art_bytes = md.get("artwork_bytes")
-            art_id = md.get("artwork_id")
-            sig = (
-                track_key,
-                str(art_id or ""),
-                int(len(art_bytes)) if isinstance(art_bytes, (bytes, bytearray)) else 0,
-            )
-            have = apple_tv_auto_state.get("music_artwork_bgra")
-            if not isinstance(have, np.ndarray) or have.size == 0:
-                have = apple_tv_auto_state.get("video_artwork_bgra")
-            if (
-                apple_tv_auto_state.get("decoded_artwork_sig") == sig
-                and isinstance(have, np.ndarray)
-                and have.size > 0
-            ):
-                return
-            bgra = _decode_artwork_bytes_bgra(art_bytes)
-            apple_tv_auto_state["decoded_artwork_sig"] = sig
-            if is_music:
-                _clear_video_artwork_cache()
-                prev_key = apple_tv_auto_state.get("music_artwork_key")
-                if bgra is not None:
-                    apple_tv_auto_state["music_artwork_bgra"] = bgra
-                    apple_tv_auto_state["music_artwork_key"] = track_key
-                    return
-                if track_key != prev_key:
-                    apple_tv_auto_state["music_artwork_bgra"] = None
-                    apple_tv_auto_state["music_artwork_key"] = track_key
-                return
-            if is_youtube:
-                _clear_music_artwork_cache()
-                prev_key = apple_tv_auto_state.get("video_artwork_key")
-                if bgra is not None:
-                    apple_tv_auto_state["video_artwork_bgra"] = bgra
-                    apple_tv_auto_state["video_artwork_key"] = track_key
-                    return
-                if track_key != prev_key:
-                    apple_tv_auto_state["video_artwork_bgra"] = None
-                    apple_tv_auto_state["video_artwork_key"] = track_key
-                return
-            # Unknown-app landscape art from pyatv is treated as a 16×9 thumb.
-            try:
-                from pigeon.np_layout import poster_image_is_16x9
-
-                landscape = bool(bgra is not None and poster_image_is_16x9(bgra))
-            except Exception:
-                landscape = False
-            if landscape:
-                _clear_music_artwork_cache()
-                apple_tv_auto_state["video_artwork_bgra"] = bgra
-                apple_tv_auto_state["video_artwork_key"] = track_key
-                return
-            _clear_playback_artwork_caches()
-
         def _circles_poster_bgra() -> np.ndarray | None:
             """Poster slot for view_circles — poster art only (no backdrop fill)."""
             if _vv_is_music():
@@ -5209,6 +5052,18 @@ def main() -> int:
             _core_now_playing._vv_is_youtube,
             apple_tv_auto_state=apple_tv_auto_state,
             streaming_badge_state=streaming_badge_state,
+        )
+
+        _store_music_artwork_from_metadata = _bind_deps(
+            _core_now_playing._store_music_artwork_from_metadata,
+            _atv_metadata_is_content_idle=_atv_metadata_is_content_idle,
+            _clear_music_artwork_cache=_clear_music_artwork_cache,
+            _clear_playback_artwork_caches=_clear_playback_artwork_caches,
+            _clear_video_artwork_cache=_clear_video_artwork_cache,
+            _decode_artwork_bytes_bgra=_decode_artwork_bytes_bgra,
+            _music_artwork_track_key=_music_artwork_track_key,
+            _vv_is_youtube=_vv_is_youtube,
+            apple_tv_auto_state=apple_tv_auto_state,
         )
 
         _vv_music_track_title = _bind_deps(
@@ -7785,20 +7640,6 @@ def main() -> int:
             _PIGEON_EXT=_PIGEON_EXT,
         )
 
-        def _adjust_tmdb_quality_failure_delta(delta: int) -> None:
-            """Persist ±1 failure immediately (⌘⇧X flag on / undo); refreshes Settings glance."""
-            if not _PIGEON_EXT or int(delta) == 0:
-                return
-            try:
-                st = read_app_state()
-                s = int(st.get("tmdb_quality_successes", 0) or 0)
-                f = max(0, int(st.get("tmdb_quality_failures", 0) or 0) + int(delta))
-                write_app_state(tmdb_quality_successes=s, tmdb_quality_failures=f)
-                match_quality_glance_sig[0] = ""
-                _refresh_match_quality_glance_label()
-            except Exception:
-                pass
-
         _cancel_tmdb_quality_auto_unlog_timer = _bind_deps(
             _core_tmdb_flow._cancel_tmdb_quality_auto_unlog_timer,
             root=root,
@@ -7853,20 +7694,23 @@ def main() -> int:
 
         _tmdb_match_tier_acceptable = _core_tmdb_flow._tmdb_match_tier_acceptable
 
-        def on_reset_tmdb_match_quality_stats() -> None:
-            """Zero the Settings success/fail counters (state.json only). Logs and desktop reports unchanged."""
-            if not _PIGEON_EXT:
-                return
-            try:
-                write_app_state(tmdb_quality_successes=0, tmdb_quality_failures=0)
-                match_quality_glance_sig[0] = ""
-                _refresh_match_quality_glance_label()
-            except Exception:
-                pass
-
         _format_tmdb_match_quality_glance = _core_tmdb_flow._format_tmdb_match_quality_glance
 
         _refresh_match_quality_glance_label = _core_tmdb_flow._refresh_match_quality_glance_label
+
+        _adjust_tmdb_quality_failure_delta = _bind_deps(
+            _core_tmdb_flow._adjust_tmdb_quality_failure_delta,
+            _PIGEON_EXT=_PIGEON_EXT,
+            _refresh_match_quality_glance_label=_refresh_match_quality_glance_label,
+            match_quality_glance_sig=match_quality_glance_sig,
+        )
+
+        on_reset_tmdb_match_quality_stats = _bind_deps(
+            _core_tmdb_flow.on_reset_tmdb_match_quality_stats,
+            _PIGEON_EXT=_PIGEON_EXT,
+            _refresh_match_quality_glance_label=_refresh_match_quality_glance_label,
+            match_quality_glance_sig=match_quality_glance_sig,
+        )
 
         _refresh_content_indicator = _bind_deps(
             _core_settings_ui._refresh_content_indicator,
@@ -7882,60 +7726,6 @@ def main() -> int:
         )
 
         _paint_cred_led_canvas = _core_settings_ui._paint_cred_led_canvas
-
-        def _remove_saved_player_device(for_location_id: str | None = None) -> None:
-            if apple_tv_busy["active"]:
-                describe_current_apple_tv(suffix="busy")
-                return
-            if not messagebox.askyesno(
-                "Remove Player",
-                "Remove the saved Player device?\n\n"
-                "Playback metadata stops using this Apple TV. "
-                "pyatv credentials on this Mac are not deleted (use Reset to wipe those).",
-                parent=root,
-            ):
-                return
-            lid = (for_location_id or read_current_location_id() or "").strip()
-            write_saved_streaming_device(None, for_location_id=lid or None)
-            cur = read_current_location_id()
-            if lid and cur and lid == cur:
-                streaming_slot_holder[0] = None
-                clear_last_apple_tv()
-                current_apple_tv.clear()
-                current_apple_tv.update(
-                    {"identifier": "", "address": "", "name": "", "label": ""}
-                )
-                apple_tv_auto_state["content_key"] = None
-                apple_tv_auto_state["tmdb_key"] = None
-                apple_tv_auto_state["query"] = None
-                apple_tv_auto_state["last_metadata"] = None
-                apple_tv_auto_state["last_tmdb_fetch_input"] = None
-                apple_tv_auto_state["last_tmdb_fetch_refined"] = None
-                apple_tv_auto_state["last_tmdb_fetch_prefer"] = None
-                apple_tv_playback_clock.clear()
-                apple_tv_playback_clock.update(
-                    {
-                        "has_sync": False,
-                        "sync_mono": 0.0,
-                        "sync_position": 0.0,
-                        "live_mode": False,
-                        "playing": False,
-                        "latched_total": None,
-                        "latched_content_key": None,
-                        "last_reported_total": None,
-                        "display_played_sec": None,
-                        "trt_next_fire_mono": None,
-                    }
-                )
-                _clear_reported_position_stall_stamp()
-                apple_tv_dashboard_track["last_poll_ok"] = None
-                apple_tv_dashboard_track["consecutive_fail"] = 0
-                _sync_status_bar_visibility_for_playback(None)
-            else:
-                streaming_slot_holder[0] = read_saved_streaming_device()
-            describe_current_apple_tv()
-            _rebuild_paired_devices_panel()
-            _schedule_refresh_pairing_leds()
 
         def _remove_streaming_device_at(for_location_id: str, index: int) -> None:
             if apple_tv_busy["active"]:
@@ -10280,13 +10070,6 @@ def main() -> int:
 
             threading.Thread(target=worker, daemon=True).start()
 
-        def _update_status_bar_from_metadata(metadata: dict[str, object] | None) -> None:
-            if metadata:
-                _apply_playback_clock_from_poll(metadata)
-            # Sync TRT digits to the latest polled integer second. The steady 1 Hz metronome
-            # continues stepping from this anchor.
-            _sync_trt_text_to_true_once()
-
         def _content_key_from_metadata(metadata: dict[str, object]) -> str | None:
             pyatv_q = str(metadata.get("query") or "").strip()
             if resolve_metadata_tmdb_query is not None:
@@ -10504,6 +10287,12 @@ def main() -> int:
             finally:
                 _sync_status_bar_trt_substantive()
 
+        _update_status_bar_from_metadata = _bind_deps(
+            _core_now_playing._update_status_bar_from_metadata,
+            _apply_playback_clock_from_poll=_apply_playback_clock_from_poll,
+            _sync_trt_text_to_true_once=_sync_trt_text_to_true_once,
+        )
+
         _playback_progress_fraction_for_bar = _bind_deps(
             _core_now_playing._playback_progress_fraction_for_bar,
             apple_tv_playback_clock=apple_tv_playback_clock,
@@ -10710,6 +10499,22 @@ def main() -> int:
                 skip_cache = None
             _sync_status_bar_trt_substantive()
             _sync_now_playing_screen_state()
+
+        _remove_saved_player_device = _bind_deps(
+            _core_settings_ui._remove_saved_player_device,
+            _clear_reported_position_stall_stamp=_clear_reported_position_stall_stamp,
+            _rebuild_paired_devices_panel=_rebuild_paired_devices_panel,
+            _schedule_refresh_pairing_leds=_schedule_refresh_pairing_leds,
+            _sync_status_bar_visibility_for_playback=_sync_status_bar_visibility_for_playback,
+            apple_tv_auto_state=apple_tv_auto_state,
+            apple_tv_busy=apple_tv_busy,
+            apple_tv_dashboard_track=apple_tv_dashboard_track,
+            apple_tv_playback_clock=apple_tv_playback_clock,
+            current_apple_tv=current_apple_tv,
+            describe_current_apple_tv=describe_current_apple_tv,
+            root=root,
+            streaming_slot_holder=streaming_slot_holder,
+        )
 
         def _sync_streaming_badge_from_playback_sources(
             md: dict[str, object] | None,
@@ -10920,14 +10725,6 @@ def main() -> int:
             if had_art:
                 render_once()
 
-        def _on_hdmi_ocr_clues(clues) -> None:
-            """Merge HDMI OCR into last_metadata. Spawn TMDb only when clues add a title."""
-            try:
-                root.after(0, lambda c=clues: _apply_hdmi_ocr_clues(c))
-            except Exception:
-                # Tk gone / shutdown: clear the gate so OCR is not stuck off forever.
-                apple_tv_auto_state["ocr_in_flight"] = False
-
         _apply_hdmi_ocr_clues = _bind_deps(
             _core_device_control._apply_hdmi_ocr_clues,
             _bump_clock_saver_significant_device=_bump_clock_saver_significant_device,
@@ -10936,6 +10733,13 @@ def main() -> int:
             _sync_now_playing_screen_state=_sync_now_playing_screen_state,
             apple_tv_auto_state=apple_tv_auto_state,
             spawn_tmdb_poster_fetch=spawn_tmdb_poster_fetch,
+        )
+
+        _on_hdmi_ocr_clues = _bind_deps(
+            _core_device_control._on_hdmi_ocr_clues,
+            _apply_hdmi_ocr_clues=_apply_hdmi_ocr_clues,
+            apple_tv_auto_state=apple_tv_auto_state,
+            root=root,
         )
 
         _schedule_hdmi_ocr_from_poll = _bind_deps(

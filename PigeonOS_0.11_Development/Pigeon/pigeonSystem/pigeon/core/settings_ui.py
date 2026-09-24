@@ -21,6 +21,9 @@ from pigeon.app_state import delete_location_v2
 from pigeon.app_state import row_is_playback_apple_tv
 from pigeon.version import version_string
 import sys
+from pigeon.app_state import clear_last_apple_tv
+from pigeon.app_state import read_saved_streaming_device
+from pigeon.app_state import write_saved_streaming_device
 
 
 def _settings_update_scrollregion(event: tk.Event | None = None, *, _settings_inner_scroll_size, settings_canvas, settings_inner) -> None:
@@ -1005,3 +1008,58 @@ def _ask_pairing_pin_modal(
     ent.focus_set()
     dlg.wait_window()
     return out[0]
+
+
+def _remove_saved_player_device(for_location_id: str | None = None, *, _clear_reported_position_stall_stamp, _rebuild_paired_devices_panel, _schedule_refresh_pairing_leds, _sync_status_bar_visibility_for_playback, apple_tv_auto_state, apple_tv_busy, apple_tv_dashboard_track, apple_tv_playback_clock, current_apple_tv, describe_current_apple_tv, root, streaming_slot_holder) -> None:
+    if apple_tv_busy["active"]:
+        describe_current_apple_tv(suffix="busy")
+        return
+    if not messagebox.askyesno(
+        "Remove Player",
+        "Remove the saved Player device?\n\n"
+        "Playback metadata stops using this Apple TV. "
+        "pyatv credentials on this Mac are not deleted (use Reset to wipe those).",
+        parent=root,
+    ):
+        return
+    lid = (for_location_id or read_current_location_id() or "").strip()
+    write_saved_streaming_device(None, for_location_id=lid or None)
+    cur = read_current_location_id()
+    if lid and cur and lid == cur:
+        streaming_slot_holder[0] = None
+        clear_last_apple_tv()
+        current_apple_tv.clear()
+        current_apple_tv.update(
+            {"identifier": "", "address": "", "name": "", "label": ""}
+        )
+        apple_tv_auto_state["content_key"] = None
+        apple_tv_auto_state["tmdb_key"] = None
+        apple_tv_auto_state["query"] = None
+        apple_tv_auto_state["last_metadata"] = None
+        apple_tv_auto_state["last_tmdb_fetch_input"] = None
+        apple_tv_auto_state["last_tmdb_fetch_refined"] = None
+        apple_tv_auto_state["last_tmdb_fetch_prefer"] = None
+        apple_tv_playback_clock.clear()
+        apple_tv_playback_clock.update(
+            {
+                "has_sync": False,
+                "sync_mono": 0.0,
+                "sync_position": 0.0,
+                "live_mode": False,
+                "playing": False,
+                "latched_total": None,
+                "latched_content_key": None,
+                "last_reported_total": None,
+                "display_played_sec": None,
+                "trt_next_fire_mono": None,
+            }
+        )
+        _clear_reported_position_stall_stamp()
+        apple_tv_dashboard_track["last_poll_ok"] = None
+        apple_tv_dashboard_track["consecutive_fail"] = 0
+        _sync_status_bar_visibility_for_playback(None)
+    else:
+        streaming_slot_holder[0] = read_saved_streaming_device()
+    describe_current_apple_tv()
+    _rebuild_paired_devices_panel()
+    _schedule_refresh_pairing_leds()

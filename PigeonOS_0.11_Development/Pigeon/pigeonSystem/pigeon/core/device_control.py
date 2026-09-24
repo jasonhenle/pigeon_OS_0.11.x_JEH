@@ -231,3 +231,92 @@ def _bind_receiver_volume_hub(host: str, *, _on_denon_telnet_volume) -> None:
         start_denon_telnet_hub(h, on_change=_on_denon_telnet_volume)
     except Exception:
         pass
+
+
+def _denon_telnet_audio_fallback(*, receiver_telnet_debug_holder) -> tuple[str, str]:
+    """Telnet snapshot when HTTP/XML left incoming/config empty."""
+    dbg = receiver_telnet_debug_holder[0]
+    if not isinstance(dbg, dict) or not dbg:
+        return "", ""
+    inc = str(
+        dbg.get("SYSDA") or dbg.get("SSINFAISFOR") or dbg.get("DC") or ""
+    ).strip()
+    cfg = str(dbg.get("MS") or "").strip()
+    if inc:
+        inc = inc.lower()
+    if cfg:
+        cfg = cfg.lower()
+    return inc, cfg
+
+
+def _resolve_receiver_lines_for_now_playing(*, _clock_saver_volume_raw, _denon_telnet_audio_fallback, apple_tv_auto_state, compose_playback_volume_widget_line, denon_vol_cache, receiver_overlay_state, receiver_standby_holder, streaming_slot_holder) -> tuple[str, str, str]:
+    """Incoming/config/volume for View 1, with Denon telnet fallback."""
+    standby = bool(receiver_standby_holder[0])
+    inc = ""
+    cfg = ""
+    if not standby:
+        inc = str(receiver_overlay_state.get("incoming") or "").strip()
+        cfg = str(receiver_overlay_state.get("config") or "").strip()
+        if not inc and not cfg:
+            fb_inc, fb_cfg = _denon_telnet_audio_fallback()
+            inc, cfg = fb_inc, fb_cfg
+    vol = _clock_saver_volume_raw()
+    if not vol and compose_playback_volume_widget_line is not None:
+        vol = compose_playback_volume_widget_line(
+            stream_row=streaming_slot_holder[0],
+            apple_tv_last_metadata=apple_tv_auto_state.get("last_metadata")
+            if isinstance(apple_tv_auto_state.get("last_metadata"), dict)
+            else None,
+            denon_vol_effective=str(denon_vol_cache.get("effective") or ""),
+            roku_tv_volume_percent="",
+        )
+    if not vol:
+        raw_vol = str(receiver_overlay_state.get("volume") or "").strip()
+        if raw_vol:
+            # Accept dB, mute, percent, and bare 0–100 (player-reported).
+            low = raw_vol.lower()
+            if (
+                low in ("mute", "muted", "off")
+                or "db" in low
+                or raw_vol.endswith("%")
+                or (raw_vol.isdigit() and 0 <= int(raw_vol) <= 100)
+                or raw_vol[:1] in "+-"
+            ):
+                vol = raw_vol
+    if vol:
+        denon_vol_cache["np_hold"] = vol
+    else:
+        # Keep last good readout so zone3 does not flash an empty ring
+        # between AVR polls / while Apple TV reports volume_percent=0.
+        held = str(denon_vol_cache.get("np_hold") or "").strip()
+        if not held:
+            held = str(denon_vol_cache.get("effective") or "").strip()
+        vol = held
+    return inc, cfg, vol
+
+
+def _resolve_receiver_input_label(*, receiver_overlay_state, receiver_standby_holder, receiver_telnet_debug_holder) -> str:
+    """Current AVR input label for the volume-widget caption."""
+    if receiver_standby_holder[0]:
+        return ""
+    lab = str(receiver_overlay_state.get("input") or "").strip()
+    if lab:
+        return lab
+    dbg = receiver_telnet_debug_holder[0]
+    if isinstance(dbg, dict) and dbg:
+        try:
+            from pigeon.receiver_denon import pick_receiver_input_label
+
+            return pick_receiver_input_label(dbg)
+        except Exception:
+            return ""
+    return ""
+
+
+def _on_hdmi_ocr_clues(clues, *, _apply_hdmi_ocr_clues, apple_tv_auto_state, root) -> None:
+    """Merge HDMI OCR into last_metadata. Spawn TMDb only when clues add a title."""
+    try:
+        root.after(0, lambda c=clues: _apply_hdmi_ocr_clues(c))
+    except Exception:
+        # Tk gone / shutdown: clear the gate so OCR is not stuck off forever.
+        apple_tv_auto_state["ocr_in_flight"] = False

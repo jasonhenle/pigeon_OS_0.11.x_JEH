@@ -396,3 +396,15 @@ def _compose_paused_screen(cap_w: int, cap_h: int, *, PAUSED_SCREEN_BACKDROP_DIM
         font=font,
         dim=PAUSED_SCREEN_BACKDROP_DIM,
     )
+
+
+def _clock_saver_layer_opacity(now: float, *, CLOCK_SAVER_DIM_OPACITY, _boot_clock_saver_until_playback, _clock_startup_intro_opacity, _splash_reveal_clock, clock_saver_peek_until_mono) -> float:
+    intro = _clock_startup_intro_opacity(now)
+    if intro is not None:
+        return float(intro)
+    if now < clock_saver_peek_until_mono[0]:
+        return 1.0
+    # Boot / splash-reveal: full-on clock (no ease from black, no idle dim).
+    if _boot_clock_saver_until_playback[0] or _splash_reveal_clock[0]:
+        return 1.0
+    return CLOCK_SAVER_DIM_OPACITY
