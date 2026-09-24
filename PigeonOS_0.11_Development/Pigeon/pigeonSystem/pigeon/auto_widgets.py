@@ -24,7 +24,6 @@ LAYOUT_SETTINGS = "settings"
 LAYOUT_SHAZAM = "shazam"
 
 TT = "tt_countdown_16x9"
-LEVELS = "audio_levels"
 VOLUME = "volume"
 INFO = "cast_info"
 STATUS = "status_bar"
@@ -35,7 +34,7 @@ PAUSESAVER = "pausesaver"
 DEFAULT_NP_ASSIGNMENTS: tuple[str, str, str, str, str] = (
     TT,
     "",
-    LEVELS,
+    VOLUME,
     INFO,
     STATUS,
 )
@@ -178,9 +177,12 @@ def classify_player_metadata(
 
 
 def _zone3_widget(sig: AutoWidgetSignals) -> str:
-    if sig.audio_levels:
-        return LEVELS
-    if sig.lan_ok:
+    """Zone 3 is always the volume disc while LAN or program audio is present.
+
+    With LAN down but audio still arriving, the disc stays up with a blank
+    readout (``blank_volume``) until the receiver is reachable again.
+    """
+    if sig.lan_ok or sig.audio_levels:
         return VOLUME
     return ""
 
@@ -248,7 +250,7 @@ def resolve_auto_widgets(sig: AutoWidgetSignals) -> AutoWidgetPlan:
         if meta == METADATA_OK:
             # A known title stays on now-playing even when the receiver or
             # meters briefly drop. Clocksaver is only for absent / idle content.
-            z3 = _zone3_widget(sig) or LEVELS
+            z3 = _zone3_widget(sig) or VOLUME
             return _plan(
                 layout=LAYOUT_NP,
                 assignments=(TT, "", z3, INFO, STATUS),
@@ -259,7 +261,7 @@ def resolve_auto_widgets(sig: AutoWidgetSignals) -> AutoWidgetPlan:
             if sig.audio_levels:
                 return _plan(
                     layout=LAYOUT_ZONE6_PAUSESAVER,
-                    assignments=(PAUSESAVER, "", LEVELS, INFO, STATUS),
+                    assignments=(PAUSESAVER, "", VOLUME, INFO, STATUS),
                     sig=sig,
                 )
             return _plan(
@@ -273,7 +275,7 @@ def resolve_auto_widgets(sig: AutoWidgetSignals) -> AutoWidgetPlan:
             z4, z4_text = _zone4_fallback(sig)
             return _plan(
                 layout=LAYOUT_SHAZAM,
-                assignments=(TT, "", _zone3_widget(sig) or LEVELS, z4, SECONDS),
+                assignments=(TT, "", _zone3_widget(sig) or VOLUME, z4, SECONDS),
                 sig=sig,
                 zone4_text=z4_text,
             )
@@ -282,7 +284,7 @@ def resolve_auto_widgets(sig: AutoWidgetSignals) -> AutoWidgetPlan:
         if sig.audio_levels:
             return _plan(
                 layout=LAYOUT_ZONE6_CLOCKSAVER,
-                assignments=(CLOCK_SAVER, "", LEVELS, z4, ""),
+                assignments=(CLOCK_SAVER, "", VOLUME, z4, ""),
                 sig=sig,
                 zone4_text=z4_text,
             )

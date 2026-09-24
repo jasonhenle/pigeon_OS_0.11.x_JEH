@@ -46,9 +46,7 @@ _WIDGETS_VIEWBOX = (
 # Header labels shown for the focused / activated zone (Pillow, not SVG).
 WIDGET_FOCUS_IDS: tuple[str, ...] = (
     "artwork",
-    "visualizer",
     "vu",
-    "levels",
     "volume",
     "status",
     "info",
@@ -83,17 +81,17 @@ _ZONE_SHAPE_SVG: dict[str, tuple[float, float, float, float]] = {
     "zone5": (966.4, 1298.16, 582.23, 68.16),
 }
 
-# Each zone has its own list. Clock / info / levels can appear in more than one.
+# Each zone has its own list. Clock / info can appear in more than one.
 ZONE_WIDGET_LISTS: dict[str, tuple[str, ...]] = {
-    "zone6": ("artwork", "visualizer", "vu", "clock"),
-    "zone3": ("levels", "volume", "clock", "info"),
-    "zone4": ("status", "info", "levels", "clock", "weather"),
-    "zone5": ("status", "info", "levels", "clock", "weather"),
+    "zone6": ("artwork", "vu", "clock"),
+    "zone3": ("volume", "clock", "info"),
+    "zone4": ("status", "info", "clock", "weather"),
+    "zone5": ("status", "info", "clock", "weather"),
 }
 
 _DEFAULT_WIDGET_BY_ZONE: dict[str, str] = {
     "zone6": "artwork",
-    "zone3": "levels",
+    "zone3": "volume",
     "zone4": "info",
     "zone5": "status",
 }
@@ -166,8 +164,6 @@ def widget_id_for_zone(state: MainSettingsState | None, zone_id: str) -> str:
     if zone_id == "zone6":
         if z1 in ("clock", "clock_16x9"):
             return "clock"
-        if z1 == "visualizer":
-            return "visualizer"
         if z1 == "vu":
             return "vu"
         if z1 == "weather":
@@ -180,8 +176,6 @@ def widget_id_for_zone(state: MainSettingsState | None, zone_id: str) -> str:
             return "clock"
         if z3 == "cast_info":
             return "info"
-        if z3 == "audio_levels":
-            return "levels"
         if z3 == "poster":
             return "artwork"
         return "volume"
@@ -197,8 +191,6 @@ def _strip_widget_id(key: str, *, default: str) -> str:
         return "weather"
     if key == "clock":
         return "clock"
-    if key == "audio_levels":
-        return "levels"
     if key == "cast_info":
         return "info"
     if key in ("status_bar", "now_playing"):
@@ -217,8 +209,6 @@ def _prefs_key_for_strip(widget_id: str) -> str:
         return "status_bar"
     if widget_id == "info":
         return "cast_info"
-    if widget_id == "levels":
-        return "audio_levels"
     if widget_id == "clock":
         return "clock"
     if widget_id == "weather":
@@ -302,8 +292,6 @@ def apply_widget_assignment(
     if zone == "zone6":
         if widget_id == "artwork":
             current[0], current[1] = "tt_countdown_16x9", ""
-        elif widget_id == "visualizer":
-            current[0], current[1] = "visualizer", ""
         elif widget_id == "vu":
             current[0], current[1] = "vu", ""
         elif widget_id == "clock":
@@ -315,8 +303,6 @@ def apply_widget_assignment(
             current[2] = "clock"
         elif widget_id == "info":
             current[2] = "cast_info"
-        elif widget_id == "levels":
-            current[2] = "audio_levels"
         elif widget_id == "volume":
             current[2] = "volume"
         else:
@@ -1044,13 +1030,6 @@ def _widget_patch_for_zone(
     demo_state = None
     if zone == "zone6" and widget_id == "clock":
         patch = _render_zone6_clock_bgra(box)
-    elif widget_id == "visualizer":
-        from pigeon.widgets.audio_visualizer import render_audio_visualizer_bgra
-
-        _x, _y, w, h = box
-        patch = render_audio_visualizer_bgra(
-            max(32, int(w)), max(24, int(h)), preview=True
-        )
     elif widget_id == "vu":
         from pigeon.widgets.vu_meters import render_vu_meters_bgra
 
@@ -1058,20 +1037,6 @@ def _widget_patch_for_zone(
         patch = render_vu_meters_bgra(
             max(32, int(w)), max(24, int(h)), preview=True
         )
-    elif widget_id == "levels":
-        from pigeon.widgets.audio_meter_saver import render_stereo_meter_widget_bgra
-        from pigeon.widgets.view_circles import draw_levels_volume_readout
-
-        _x, _y, w, h = box
-        patch = render_stereo_meter_widget_bgra(
-            max(24, int(w)), max(24, int(h)), left_fill=0.0, right_fill=0.0
-        )
-        if patch is not None and patch.size:
-            draw_levels_volume_readout(
-                patch,
-                (0, 0, int(patch.shape[1]), int(patch.shape[0])),
-                _DEMO_VOLUME,
-            )
     elif widget_id == "artwork":
         if zone == "zone3":
             patch = _render_poster_artwork_widget_bgra(demo_state, assets_dir)
@@ -1111,7 +1076,7 @@ def _draw_zone_demos_bgra(
         patch = _widget_patch_for_zone(
             zone, wid, state=state, assets_dir=assets_dir, box=box
         )
-        if zone == "zone6" and wid in ("clock", "visualizer", "vu") and patch is not None:
+        if zone == "zone6" and wid in ("clock", "vu") and patch is not None:
             _paste_patch_bgra(out, patch, int(box[0]), int(box[1]))
             continue
         _contain_paste(out, patch, box)

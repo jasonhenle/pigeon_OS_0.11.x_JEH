@@ -112,7 +112,6 @@ from pigeon.np_layout import (
     tt_countdown_centered_art_rect,
     tt_countdown_portrait_content_lift,
     layout_shows_tt_countdown_and_volume,
-    layout_shows_tt_countdown_and_levels,
     tt_countdown_volume_align_dy,
     tt_countdown_time_anchor,
     tt_countdown_tt_box,
@@ -405,34 +404,6 @@ _CLOCK_DATE_SIZE_PX = 32
 _VOLUME_TEXT_INNER_FIT = 0.88
 # Gap between the disc volume number and the HH:MM sitting under it.
 _VOLUME_CLOCK_GAP_PX = 6.0
-
-# Audio-levels channel labels (PyMuPDF can't paint Digital-7 — redrawn in Pillow).
-_AUDIO_LEVEL_LABEL_SIZE = 33
-_AUDIO_LEVEL_LABEL_BASELINE_Y = 304.67
-_AUDIO_LEVEL_LABELS_BY_ZONE: dict[int, tuple[tuple[str, float], ...]] = {
-    # (label, bar center x) — from pigeon_now_playing.svg meter columns.
-    1: (
-        ("sl", 44.115),
-        ("l", 99.245),
-        ("c", 152.705),
-        ("r", 206.165),
-        ("sr", 258.815),
-    ),
-    2: (
-        ("sl", 293.615),
-        ("l", 348.745),
-        ("c", 402.205),
-        ("r", 455.665),
-        ("sr", 508.315),
-    ),
-    3: (
-        ("sl", 542.355),
-        ("l", 597.475),
-        ("c", 650.935),
-        ("r", 704.395),
-        ("sr", 757.055),
-    ),
-}
 
 # Zone4 cast columns (center x, actor baseline y, character baseline y) — SVG geometry.
 _CAST_COLS_Z4: tuple[tuple[float, float, float], ...] = (
@@ -906,8 +877,8 @@ def _default_zone_widget_assignments(
     except Exception:
         mode = str(content_mode or "").strip().lower()
         if mode == "music":
-            return ("tt_countdown_16x9", "", "audio_levels", "cast_info", "status_bar")
-        return ("tt_countdown_16x9", "", "audio_levels", "cast_info", "status_bar")
+            return ("tt_countdown_16x9", "", "volume", "cast_info", "status_bar")
+        return ("tt_countdown_16x9", "", "volume", "cast_info", "status_bar")
 
 
 def _header_clock_enabled() -> bool:
@@ -1078,26 +1049,18 @@ def _apply_connection_fallbacks(
     has_info: bool,
     loading_cast: bool,
 ) -> tuple[str, str, str, str, str]:
-    """Zone 3 only: keep levels/volume usable when audio or the AVR is gone."""
+    """Zone 3 only: keep volume usable when the AVR is gone."""
     z = list(zones)
     _ = has_title
     _ = has_position
     _ = loading_cast
-
-    def _zone3_audio_chain() -> str:
-        if has_audio:
-            return "audio_levels"
-        if has_receiver:
-            return "volume"
-        return "clock"
+    _ = has_audio
 
     z3 = str(z[2] or "")
-    if z3 == "audio_levels" and not has_audio:
-        z[2] = "volume" if has_receiver else "clock"
-    elif z3 == "volume" and not has_receiver:
+    if z3 == "volume" and not has_receiver:
         z[2] = "clock"
     elif z3 == "cast_info" and not has_info:
-        z[2] = _zone3_audio_chain()
+        z[2] = "volume" if has_receiver else "clock"
     return (z[0], z[1], z[2], z[3], z[4])
 
 
@@ -2907,57 +2870,6 @@ def _paste_centered(canvas: np.ndarray, patch: np.ndarray, cx: float, cy: float)
     _paste_patch_bgra(canvas, patch, int(round(cx - pw / 2.0)), int(round(cy - ph / 2.0)))
 
 
-def draw_levels_volume_readout(
-    out: np.ndarray,
-    box: tuple[int, int, int, int],
-    volume_raw: object,
-    *,
-    muted: bool = False,
-) -> None:
-    """Digital-7 volume number in the reserved band under the levels bars."""
-    from pigeon.widgets.audio_meter_saver import levels_readout_center_y
-
-    zx, zy, zw, zh = (int(v) for v in box)
-    if zw < 16 or zh < 16:
-        return
-    from pigeon.widgets.audio_meter_saver import stereo_meter_volume_band_h
-
-    reserve = stereo_meter_volume_band_h(zh)
-    if reserve < 12:
-        return
-    vol = volume_widget_value_text(volume_raw)
-    is_mute = bool(muted) or vol.strip().lower() in ("mute", "muted", "off")
-    cx = float(zx) + float(zw) * 0.5
-    cy = levels_readout_center_y(zy, zh)
-    max_w = max(24, int(round(zw * 0.92)))
-    size = max(12, int(TT_COUNTDOWN_TEXT_SIZE_PX))
-    if is_mute:
-        label = "MUTE"
-        font = _load_sharp_extrabold(size)
-        patch, pw, _ph = _text_patch_font(
-            label, font=font, fill_rgb=_look_ink_rgb()
-        )
-        while pw > max_w and size > 14:
-            size -= 2
-            font = _load_sharp_extrabold(size)
-            patch, pw, _ph = _text_patch_font(
-                label, font=font, fill_rgb=_look_ink_rgb()
-            )
-        _paste_centered(out, patch, cx, cy)
-        return
-    if not vol:
-        return
-    patch, pw, _ph = _text_patch_digital7(
-        vol, size_px=size, fill_rgb=_look_ink_rgb()
-    )
-    while pw > max_w and size > 16:
-        size -= 2
-        patch, pw, _ph = _text_patch_digital7(
-            vol, size_px=size, fill_rgb=_look_ink_rgb()
-        )
-    _paste_centered(out, patch, cx, cy)
-
-
 def _paste_baseline_centered(
     canvas: np.ndarray,
     patch: np.ndarray,
@@ -4309,11 +4221,11 @@ class ViewCirclesWidget:
             return False
 
     def wants_live_audio(self) -> bool:
-        """True when NP needs the ALSA capture thread (levels, visualizer, VU)."""
+        """True when NP needs the ALSA capture thread (VU)."""
         if not self._state.content_active:
             return False
         keys = set(self._assignments())
-        return bool(keys & {"visualizer", "audio_levels", "vu"})
+        return "vu" in keys
 
     def _assignments(self) -> tuple[str, str, str, str, str]:
         named = sum(1 for actor, _role in (self._state.cast or []) if str(actor or "").strip())
@@ -4523,7 +4435,7 @@ class ViewCirclesWidget:
             return True
         if zone6_span_widget(keys) in ("clock", "clock_saver", "pausesaver"):
             return True
-        # VU / visualizer already paint at 30 Hz. Rebuilding the analog clock
+        # VU already paints at 30 Hz. Rebuilding the analog clock
         # SVG every wall-clock second hitchs those widgets for ~100 ms.
         if self._live_audio_widgets_on():
             return False
@@ -5172,21 +5084,7 @@ class ViewCirclesWidget:
     def _draw_live_audio_widgets(self, out: np.ndarray) -> None:
         assignments = self._assignments()
         bgr = out.ndim == 3 and int(out.shape[2]) == 3
-        if zone6_span_widget(assignments) == "visualizer":
-            z = NOW_PLAYING_ZONES[6]
-            zx, zy, zw, zh = z.xywh
-            if bgr:
-                from pigeon.widgets.audio_visualizer import render_audio_visualizer_into_bgr
-
-                render_audio_visualizer_into_bgr(
-                    out[int(zy) : int(zy) + int(zh), int(zx) : int(zx) + int(zw)]
-                )
-            else:
-                from pigeon.widgets.audio_visualizer import render_audio_visualizer_bgra
-
-                patch = render_audio_visualizer_bgra(int(zw), int(zh))
-                _paste_patch_bgra(out, patch, int(zx), int(zy))
-        elif zone6_span_widget(assignments) == "vu":
+        if zone6_span_widget(assignments) == "vu":
             z = NOW_PLAYING_ZONES[6]
             zx, zy, zw, zh = z.xywh
             if bgr:
@@ -5201,22 +5099,6 @@ class ViewCirclesWidget:
 
                 patch = render_vu_meters_bgra(int(zw), int(zh))
                 _paste_patch_bgra(out, patch, int(zx), int(zy))
-        for i, key in enumerate(assignments):
-            if key != "audio_levels":
-                continue
-            zone = _zone_spec(i + 1)
-            zx, zy, zw, zh = zone.xywh
-            from pigeon.widgets.audio_meter_saver import render_stereo_meter_widget_bgra
-
-            patch = render_stereo_meter_widget_bgra(int(zw), int(zh))
-            _paste_patch_bgra(out, patch, int(zx), int(zy))
-            draw_levels_volume_readout(
-                out,
-                (int(zx), int(zy), int(zw), int(zh)),
-                self._state.volume,
-                muted=bool(self._state.volume_muted),
-            )
-            self._draw_input_caption(out, zone=i + 1)
 
     def _draw_paused_zone6_clock_saver(
         self, out: np.ndarray, now: datetime | None = None
@@ -5239,7 +5121,7 @@ class ViewCirclesWidget:
         _paste_patch_bgra(out, patch, int(zx), int(zy))
 
     def _draw_zone6_span_widget(self, out: np.ndarray) -> None:
-        """Clock-saver face, weather cluster, or visualizer in the wide zone-6 slot."""
+        """Clock-saver face, weather cluster, or VU in the wide zone-6 slot."""
         kind = zone6_span_widget(self._assignments())
         if kind not in ("clock", "clock_saver", "pausesaver", "weather"):
             return
@@ -5385,27 +5267,6 @@ class ViewCirclesWidget:
     ) -> None:
         """Deprecated separator between in-ring volume/config — no-op."""
         return
-
-    def _draw_audio_level_labels(self, out: np.ndarray) -> None:
-        """Paint sl/l/c/r/sr under each meter column in Digital-7."""
-        assignments = self._assignments()
-        for zone, cols in _AUDIO_LEVEL_LABELS_BY_ZONE.items():
-            if assignments[zone - 1] != "audio_levels":
-                continue
-            for label, cx in cols:
-                patch, tw, th = _text_patch_digital7(
-                    label,
-                    size_px=_AUDIO_LEVEL_LABEL_SIZE,
-                )
-                if tw < 1 or th < 1:
-                    continue
-                # SVG baseline → patch is tight ink; sit on the same baseline band.
-                _paste_centered(
-                    out,
-                    patch,
-                    cx,
-                    float(_AUDIO_LEVEL_LABEL_BASELINE_Y) - th * 0.35,
-                )
 
     def _draw_input_caption(self, out: np.ndarray, *, zone: int) -> None:
         """AVR input label above the volume disc or levels well."""
@@ -5900,7 +5761,6 @@ class ViewCirclesWidget:
 
         shimmer_id = None
         shimmer_radius = max(8, int(round(float(WIDGET_SHIMMER_RADIUS))))
-        pin_trt_to_levels = False
 
         def _paste_group(pastes: list[tuple[np.ndarray, int, int]]) -> None:
             if not pastes:
@@ -5928,18 +5788,7 @@ class ViewCirclesWidget:
             zx, zy, zw, zh = z.xywh
             dy = 0.0
             art_min_top = float(zy) + float(NP_ZONE6_ART_MIN_TOP_PX)
-            if pin_trt_to_levels:
-                from pigeon.widgets.audio_meter_saver import stereo_meter_volume_band_h
-
-                reserve = stereo_meter_volume_band_h(int(zh))
-                usable_bottom = float(zy + zh - reserve)
-                zone_cy = (float(zy) + usable_bottom) * 0.5
-                dy = zone_cy - (y0 + y1) * 0.5
-                min_dy = art_min_top - y0
-                max_dy = usable_bottom - y1
-                if max_dy >= min_dy:
-                    dy = min(max(dy, min_dy), max_dy)
-            elif layout_shows_tt_countdown_and_volume(self._assignments()):
+            if layout_shows_tt_countdown_and_volume(self._assignments()):
                 vol_zone = _zone_for_widget(self._assignments(), "volume")
                 if vol_zone is not None:
                     _vcx, vcy = _zone_volume_center(int(vol_zone))
@@ -6085,13 +5934,10 @@ class ViewCirclesWidget:
             tt_local_h = float(patch.shape[0]) * scale_y
         if tpatch is not None and tpatch.size > 0:
             trt_local_h = float(tpatch.shape[0]) * scale_y
-        pin_trt_to_levels = bool(
-            wide and layout_shows_tt_countdown_and_levels(self._assignments())
-        )
         if wide:
             lift = tt_countdown_16x9_content_lift(
                 tt_local_h,
-                trt_height=0.0 if pin_trt_to_levels else trt_local_h,
+                trt_height=trt_local_h,
             )
         else:
             lift = tt_countdown_portrait_content_lift(
@@ -6111,7 +5957,6 @@ class ViewCirclesWidget:
             px = cx_d - pw / 2.0
             py = bottom_d - ph
             pastes.append((patch, int(round(px)), int(round(py))))
-        trt_paste = None
         if tpatch is not None and tpatch.size > 0:
             ax, ay = (
                 tt_countdown_16x9_time_anchor(lift=lift)
@@ -6125,17 +5970,8 @@ class ViewCirclesWidget:
             )
             tw_p = tpatch.shape[1]
             px = cx_d - tw_p / 2.0
-            if pin_trt_to_levels:
-                from pigeon.widgets.audio_meter_saver import levels_readout_center_y
-
-                cy = levels_readout_center_y(float(z.y), float(z.h))
-                trt_paste = (tpatch, float(cx_d), cy)
-            else:
-                pastes.append((tpatch, int(round(px)), int(round(top_d))))
+            pastes.append((tpatch, int(round(px)), int(round(top_d))))
         _paste_group(pastes)
-        if trt_paste is not None:
-            img, cx_t, cy_t = trt_paste
-            _paste_centered(out, img, cx_t, cy_t)
 
     def _render_zone10_pausesaver_bgra(self) -> np.ndarray:
         """Fullscreen TMDb backdrop, paused plate in zone 4, status in zone 5."""
@@ -6282,9 +6118,7 @@ class ViewCirclesWidget:
 
     def _live_audio_widgets_on(self) -> bool:
         keys = self._assignments()
-        return any(
-            k in ("visualizer", "audio_levels", "vu") for k in keys
-        ) or zone6_span_widget(keys) in ("visualizer", "vu")
+        return "vu" in keys or zone6_span_widget(keys) == "vu"
 
     def bgra_frame(self) -> np.ndarray | None:
         if not self._state.chrome_visible:

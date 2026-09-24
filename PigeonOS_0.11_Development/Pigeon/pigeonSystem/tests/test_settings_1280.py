@@ -599,7 +599,6 @@ class SettingsRenderTests(unittest.TestCase):
         idle.pigeon_focus_index = ring.index("pigeon_back")
         idle_frame = render_pigeon_settings_bgra(idle, assets_dir=assets)
         idle_header = idle_frame[0:plate_y, 192:1178, :3]
-        idle_lit = int(np.count_nonzero(idle_header.max(axis=2) > 40))
 
         preview = MainSettingsState()
         preview.show_pigeon_settings = True
@@ -607,10 +606,11 @@ class SettingsRenderTests(unittest.TestCase):
         self.assertFalse(preview.show_widgets)
         preview_frame = render_pigeon_settings_bgra(preview, assets_dir=assets)
         preview_header = preview_frame[0:plate_y, 192:1178, :3]
-        self.assertGreater(
-            int(np.count_nonzero(preview_header.max(axis=2) > 40)),
-            idle_lit,
-        )
+        # The widgets preview swaps the header for the zone-6 widget labels.
+        changed = np.abs(
+            preview_header.astype(np.int16) - idle_header.astype(np.int16)
+        ).max(axis=2)
+        self.assertGreater(int(np.count_nonzero(changed > 40)), 2000)
 
         widget = MainSettingsWidget(assets_dir=assets, state=preview)
         action = widget.activate()
@@ -620,7 +620,7 @@ class SettingsRenderTests(unittest.TestCase):
         self.assertEqual(preview.widgets_focused_id, "zone6")
         self.assertEqual(
             preview.preferences_zone_widgets,
-            ("tt_countdown_16x9", "", "audio_levels", "cast_info", "status_bar"),
+            ("tt_countdown_16x9", "", "volume", "cast_info", "status_bar"),
         )
 
         active = render_pigeon_settings_bgra(preview, assets_dir=assets)
@@ -668,7 +668,7 @@ class SettingsRenderTests(unittest.TestCase):
         self.assertEqual(preview.widgets_focused_id, "clock")
         self.assertEqual(preview.widgets_active_zone, "zone6")
         self.assertEqual(widget_id_for_zone(preview, "zone6"), "clock")
-        self.assertEqual(widget_id_for_zone(preview, "zone3"), "levels")
+        self.assertEqual(widget_id_for_zone(preview, "zone3"), "volume")
         labels = render_pigeon_settings_bgra(preview, assets_dir=assets)
         still_zone6 = labels[267:271, 385:770, :3]
         self.assertGreater(
@@ -2034,6 +2034,30 @@ class SettingsMainNetworkSsidTests(unittest.TestCase):
             state.reload_location_wifi()
         self.assertEqual(state.selected_wifi_ssid, "")
         self.assertEqual(state.displayed_wifi_ssid(), "")
+
+
+class RetiredZone6VisualizerTests(unittest.TestCase):
+    def test_visualizer_not_offered(self) -> None:
+        from pigeon.widgets.preferences_settings import ZONE_WIDGET_CATALOG
+        from pigeon.widgets.widgets_settings import WIDGET_FOCUS_IDS, ZONE_WIDGET_LISTS
+
+        self.assertNotIn("visualizer", ZONE_WIDGET_LISTS["zone6"])
+        self.assertNotIn("visualizer", WIDGET_FOCUS_IDS)
+        self.assertNotIn("visualizer", ZONE_WIDGET_CATALOG[1])
+
+    def test_saved_visualizer_falls_back_to_default(self) -> None:
+        from pigeon.widgets.preferences_settings import (
+            DEFAULT_ZONE_WIDGETS,
+            _normalize_zone_widgets,
+        )
+
+        out = _normalize_zone_widgets(["visualizer", "", "volume", "cast_info", "status_bar"])
+        self.assertEqual(out[0], DEFAULT_ZONE_WIDGETS[0])
+
+    def test_zone6_span_ignores_visualizer(self) -> None:
+        from pigeon.np_layout import zone6_span_widget
+
+        self.assertEqual(zone6_span_widget(("visualizer", "", "volume")), "")
 
 
 if __name__ == "__main__":
