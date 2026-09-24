@@ -3268,7 +3268,7 @@ def apply_tmdb_movie_query(
     if not pp:
         parts.append("poster: none")
     else:
-        ok_p, _msg_p, p_pulled = download_poster_to_pulled(
+        ok_p, msg_p, p_pulled = download_poster_to_pulled(
             {"id": item.get("id"), "poster_path": pp, "title": display_title, "name": display_title},
             kind,
         )
@@ -3281,7 +3281,7 @@ def apply_tmdb_movie_query(
                 parts.append(f"poster: {p_pulled.name}")
             _maybe_delete_pulled(p_pulled)
         else:
-            parts.append("poster: download failed")
+            parts.append(f"poster: download failed ({msg_p})")
 
     # --- Logo (English-only; cache first) ---
     logo_cached = find_cached_reformatted_asset(tk, ASSET_LOGO_EN)
@@ -3308,7 +3308,7 @@ def apply_tmdb_movie_query(
     if not bp:
         parts.append("backdrop: none")
     else:
-        ok_b, _msg_b, bd_pulled = download_backdrop_to_pulled(item, kind, bp)
+        ok_b, msg_b, bd_pulled = download_backdrop_to_pulled(item, kind, bp)
         if ok_b and bd_pulled is not None:
             try:
                 copy_pulled_to_reformatted(bd_pulled, tk, ASSET_BACKDROP)
@@ -3319,7 +3319,7 @@ def apply_tmdb_movie_query(
             backdrop_master = backdrop_master_bgr_from_file(bd_pulled)
             _maybe_delete_pulled(bd_pulled)
         else:
-            parts.append("backdrop: download failed")
+            parts.append(f"backdrop: download failed ({msg_b})")
 
     summary = " | ".join(parts)
     trim_pulled_media_dir()

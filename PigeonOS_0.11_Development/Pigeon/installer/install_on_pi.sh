@@ -153,7 +153,7 @@ else
   pigeon_rsync_tree "${PIGEON_ROOT}" "${INSTALL_DIR}"
 fi
 
-pigeon_prepare_runtime_dirs "${INSTALL_DIR}"
+pigeon_prepare_runtime_dirs "${INSTALL_DIR}" "${INSTALL_USER}"
 pigeon_install_bundled_fonts "${INSTALL_DIR}" "${INSTALL_HOME}"
 chown -R "${INSTALL_USER}:${INSTALL_USER}" "${INSTALL_HOME}/.local/share/fonts/pigeon" 2>/dev/null || true
 chmod +x \

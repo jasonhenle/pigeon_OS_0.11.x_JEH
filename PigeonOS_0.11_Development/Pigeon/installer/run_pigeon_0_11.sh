@@ -192,4 +192,14 @@ if [[ ! -f "${STATE_DIR}/tmdb_api_key" && ! -f "${STATE_DIR}/tmdb_read_token" ]]
   fi
 fi
 
+# TMDb artwork is saved under pigeonTMDB/. If an installer run as root left it owned by
+# root, every poster/backdrop save fails and only title text shows. Say how to fix it.
+for d in "${ROOT}/pigeonTMDB" "${ROOT}/pigeonTMDB"/pigeonTMDB_* "${ROOT}/pigeonCashe"; do
+  if [[ -d "${d}" && ! -w "${d}" ]]; then
+    echo "pigeon: WARNING ${d} is not writable by $(id -un) — TMDb artwork cannot be saved." >&2
+    echo "pigeon:   fix with: sudo chown -R $(id -un):$(id -gn) '${ROOT}/pigeonTMDB' '${ROOT}/pigeonCashe'" >&2
+    break
+  fi
+done
+
 exec "$PY" -u "${MAIN_PY}" "$@"
