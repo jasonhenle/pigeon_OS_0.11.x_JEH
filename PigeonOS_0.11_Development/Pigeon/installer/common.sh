@@ -41,14 +41,22 @@ pigeon_rsync_tree() {
     "${src}/" "${dest}/"
 }
 
+# Create the writable cache folders Pigeon fills at runtime (TMDb artwork, cache).
+# Usage: pigeon_prepare_runtime_dirs <install_dir> [owner]
+# The Pi installer runs as root, so pass the user Pigeon runs as: folders left
+# owned by root make every TMDb poster/backdrop save fail ("download failed").
 pigeon_prepare_runtime_dirs() {
   local root="${1}"
+  local owner="${2:-}"
   mkdir -p \
     "${root}/pigeonCashe" \
     "${root}/pigeonTMDB/pigeonTMDB_BD" \
     "${root}/pigeonTMDB/pigeonTMDB_ORIGINAL" \
     "${root}/pigeonTMDB/pigeonTMDB_Poster" \
     "${root}/pigeonTMDB/pigeonTMDB_TT"
+  if [[ -n "${owner}" ]]; then
+    chown -R "${owner}:${owner}" "${root}/pigeonCashe" "${root}/pigeonTMDB"
+  fi
 }
 
 pigeon_install_bundled_fonts() {
