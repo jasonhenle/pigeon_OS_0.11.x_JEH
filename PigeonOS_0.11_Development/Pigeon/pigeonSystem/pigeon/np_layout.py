@@ -482,7 +482,7 @@ def tt_countdown_16x9_zone(assignments: tuple[str, ...] | list[str]) -> int | No
 
 
 def zone6_span_widget(assignments: tuple[str, ...] | list[str]) -> str:
-    """Widget drawn in the wide zone-6 slot (TT, clock, weather, visualizer), or ``""``."""
+    """Widget drawn in the wide zone-6 slot (TT, clock, weather, VU), or ``""``."""
     zones = [str(n or "").strip() for n in list(assignments)[:3]]
     while len(zones) < 3:
         zones.append("")
@@ -494,8 +494,6 @@ def zone6_span_widget(assignments: tuple[str, ...] | list[str]) -> str:
         return "pausesaver"
     if zones[0] == "clock_16x9":
         return "clock"
-    if zones[0] == "visualizer":
-        return "visualizer"
     if zones[0] == "vu":
         return "vu"
     if zones[0] == "weather" and not zones[1]:

@@ -46,7 +46,6 @@ _WIDGETS_VIEWBOX = (
 # Header labels shown for the focused / activated zone (Pillow, not SVG).
 WIDGET_FOCUS_IDS: tuple[str, ...] = (
     "artwork",
-    "visualizer",
     "vu",
     "volume",
     "status",
@@ -84,7 +83,7 @@ _ZONE_SHAPE_SVG: dict[str, tuple[float, float, float, float]] = {
 
 # Each zone has its own list. Clock / info can appear in more than one.
 ZONE_WIDGET_LISTS: dict[str, tuple[str, ...]] = {
-    "zone6": ("artwork", "visualizer", "vu", "clock"),
+    "zone6": ("artwork", "vu", "clock"),
     "zone3": ("volume", "clock", "info"),
     "zone4": ("status", "info", "clock", "weather"),
     "zone5": ("status", "info", "clock", "weather"),
@@ -165,8 +164,6 @@ def widget_id_for_zone(state: MainSettingsState | None, zone_id: str) -> str:
     if zone_id == "zone6":
         if z1 in ("clock", "clock_16x9"):
             return "clock"
-        if z1 == "visualizer":
-            return "visualizer"
         if z1 == "vu":
             return "vu"
         if z1 == "weather":
@@ -295,8 +292,6 @@ def apply_widget_assignment(
     if zone == "zone6":
         if widget_id == "artwork":
             current[0], current[1] = "tt_countdown_16x9", ""
-        elif widget_id == "visualizer":
-            current[0], current[1] = "visualizer", ""
         elif widget_id == "vu":
             current[0], current[1] = "vu", ""
         elif widget_id == "clock":
@@ -1035,13 +1030,6 @@ def _widget_patch_for_zone(
     demo_state = None
     if zone == "zone6" and widget_id == "clock":
         patch = _render_zone6_clock_bgra(box)
-    elif widget_id == "visualizer":
-        from pigeon.widgets.audio_visualizer import render_audio_visualizer_bgra
-
-        _x, _y, w, h = box
-        patch = render_audio_visualizer_bgra(
-            max(32, int(w)), max(24, int(h)), preview=True
-        )
     elif widget_id == "vu":
         from pigeon.widgets.vu_meters import render_vu_meters_bgra
 
@@ -1088,7 +1076,7 @@ def _draw_zone_demos_bgra(
         patch = _widget_patch_for_zone(
             zone, wid, state=state, assets_dir=assets_dir, box=box
         )
-        if zone == "zone6" and wid in ("clock", "visualizer", "vu") and patch is not None:
+        if zone == "zone6" and wid in ("clock", "vu") and patch is not None:
             _paste_patch_bgra(out, patch, int(box[0]), int(box[1]))
             continue
         _contain_paste(out, patch, box)

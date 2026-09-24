@@ -4221,11 +4221,11 @@ class ViewCirclesWidget:
             return False
 
     def wants_live_audio(self) -> bool:
-        """True when NP needs the ALSA capture thread (visualizer, VU)."""
+        """True when NP needs the ALSA capture thread (VU)."""
         if not self._state.content_active:
             return False
         keys = set(self._assignments())
-        return bool(keys & {"visualizer", "vu"})
+        return "vu" in keys
 
     def _assignments(self) -> tuple[str, str, str, str, str]:
         named = sum(1 for actor, _role in (self._state.cast or []) if str(actor or "").strip())
@@ -4435,7 +4435,7 @@ class ViewCirclesWidget:
             return True
         if zone6_span_widget(keys) in ("clock", "clock_saver", "pausesaver"):
             return True
-        # VU / visualizer already paint at 30 Hz. Rebuilding the analog clock
+        # VU already paints at 30 Hz. Rebuilding the analog clock
         # SVG every wall-clock second hitchs those widgets for ~100 ms.
         if self._live_audio_widgets_on():
             return False
@@ -5084,21 +5084,7 @@ class ViewCirclesWidget:
     def _draw_live_audio_widgets(self, out: np.ndarray) -> None:
         assignments = self._assignments()
         bgr = out.ndim == 3 and int(out.shape[2]) == 3
-        if zone6_span_widget(assignments) == "visualizer":
-            z = NOW_PLAYING_ZONES[6]
-            zx, zy, zw, zh = z.xywh
-            if bgr:
-                from pigeon.widgets.audio_visualizer import render_audio_visualizer_into_bgr
-
-                render_audio_visualizer_into_bgr(
-                    out[int(zy) : int(zy) + int(zh), int(zx) : int(zx) + int(zw)]
-                )
-            else:
-                from pigeon.widgets.audio_visualizer import render_audio_visualizer_bgra
-
-                patch = render_audio_visualizer_bgra(int(zw), int(zh))
-                _paste_patch_bgra(out, patch, int(zx), int(zy))
-        elif zone6_span_widget(assignments) == "vu":
+        if zone6_span_widget(assignments) == "vu":
             z = NOW_PLAYING_ZONES[6]
             zx, zy, zw, zh = z.xywh
             if bgr:
@@ -5135,7 +5121,7 @@ class ViewCirclesWidget:
         _paste_patch_bgra(out, patch, int(zx), int(zy))
 
     def _draw_zone6_span_widget(self, out: np.ndarray) -> None:
-        """Clock-saver face, weather cluster, or visualizer in the wide zone-6 slot."""
+        """Clock-saver face, weather cluster, or VU in the wide zone-6 slot."""
         kind = zone6_span_widget(self._assignments())
         if kind not in ("clock", "clock_saver", "pausesaver", "weather"):
             return
@@ -6132,9 +6118,7 @@ class ViewCirclesWidget:
 
     def _live_audio_widgets_on(self) -> bool:
         keys = self._assignments()
-        return any(
-            k in ("visualizer", "vu") for k in keys
-        ) or zone6_span_widget(keys) in ("visualizer", "vu")
+        return "vu" in keys or zone6_span_widget(keys) == "vu"
 
     def bgra_frame(self) -> np.ndarray | None:
         if not self._state.chrome_visible:

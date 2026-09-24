@@ -72,7 +72,6 @@ ZONE_WIDGET_CATALOG: dict[int, tuple[str, ...]] = {
     1: (
         "tt_countdown",
         "tt_countdown_16x9",
-        "visualizer",
         "vu",
         "clock",
         "clock_16x9",
@@ -728,7 +727,6 @@ def _selector_label_font(size_px: int = 15):
 _SELECTOR_LABELS: dict[str, tuple[str, ...]] = {
     "tt_countdown": ("count", "down"),
     "tt_countdown_16x9": ("wide", "count"),
-    "visualizer": ("visual",),
     "vu": ("vu",),
     "clock": ("clock",),
     "poster": ("poster", "art"),
