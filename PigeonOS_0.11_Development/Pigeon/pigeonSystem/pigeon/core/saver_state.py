@@ -12,6 +12,10 @@ import numpy as np
 from pigeon.clock_saver_policy import pausesaver_hold_from_metadata_class
 from pigeon.clock_saver_policy import player_reports_playing
 from pigeon.clock_saver_policy import tick_pause_hold
+from PIL import ImageFont
+from pigeon.compositing import cv_resize_interp
+import cv2
+import os
 
 
 def _bump_pigeon_user_activity(_event: object | None = None, *, _boot_clock_saver_until_playback, last_metadata_activity_mono, last_pigeon_user_activity_mono) -> None:
@@ -280,4 +284,115 @@ def _set_playback_overlay_clock_saver_volume_flag(*, _backdrop_active_for_view, 
     playback_overlay_flags["clock_saver_netflix_full_overlay"] = nf_bd
     playback_overlay_flags["clock_saver_volume_only"] = bool(
         cs_ok and vol and not nf_bd
+    )
+
+
+def _idle_audio_meter_active(now: float | None = None, *, _idle_saver_face_toggle_ok, audio_meter_face_enabled) -> bool:
+    """True when the diagnostic SVG meter should replace the idle clock."""
+    if audio_meter_face_enabled is None or not audio_meter_face_enabled():
+        return False
+    return _idle_saver_face_toggle_ok(now)
+
+
+def _blit_saver_layers_design(
+    canvas: np.ndarray,
+    time_bgra: np.ndarray,
+    t_rect: tuple[int, int, int, int],
+    date_bgra: np.ndarray,
+    d_rect: tuple[int, int, int, int],
+    *,
+    copy_full_bgr: bool = False,
+    _saver_layer_is_full_frame, alpha_blend_bgra_over_bgr,
+) -> None:
+    """Blit saver layers. Full-frame meter art is opaque BGR — skip alpha."""
+    for cs_bgra, rect in ((date_bgra, d_rect), (time_bgra, t_rect)):
+        sx, sy, sw, sh = (int(v) for v in rect)
+        if copy_full_bgr and _saver_layer_is_full_frame(canvas, cs_bgra, rect):
+            np.copyto(canvas, cs_bgra[:, :, :3])
+            continue
+        roi2 = canvas[sy : sy + sh, sx : sx + sw]
+        roi2[:] = alpha_blend_bgra_over_bgr(roi2, cs_bgra)
+
+
+def _blit_saver_layers_target(
+    base: np.ndarray,
+    time_bgra: np.ndarray,
+    t_rect: tuple[int, int, int, int],
+    date_bgra: np.ndarray,
+    d_rect: tuple[int, int, int, int],
+    cap_w: int,
+    cap_h: int,
+    *,
+    copy_full_bgr: bool = False,
+    DESIGN_H, DESIGN_W, _design_rect_to_target, alpha_blend_bgra_over_bgr,
+) -> None:
+    for cs_bgra, rect in ((date_bgra, d_rect), (time_bgra, t_rect)):
+        sx, sy, sw, sh = (int(v) for v in rect)
+        x, y, rw, rh = _design_rect_to_target(sx, sy, sw, sh, cap_w, cap_h)
+        _ch, _cw = cs_bgra.shape[:2]
+        if (
+            copy_full_bgr
+            and sx == 0
+            and sy == 0
+            and sw == int(DESIGN_W)
+            and sh == int(DESIGN_H)
+            and int(x) == 0
+            and int(y) == 0
+            and int(rw) == int(base.shape[1])
+            and int(rh) == int(base.shape[0])
+        ):
+            bgr = cs_bgra[:, :, :3]
+            if _cw == rw and _ch == rh:
+                np.copyto(base, bgr)
+            else:
+                np.copyto(
+                    base,
+                    cv2.resize(
+                        bgr,
+                        (rw, rh),
+                        interpolation=cv_resize_interp(_cw, _ch, rw, rh),
+                    ),
+                )
+            continue
+        patch = cv2.resize(
+            cs_bgra, (rw, rh), interpolation=cv_resize_interp(_cw, _ch, rw, rh)
+        )
+        sub = base[y : y + rh, x : x + rw]
+        sub[:] = alpha_blend_bgra_over_bgr(sub, patch)
+
+
+def _paused_screen_font(px: int, *, _paused_screen_font_cache) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    size = max(24, int(px))
+    cached = _paused_screen_font_cache.get(size)
+    if cached is not None:
+        return cached
+    paths = (
+        os.environ.get("PIGEON_FONT_MEDIUM", ""),
+        os.environ.get("PIGEON_FONT_EXTRABOLD", ""),
+        os.environ.get("PIGEON_FONT", ""),
+    )
+    for fp in paths:
+        if fp and os.path.isfile(fp):
+            try:
+                font = ImageFont.truetype(fp, size=size)
+                _paused_screen_font_cache[size] = font
+                return font
+            except Exception:
+                pass
+    font = ImageFont.load_default()
+    _paused_screen_font_cache[size] = font
+    return font
+
+
+def _compose_paused_screen(cap_w: int, cap_h: int, *, PAUSED_SCREEN_BACKDROP_DIM, _paused_screen_backdrop_bgr, _paused_screen_font) -> np.ndarray:
+    from pigeon.paused_screen import compose_pausesaver_bgr
+
+    src = _paused_screen_backdrop_bgr()
+    font = _paused_screen_font(max(52, int(round(float(cap_h) * 0.13))))
+    return compose_pausesaver_bgr(
+        int(cap_w),
+        int(cap_h),
+        src,
+        font=font,
+        dim=PAUSED_SCREEN_BACKDROP_DIM,
     )

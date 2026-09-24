@@ -183,5 +183,39 @@ class SaverAndViewFourTests(unittest.TestCase):
         self.assertFalse(f("Severance"))
 
 
+class PassTwoHelpersTests(unittest.TestCase):
+    """Pass 2 also lifts helpers that read module globals / main() locals."""
+
+    def test_ui_scale_clamps(self):
+        from pigeon.core.stage_render import _ui_scale as f
+
+        kw = dict(WINDOW_W=1280, WINDOW_H=800)
+        self.assertEqual(f(display_dims=[1280, 800], **kw), 1.0)
+        self.assertEqual(f(display_dims=[100, 100], **kw), 0.45)
+        self.assertEqual(f(display_dims=[99999, 99999], **kw), 5.0)
+
+    def test_location_toast_alpha(self):
+        from pigeon.core.stage_render import _location_toast_alpha as f
+
+        st = {"active": True, "t0": 100.0}
+        kw = dict(LOCATION_TOAST_FADE_S=2.0, LOCATION_TOAST_FULL_S=3.0, location_toast_state=st)
+        self.assertEqual(f(101.0, **kw), 1.0)
+        self.assertAlmostEqual(f(104.0, **kw), 0.5)
+        self.assertEqual(f(106.0, **kw), 0.0)
+        self.assertFalse(st["active"])
+
+    def test_view_one_full_path_falls_back_without_variant(self):
+        from pigeon.core.view_one import _view_one_variant_uses_full_path as f
+
+        kw = dict(
+            _current_view_one_variant=lambda: None,
+            _view_one_is_pigeon_full=lambda: True,
+            _view_one_is_pigeon_poster=lambda: False,
+            variant_uses_full_path=None,
+        )
+        self.assertTrue(f(**kw))
+        self.assertFalse(f(**{**kw, "_view_one_is_pigeon_poster": lambda: True}))
+
+
 if __name__ == "__main__":
     unittest.main()

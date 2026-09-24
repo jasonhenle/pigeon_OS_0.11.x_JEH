@@ -1,0 +1,11 @@
+{
+ "settings_ui": ["_settings_mousewheel", "_linux_on_updates_button", "_begin_apply_update", "_content_indicator_ok", "_advanced_feature_pipeline_ok", "_refresh_content_indicator", "_rebuild_paired_devices_panel", "_on_delete_current_location", "_ask_pairing_pin_modal"],
+ "now_playing": ["_atv_metadata_is_content_idle", "_program_audio_present", "_program_audio_session"],
+ "saver_state": ["_idle_audio_meter_active", "_blit_saver_layers_design", "_blit_saver_layers_target", "_paused_screen_font", "_compose_paused_screen"],
+ "view_one": ["_capture_last_view_one_layout_from_live_view", "_view_one_is_pigeon_full", "_view_one_is_pigeon_simple", "_view_one_is_pigeon_poster", "_log_view_one_startup_phase", "_backdrop_master_from_streaming_app_logo", "_active_tmdb_logo_widget", "_resolve_streaming_app_logo_bgra", "_current_view_one_variant", "_view_one_streaming_logo_duplicate_fallback", "_view_one_variant_uses_full_path", "_view_one_variant_uses_simple_path", "_acquire_view1_canvas"],
+ "startup": ["_early_splash_clock_underlay", "_clock_startup_intro_opacity", "_capture_splash_underlay"],
+ "stage_render": ["_disp_fit", "_stage_grid_overlay_mode", "_record_live_audio_timing", "_design_rect_to_target", "_paste_bgra_contain_on_design", "_ui_scale", "_location_toast_alpha"],
+ "view_four": ["_collect_view_four_source_lines"],
+ "tmdb_flow": ["_append_tmdb_quality_event_report_log", "_mark_tmdb_missing_art", "_read_tmdb_quality_counts"],
+ "input_keys": ["on_tmdb_retry_hotkey", "on_ctrl_shift_tab_advanced", "on_tmdb_match_mode_toggle", "_on_volume_rotary_action", "_on_play_pause_gpio_action"]
+}

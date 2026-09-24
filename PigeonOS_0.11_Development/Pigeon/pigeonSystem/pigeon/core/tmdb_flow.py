@@ -12,6 +12,9 @@ import time
 import tkinter as tk
 import cv2
 import numpy as np
+from pigeon.app_state import read_app_state
+from pigeon.runtime_paths import pigeon_state_dir
+import sys
 
 
 def _trigger_tmdb_quality_toggle_overlay(mode: str, *, tmdb_quality_overlay_mode, tmdb_quality_overlay_t0) -> None:
@@ -262,3 +265,124 @@ def _tmdb_pref_from_metadata(metadata: dict[str, object]) -> str:
     except ImportError:
         pass
     return prefer
+
+
+def _append_tmdb_quality_event_report_log(
+    *,
+    outcome: str,
+    title_key: str | None,
+    display_title: str | None,
+    msg_m: str,
+    _escape_log_field, apple_tv_auto_state, streaming_badge_state,
+) -> None:
+    """Append one scored TMDb quality event line (SUCCESS/FAILURE) with metadata context."""
+    log_p = pigeon_state_dir() / "tmdb_quality_event_reports.log"
+    log_p.parent.mkdir(parents=True, exist_ok=True)
+    md_raw = apple_tv_auto_state.get("last_metadata")
+    raw_bits: list[str] = []
+    app_bits: list[str] = []
+    if isinstance(md_raw, dict):
+        app_name = str(md_raw.get("app_name") or "").strip()
+        app_id = str(md_raw.get("app_id") or "").strip()
+        if app_name:
+            app_bits.append(f'app_name="{_escape_log_field(app_name)}"')
+        if app_id:
+            app_bits.append(f'app_id="{_escape_log_field(app_id)}"')
+        try:
+            from pigeon.raw_title import raw_title_from_metadata_dict
+
+            rt = raw_title_from_metadata_dict(md_raw)
+            if (rt.raw_title or "").strip():
+                raw_bits.append(f'raw_title="{_escape_log_field(rt.raw_title)}"')
+            if (rt.raw_series_name or "").strip():
+                raw_bits.append(f'raw_series_name="{_escape_log_field(rt.raw_series_name)}"')
+            if (rt.raw_query or "").strip():
+                raw_bits.append(f'raw_query="{_escape_log_field(rt.raw_query)}"')
+            if (rt.raw_episode_title or "").strip():
+                raw_bits.append(f'raw_episode_title="{_escape_log_field(rt.raw_episode_title)}"')
+            if (rt.layer_series_title or "").strip():
+                raw_bits.append(f'layer_series_title="{_escape_log_field(rt.layer_series_title)}"')
+            if not raw_bits:
+                raw_bits.append("(rawTitle layers empty for this snapshot)")
+        except Exception:
+            t_fallback = str(md_raw.get("title") or "").strip()
+            q_fallback = str(md_raw.get("query") or "").strip()
+            raw_bits.append(
+                f'fallback_title="{_escape_log_field(t_fallback)}" query="{_escape_log_field(q_fallback)}"'
+            )
+    else:
+        raw_bits.append("(no last_metadata dict)")
+    sb_label = str(streaming_badge_state.get("label") or "").strip()
+    sb_filename = str(streaming_badge_state.get("filename") or "").strip()
+    if sb_label:
+        app_bits.append(f'streaming_service_label="{_escape_log_field(sb_label)}"')
+    if sb_filename:
+        app_bits.append(f'streaming_service_badge="{_escape_log_field(sb_filename)}"')
+    if not app_bits:
+        app_bits.append("(streaming_service unknown)")
+    fetch_head = (msg_m or "").split("::", 1)[0].strip()
+    ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+    out_u = str(outcome or "").strip().upper()
+    if out_u not in ("SUCCESS", "FAILURE"):
+        out_u = "UNKNOWN"
+    line = (
+        f"{ts}\t{out_u}\t"
+        f'tmdb_title_key="{_escape_log_field(title_key or "")}"\t'
+        f'display_title="{_escape_log_field(display_title or "")}"\t'
+        f'fetch_summary_head="{_escape_log_field(fetch_head)}"\t'
+        f"{' '.join(app_bits)}\t"
+        f"{' '.join(raw_bits)}\n"
+    )
+    with log_p.open("a", encoding="utf-8") as lf:
+        lf.write(line)
+    try:
+        from pigeon.tmdb_desktop_report import append_tmdb_quality_row
+
+        append_tmdb_quality_row(
+            outcome=out_u,
+            title_key=title_key,
+            display_title=display_title,
+            fetch_summary_head=fetch_head,
+            app_streaming_context=" ".join(app_bits),
+            raw_title_context=" ".join(raw_bits),
+        )
+    except Exception:
+        pass
+    if out_u == "FAILURE":
+        try:
+            from pigeon.tmdb_desktop_report import append_tmdb_error_event
+
+            append_tmdb_error_event(
+                last_metadata=md_raw if isinstance(md_raw, dict) else None,
+                streaming_badge_state=streaming_badge_state,
+            )
+        except Exception:
+            pass
+
+
+def _mark_tmdb_missing_art(*, identity: object | None = None, apple_tv_auto_state, tmdb_error_flag_retry_active) -> None:
+    """Stop empty-display poll respawns and show the circles '?' placeholder."""
+    apple_tv_auto_state["tmdb_missing_art"] = True
+    if identity is not None:
+        apple_tv_auto_state["tmdb_exhausted_identity"] = identity
+        apple_tv_auto_state["tmdb_key"] = identity
+    tmdb_error_flag_retry_active[0] = False
+    try:
+        sys.stderr.write(
+            "pigeon: TMDb give-up — showing missing-art placeholder (no further auto-retries).\n"
+        )
+        sys.stderr.flush()
+    except Exception:
+        pass
+
+
+def _read_tmdb_quality_counts(*, _PIGEON_EXT) -> tuple[int, int]:
+    if not _PIGEON_EXT:
+        return (0, 0)
+    try:
+        st = read_app_state()
+        s = int(st.get("tmdb_quality_successes", 0) or 0)
+        f = int(st.get("tmdb_quality_failures", 0) or 0)
+        return (s, f)
+    except Exception:
+        return (0, 0)

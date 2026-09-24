@@ -265,3 +265,226 @@ def _collect_view_four_raw_title_lines(*, _collect_view_four_ocr_lines, _tmdb_in
         if raw_blob:
             _ln("  _raw=(see receiver_denon_telnet dump)")
     return rows
+
+
+def _collect_view_four_source_lines(*, _view_four_display_metadata, _view_four_has_value, _view_four_metadata_source_on, _view_four_text_is_placeholder, receiver_overlay_state) -> list[tuple[str, bool]]:
+    """View 4 subview: best-effort file/stream stats from poll metadata + receiver text hints."""
+    from math import gcd
+
+    rows: list[tuple[str, bool]] = []
+
+    def _ln(s: str, bold: bool = False) -> None:
+        if _view_four_text_is_placeholder(s):
+            return
+        rows.append((s, bold))
+
+    def _md_pick(md: dict[str, object], *keys: str) -> str | None:
+        for k in keys:
+            if k not in md:
+                continue
+            v = md[k]
+            if v is None:
+                continue
+            if isinstance(v, (int, float)):
+                if isinstance(v, float) and v != v:
+                    continue
+                t = str(int(v)) if float(v) == int(v) else str(v)
+            else:
+                t = str(v).strip()
+            if t:
+                return t
+        return None
+
+    def _aspect_from_wh(w_s: str | None, h_s: str | None) -> str | None:
+        if not w_s or not h_s:
+            return None
+        try:
+            wi = int(round(float(w_s)))
+            hi = int(round(float(h_s)))
+        except (TypeError, ValueError):
+            return None
+        if wi <= 0 or hi <= 0:
+            return None
+        g = gcd(wi, hi)
+        return f"{wi // g}:{hi // g}"
+
+    md = _view_four_display_metadata()
+    inc = str(receiver_overlay_state.get("incoming") or "").strip()
+    cfg = str(receiver_overlay_state.get("config") or "").strip()
+    rx_blob = f"{inc} {cfg}".strip()
+
+    if not isinstance(md, dict):
+        _ln("(no last_metadata dict)", False)
+        return rows
+
+    w = _md_pick(md, "video_width", "width", "source_width", "ImageWidth", "image_width")
+    h = _md_pick(md, "video_height", "height", "source_height", "ImageHeight", "image_height")
+    res_one = _md_pick(
+        md,
+        "video_resolution",
+        "source_resolution",
+        "resolution",
+        "VideoResolution",
+    )
+
+    def _ln_val(label: str, value: str | None) -> None:
+        if _view_four_has_value(value):
+            _ln(f"{label}: {value}", False)
+
+    if res_one:
+        _ln_val("Video source resolution", res_one)
+    elif w and h:
+        _ln_val("Video source resolution", f"{w}×{h}")
+    elif w or h:
+        _ln_val("Video source resolution", f"{w or '?'}×{h or '?'}")
+
+    ar = _md_pick(md, "aspect_ratio", "video_aspect_ratio", "AspectRatio", "DisplayAspectRatio")
+    if not ar:
+        ar = _aspect_from_wh(w, h)
+    _ln_val("Video source aspect ratio", ar)
+    _ln_val(
+        "Video source color space",
+        _md_pick(
+            md,
+            "color_space",
+            "color_primaries",
+            "VideoColorSpace",
+            "ColorSpace",
+            "colour_space",
+        ),
+    )
+    _ln_val(
+        "Video source frame rate",
+        _md_pick(
+            md,
+            "frame_rate",
+            "framerate",
+            "fps",
+            "video_frame_rate",
+            "FrameRate",
+        ),
+    )
+    _ln_val(
+        "Video source bit depth",
+        _md_pick(md, "video_bit_depth", "bit_depth", "bits_per_pixel", "VideoBitDepth"),
+    )
+    _ln_val(
+        "Video source codec",
+        _md_pick(md, "video_codec", "codec", "video_format", "VideoCodec", "format"),
+    )
+    _ln_val(
+        "Video source wrapper",
+        _md_pick(md, "container", "wrapper", "mime_type", "MimeType", "file_extension"),
+    )
+    _ln_val(
+        "Audio source wrapper",
+        _md_pick(md, "audio_container", "audio_wrapper", "AudioContainer"),
+    )
+    _ln_val(
+        "Audio source bit depth",
+        _md_pick(md, "audio_bit_depth", "source_audio_bit_depth", "AudioBitDepth"),
+    )
+    _ln_val(
+        "Audio source bit rate",
+        _md_pick(md, "audio_bit_rate", "source_audio_bit_rate", "AudioBitrate", "audio_bitrate"),
+    )
+    _ln_val(
+        "Audio source codec",
+        _md_pick(md, "audio_codec", "audio_format", "AudioCodec", "AudioFormat"),
+    )
+
+    def _lpcm_vs_bitstream(blob: str, md2: dict[str, object]) -> str:
+        ac = str(md2.get("audio_codec") or md2.get("audio_format") or "").lower()
+        blob_l = blob.lower()
+        joined = f"{ac} {blob_l}"
+        if "pcm" in joined or "lpcm" in joined or "linear pcm" in joined:
+            return "LPCM/PCM (from metadata/receiver text)"
+        if any(
+            x in joined
+            for x in (
+                "dolby",
+                "dts",
+                "truehd",
+                "true-hd",
+                "eac3",
+                "e-ac-3",
+                "atmos",
+                "bitstream",
+                "dd+",
+                "dtsx",
+            )
+        ):
+            return "Compressed / bitstream (from metadata/receiver text)"
+        if blob:
+            return "Unknown (see receiver lines below)"
+        return "—"
+
+    _lpcm = _lpcm_vs_bitstream(rx_blob, md)
+    if _view_four_has_value(_lpcm):
+        _ln(f"Audio source LPCM vs bitstream: {_lpcm}", False)
+
+    proto = _md_pick(md, "protocol")
+    if proto:
+        _ln(f"Poll protocol: {proto}", False)
+    if _view_four_metadata_source_on():
+        appn = str(md.get("app_name") or "").strip()
+        appid = str(md.get("app_id") or "").strip()
+        if appn or appid:
+            _ln(f"App: {appn!r} id={appid!r}", False)
+
+    if inc:
+        _ln(f"Receiver incoming (raw): {inc}", False)
+    if cfg:
+        _ln(f"Receiver config (raw): {cfg}", False)
+
+    known = {
+        "query",
+        "title",
+        "artist",
+        "series_name",
+        "album",
+        "media_type",
+        "total_time",
+        "position",
+        "device_state",
+        "inferred_prefer",
+        "prefer_pyatv_media",
+        "content_key",
+        "app_name",
+        "app_id",
+        "volume_percent",
+        "prefer",
+        "ocr_title",
+        "ocr_lines",
+        "ocr_season",
+        "ocr_episode",
+        "ocr_year",
+        "ocr_runtime_min",
+        "ocr_extras",
+        "ocr_reason",
+        "ocr_agrees",
+        "ocr_at",
+        "ocr_status",
+        "ocr_capture",
+    }
+    extra_keys = [
+        k
+        for k in sorted(md.keys())
+        if k not in known
+        and not str(k).startswith("_")
+        and _view_four_has_value(md.get(k))
+    ]
+    if extra_keys and _view_four_metadata_source_on():
+        _ln("other metadata keys", False)
+        for k in extra_keys[:36]:
+            try:
+                vv = md[k]
+                rep = repr(vv)
+                if len(rep) > 140:
+                    rep = rep[:137] + "..."
+            except Exception:
+                rep = "?"
+            _ln(f"  {k}={rep}", False)
+        if len(extra_keys) > 36:
+            _ln(f"  … ({len(extra_keys) - 36} more keys)", False)
+    return rows

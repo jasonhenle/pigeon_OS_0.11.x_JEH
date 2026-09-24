@@ -360,3 +360,64 @@ def _trt_substantive_from_clock(*, apple_tv_playback_clock) -> bool:
 
 def _trt_substantive_for_status_bar(*, _trt_substantive_from_clock) -> bool:
     return _trt_substantive_from_clock()
+
+
+def _atv_metadata_is_content_idle(metadata: dict[str, object], *, metadata_has_playback_title, resolve_metadata_tmdb_query) -> bool:
+    try:
+        from pigeon.apple_tv_now_playing import apple_tv_power_is_off
+
+        if apple_tv_power_is_off(metadata):
+            return True
+    except Exception:
+        pass
+    try:
+        from pigeon.display_confidence import content_should_stay_active
+        from pigeon.hdmi_ocr import hdmi_capture_available
+        from pigeon.source_toggles import source_enabled
+
+        if content_should_stay_active(
+            metadata,
+            hdmi_on=bool(source_enabled("hdmi")),
+            hdmi_present=hdmi_capture_available(),
+        ):
+            return False
+    except Exception:
+        pass
+    try:
+        from pigeon.display_confidence import metadata_is_playback_idle
+
+        return bool(metadata_is_playback_idle(metadata))
+    except Exception:
+        pass
+    ds = str(metadata.get("device_state") or "")
+    if resolve_metadata_tmdb_query is not None and resolve_metadata_tmdb_query(metadata):
+        return False
+    if metadata_has_playback_title is not None and metadata_has_playback_title(metadata):
+        return False
+    q = str(metadata.get("query") or "").strip()
+    if q:
+        return False
+    if "Idle" in ds or "Stopped" in ds:
+        return True
+    if "Playing" in ds:
+        return False
+    return not q
+
+
+def _program_audio_present(*, program_audio_present) -> bool:
+    if program_audio_present is None:
+        return False
+    try:
+        return bool(program_audio_present())
+    except Exception:
+        return False
+
+
+def _program_audio_session(*, _program_audio_present, program_audio_session_present) -> bool:
+    """True through quiet scenes after program audio has been heard."""
+    if program_audio_session_present is not None:
+        try:
+            return bool(program_audio_session_present())
+        except Exception:
+            pass
+    return _program_audio_present()
