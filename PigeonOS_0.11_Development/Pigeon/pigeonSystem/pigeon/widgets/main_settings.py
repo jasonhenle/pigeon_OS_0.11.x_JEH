@@ -540,7 +540,7 @@ class MainSettingsState:
     preferences_zone_widgets: tuple[str, str, str, str, str] = (
         "tt_countdown_16x9",
         "",
-        "audio_levels",
+        "volume",
         "cast_info",
         "status_bar",
     )

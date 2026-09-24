@@ -13,7 +13,6 @@ if _SYS_ROOT not in sys.path:
 from pigeon.auto_widgets import (  # noqa: E402
     CLOCK_SAVER,
     INFO,
-    LEVELS,
     LAYOUT_NP,
     LAYOUT_SETTINGS,
     LAYOUT_SHAZAM,
@@ -70,7 +69,7 @@ class AutoWidgetResolveTests(unittest.TestCase):
             _sig(player_metadata=METADATA_OK, audio_levels=True)
         )
         self.assertEqual(plan.layout, LAYOUT_NP)
-        self.assertEqual(plan.assignments, (TT, "", LEVELS, INFO, STATUS))
+        self.assertEqual(plan.assignments, (TT, "", VOLUME, INFO, STATUS))
         self.assertTrue(plan.settings_exit_enabled)
 
     def test_playing_volume_when_levels_idle(self) -> None:
@@ -79,6 +78,32 @@ class AutoWidgetResolveTests(unittest.TestCase):
         )
         self.assertEqual(plan.layout, LAYOUT_NP)
         self.assertEqual(plan.assignments[2], VOLUME)
+
+    def test_zone3_is_volume_whenever_lan_is_up(self) -> None:
+        for audio in (True, False):
+            plan = resolve_auto_widgets(
+                _sig(player_metadata=METADATA_OK, audio_levels=audio, lan_ok=True)
+            )
+            self.assertEqual(plan.assignments[2], VOLUME)
+
+    def test_lan_down_with_audio_keeps_volume_blanked(self) -> None:
+        plan = resolve_auto_widgets(
+            _sig(
+                wan_ok=False,
+                wan_ok_at_startup=True,
+                lan_ok=False,
+                receiver_ok=False,
+                audio_levels=True,
+            )
+        )
+        self.assertEqual(plan.assignments[2], VOLUME)
+        self.assertTrue(plan.blank_volume)
+
+    def test_audio_levels_widget_is_retired(self) -> None:
+        import pigeon.auto_widgets as aw
+
+        self.assertFalse(hasattr(aw, "LEVELS"))
+        self.assertNotIn("audio_levels", aw.DEFAULT_NP_ASSIGNMENTS)
 
     def test_playing_without_lan_or_audio_stays_now_playing(self) -> None:
         plan = resolve_auto_widgets(
@@ -102,7 +127,7 @@ class AutoWidgetResolveTests(unittest.TestCase):
         )
         self.assertEqual(plan.layout, LAYOUT_ZONE6_PAUSESAVER)
         self.assertEqual(plan.assignments[0], PAUSESAVER)
-        self.assertEqual(plan.assignments[2], LEVELS)
+        self.assertEqual(plan.assignments[2], VOLUME)
 
     def test_paused_without_art_is_clocksaver(self) -> None:
         plan = resolve_auto_widgets(
@@ -161,7 +186,7 @@ class AutoWidgetResolveTests(unittest.TestCase):
         )
         self.assertEqual(plan.layout, LAYOUT_ZONE6_CLOCKSAVER)
         self.assertEqual(plan.assignments[0], CLOCK_SAVER)
-        self.assertEqual(plan.assignments[2], LEVELS)
+        self.assertEqual(plan.assignments[2], VOLUME)
 
     def test_absent_metadata_without_audio_is_zone8_clocksaver(self) -> None:
         plan = resolve_auto_widgets(

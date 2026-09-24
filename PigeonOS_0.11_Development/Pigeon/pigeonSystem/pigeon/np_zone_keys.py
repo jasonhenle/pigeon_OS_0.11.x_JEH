@@ -27,7 +27,6 @@ VIDEO_CYCLE: dict[int, tuple[str, ...]] = {
         "volume",
         "cast_info",
         "now_playing",
-        "audio_levels",
     ),
     2: (
         "",
@@ -37,7 +36,6 @@ VIDEO_CYCLE: dict[int, tuple[str, ...]] = {
         "volume",
         "cast_info",
         "now_playing",
-        "audio_levels",
     ),
     3: (
         "",
@@ -47,7 +45,6 @@ VIDEO_CYCLE: dict[int, tuple[str, ...]] = {
         "tt_countdown",
         "cast_info",
         "now_playing",
-        "audio_levels",
     ),
     4: ("", "cast_info", "clock_saver_volume"),
     5: ("", "status_bar", "cast_info"),
@@ -65,7 +62,6 @@ MUSIC_CYCLE: dict[int, tuple[str, ...]] = {
         "volume",
         "cast_info",
         "now_playing",
-        "audio_levels",
     ),
     2: (
         "",
@@ -75,7 +71,6 @@ MUSIC_CYCLE: dict[int, tuple[str, ...]] = {
         "volume",
         "cast_info",
         "now_playing",
-        "audio_levels",
     ),
     3: ("", "volume", "clock_saver_volume", "clock", "poster", "tt_countdown"),
     4: ("", "cast_info", "clock_saver_volume"),

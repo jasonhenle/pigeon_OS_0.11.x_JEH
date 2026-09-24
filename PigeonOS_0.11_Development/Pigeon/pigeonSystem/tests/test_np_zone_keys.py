@@ -78,7 +78,7 @@ class MusicLayoutTests(unittest.TestCase):
     def test_music_defaults_volume_and_track_info(self) -> None:
         self.assertEqual(
             DEFAULT_MUSIC_ZONE_WIDGETS,
-            ("tt_countdown_16x9", "", "audio_levels", "cast_info", "status_bar"),
+            ("tt_countdown_16x9", "", "volume", "cast_info", "status_bar"),
         )
         self.assertEqual(
             _normalize_zone_widgets(
@@ -97,7 +97,7 @@ class MusicLayoutTests(unittest.TestCase):
             content_mode="music",
             has_volume=True,
         )
-        self.assertEqual(got[2], "audio_levels")
+        self.assertEqual(got[2], "volume")
         self.assertEqual(got[3], "cast_info")
         video = _effective_zone_widgets(
             has_position=True,
@@ -107,3 +107,12 @@ class MusicLayoutTests(unittest.TestCase):
             content_mode="video",
         )
         self.assertEqual(video[3], "cast_info")
+
+
+class RetiredLevelsWidgetTests(unittest.TestCase):
+    def test_audio_levels_not_in_any_cycle(self) -> None:
+        from pigeon.np_zone_keys import MUSIC_CYCLE, VIDEO_CYCLE
+
+        for table in (VIDEO_CYCLE, MUSIC_CYCLE):
+            for names in table.values():
+                self.assertNotIn("audio_levels", names)

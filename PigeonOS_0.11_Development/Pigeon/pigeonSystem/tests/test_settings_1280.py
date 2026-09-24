@@ -620,7 +620,7 @@ class SettingsRenderTests(unittest.TestCase):
         self.assertEqual(preview.widgets_focused_id, "zone6")
         self.assertEqual(
             preview.preferences_zone_widgets,
-            ("tt_countdown_16x9", "", "audio_levels", "cast_info", "status_bar"),
+            ("tt_countdown_16x9", "", "volume", "cast_info", "status_bar"),
         )
 
         active = render_pigeon_settings_bgra(preview, assets_dir=assets)
@@ -668,7 +668,7 @@ class SettingsRenderTests(unittest.TestCase):
         self.assertEqual(preview.widgets_focused_id, "clock")
         self.assertEqual(preview.widgets_active_zone, "zone6")
         self.assertEqual(widget_id_for_zone(preview, "zone6"), "clock")
-        self.assertEqual(widget_id_for_zone(preview, "zone3"), "levels")
+        self.assertEqual(widget_id_for_zone(preview, "zone3"), "volume")
         labels = render_pigeon_settings_bgra(preview, assets_dir=assets)
         still_zone6 = labels[267:271, 385:770, :3]
         self.assertGreater(

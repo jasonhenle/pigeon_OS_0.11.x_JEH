@@ -50,16 +50,16 @@ _COLOR_GRAY = "#808080"  # 50% gray for unavailable chrome
 DEFAULT_ZONE_WIDGETS: tuple[str, str, str, str, str] = (
     "tt_countdown_16x9",
     "",
-    "audio_levels",
+    "volume",
     "cast_info",
     "status_bar",
 )
 
-# Music: wide album/TT, levels in zone 3, track titles in the zone-4 strip.
+# Music: wide album/TT, volume in zone 3, track titles in the zone-4 strip.
 DEFAULT_MUSIC_ZONE_WIDGETS: tuple[str, str, str, str, str] = (
     "tt_countdown_16x9",
     "",
-    "audio_levels",
+    "volume",
     "cast_info",
     "status_bar",
 )
@@ -74,7 +74,6 @@ ZONE_WIDGET_CATALOG: dict[int, tuple[str, ...]] = {
         "tt_countdown_16x9",
         "visualizer",
         "vu",
-        "audio_levels",
         "clock",
         "clock_16x9",
         "poster",
@@ -86,7 +85,6 @@ ZONE_WIDGET_CATALOG: dict[int, tuple[str, ...]] = {
     2: (
         "tt_countdown",
         "tt_countdown_16x9",
-        "audio_levels",
         "clock",
         "clock_16x9",
         "poster",
@@ -98,7 +96,6 @@ ZONE_WIDGET_CATALOG: dict[int, tuple[str, ...]] = {
     3: (
         "tt_countdown",
         "tt_countdown_16x9",
-        "audio_levels",
         "clock",
         "poster",
         "volume",
@@ -107,15 +104,14 @@ ZONE_WIDGET_CATALOG: dict[int, tuple[str, ...]] = {
         "clock_saver_volume",
         "weather",
     ),
-    4: ("cast_info", "clock_saver_volume", "weather", "clock", "audio_levels", "status_bar"),
-    5: ("status_bar", "cast_info", "clock", "audio_levels", "weather"),
+    4: ("cast_info", "clock_saver_volume", "weather", "clock", "status_bar"),
+    5: ("status_bar", "cast_info", "clock", "weather"),
 }
 
 # Selector chrome groups (navigation B), left → right in the SVG.
 _WIDGET_SELECTOR_ORDER: tuple[str, ...] = (
     "tt_countdown",
     "tt_countdown_16x9",
-    "audio_levels",
     "clock",
     "poster",
     "volume",
@@ -732,7 +728,6 @@ def _selector_label_font(size_px: int = 15):
 _SELECTOR_LABELS: dict[str, tuple[str, ...]] = {
     "tt_countdown": ("count", "down"),
     "tt_countdown_16x9": ("wide", "count"),
-    "audio_levels": ("audio", "levels"),
     "visualizer": ("visual",),
     "vu": ("vu",),
     "clock": ("clock",),
@@ -749,7 +744,6 @@ _SELECTOR_LABEL_LINE_PITCH = 14.0
 _SELECTOR_LABEL_Y_NUDGE_PX: dict[str, float] = {
     "tt_countdown": -2.0,
     "tt_countdown_16x9": -2.0,
-    "audio_levels": -2.0,
     "clock": -2.0,
     "poster": 0.0,
     "volume": -2.0,
@@ -2085,8 +2079,6 @@ def _widget_preview_keys(zone: int, widget: str) -> tuple[str, ...]:
         if w == "cast_info":
             return ("zone5_cast_info_group", "zone5_cast_group")
         return ()
-    if w == "audio_levels":
-        return (f"zone{z}_audio_levels_group",)
     if w == "clock":
         return (f"zone{z}_clock_group",)
     if w == "volume":
@@ -2199,7 +2191,6 @@ def _selector_group_for_widget(root: ET.Element, widget: str) -> ET.Element | No
     names = {
         "tt_countdown": "selector_tt_countdown_group",
         "tt_countdown_16x9": "selector_tt_countdown_16x9_group",
-        "audio_levels": "selector_audio_levels_group",
         "clock": "selector_clock_group",
         "poster": "selector_poster_art_group",
         "volume": "selector_volume_group",
@@ -2309,6 +2300,11 @@ def apply_preferences_svg_state(root: ET.Element, state: MainSettingsState) -> N
                 selected=selected,
                 available=is_avail,
             )
+
+    # Audio levels was retired; keep its legacy selector pill out of the art.
+    retired = _find_by_logical_id(root, "selector_audio_levels_group")
+    if retired is not None:
+        _set_visible(retired, False)
 
     exit_group = _selector_group_for_widget(root, "exit")
     exit_selected = focused == "exit"
