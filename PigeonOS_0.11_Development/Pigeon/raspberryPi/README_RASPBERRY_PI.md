@@ -73,8 +73,6 @@ See `installer/START-HERE.txt` and `~/.pigeon_0_6/pigeon.log`.
 
 **OpenCV / display:** `sudo apt install python3-tk libgl1 libglib2.0-0 libgomp1`
 
-**HDMI OCR:** `sudo apt install tesseract-ocr` (Install-Pigeon now includes this). `pytesseract` is the Python wrapper only.
-
 ## Files in this folder
 
 | File | Purpose |

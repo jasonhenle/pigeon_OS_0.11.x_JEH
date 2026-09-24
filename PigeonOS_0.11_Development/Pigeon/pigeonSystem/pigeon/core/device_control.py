@@ -1,4 +1,4 @@
-"""Apple TV target selection, HDMI OCR scheduling, and receiver volume queueing.
+"""Apple TV target selection, HDMI frame-check scheduling, and receiver volume queueing.
 
 Extracted verbatim from ``bootstrap()`` in ``pigeon_0_9.py``. Each function
 takes the app state it used to close over as keyword-only arguments;
@@ -87,70 +87,27 @@ def end_apple_tv_operation(*, suffix: str | None = None, apple_tv_busy, describe
     describe_current_apple_tv(suffix=suffix)
 
 
-def _apply_hdmi_ocr_clues(clues, *, _bump_clock_saver_significant_device, _content_key_from_metadata, _note_metadata_activity, _sync_now_playing_screen_state, apple_tv_auto_state, spawn_tmdb_poster_fetch) -> None:
-    from pigeon.display_confidence import ocr_is_in_charge
-    from pigeon.hdmi_ocr import (
-        apply_clues_to_metadata,
-        apply_ocr_title_as_identity,
-        hdmi_capture_available,
-        hdmi_last_frame_changed,
-    )
-    from pigeon.tmdb_poster import is_degenerate_tmdb_query
-
-    apple_tv_auto_state["ocr_in_flight"] = False
+def _apply_hdmi_frame_check(changed, *, _bump_clock_saver_significant_device, _note_metadata_activity, _sync_now_playing_screen_state, apple_tv_auto_state) -> None:
+    """A changed HDMI picture postpones the 2-minute metadata-idle saver."""
+    apple_tv_auto_state["hdmi_check_in_flight"] = False
     try:
         from pigeon.source_toggles import source_enabled
 
         if not source_enabled("hdmi"):
             return
-        metadata_on = source_enabled("metadata")
-        hdmi_on = True
     except Exception:
-        metadata_on = True
-        hdmi_on = True
-    md = apple_tv_auto_state.get("last_metadata")
-    if not isinstance(md, dict):
-        md = {}
-    raw_query = str(md.get("query") or "").strip()
-    had_query = bool(raw_query) and not is_degenerate_tmdb_query(raw_query)
-    merged = apply_clues_to_metadata(md, clues)
-    identity_changed = apply_ocr_title_as_identity(merged)
-    merged["content_key"] = _content_key_from_metadata(merged)
-    apple_tv_auto_state["last_metadata"] = merged
-    # Meaningful HDMI screen change postpones the 2-minute metadata-idle saver.
-    if hdmi_last_frame_changed() or identity_changed:
+        pass
+    if changed:
         _note_metadata_activity()
         _bump_clock_saver_significant_device()
-    if identity_changed:
-        apple_tv_auto_state["last_title_decision"] = str(
-            merged.get("title_decision") or ""
-        ).strip() or apple_tv_auto_state.get("last_title_decision")
-    agrees = bool(merged.get("ocr_agrees"))
-    guess = str(clues.title_guess or "").strip()
-    reason = str(clues.reason or "")
-    ocr_owns = ocr_is_in_charge(
-        merged,
-        hdmi_on=hdmi_on,
-        hdmi_present=hdmi_capture_available(),
-    ) or (not metadata_on)
-    # Player still owns a real title: OCR watches, but does not replace art.
-    if metadata_on and had_query and not ocr_owns and reason in ("pause", "confirm", "watch") and agrees:
-        try:
-            _sync_now_playing_screen_state()
-        except Exception:
-            pass
-        return
-    if guess and not is_degenerate_tmdb_query(guess) and ocr_owns and identity_changed:
-        apple_tv_auto_state["query"] = guess
-        spawn_tmdb_poster_fetch(guess, prefer="auto", force=True)
     try:
         _sync_now_playing_screen_state()
     except Exception:
         pass
 
 
-def _schedule_hdmi_ocr_from_poll(metadata: dict[str, object], *, _on_hdmi_ocr_clues, _tmdb_info_current_and_available, apple_tv_auto_state) -> None:
-    """OCR until TMDb has a title, then every 5s to catch a new screen."""
+def _schedule_hdmi_frame_check_from_poll(*, _on_hdmi_frame_checked, apple_tv_auto_state) -> None:
+    """Fingerprint an HDMI frame every few seconds (feeds the HDMI clock saver)."""
     try:
         from pigeon.source_toggles import source_enabled
 
@@ -159,20 +116,16 @@ def _schedule_hdmi_ocr_from_poll(metadata: dict[str, object], *, _on_hdmi_ocr_cl
     except Exception:
         pass
     try:
-        from pigeon.hdmi_ocr import decide_ocr_reason, request_ocr
+        from pigeon.hdmi_capture import frame_check_due, request_frame_check
     except Exception:
         return
-    reason = decide_ocr_reason(
-        metadata,
-        tmdb_up=bool(_tmdb_info_current_and_available()),
-    )
-    if not reason:
+    if apple_tv_auto_state.get("hdmi_check_in_flight"):
         return
-    if apple_tv_auto_state.get("ocr_in_flight"):
+    if not frame_check_due():
         return
-    apple_tv_auto_state["ocr_in_flight"] = True
-    if not request_ocr(reason, _on_hdmi_ocr_clues):
-        apple_tv_auto_state["ocr_in_flight"] = False
+    apple_tv_auto_state["hdmi_check_in_flight"] = True
+    if not request_frame_check(_on_hdmi_frame_checked):
+        apple_tv_auto_state["hdmi_check_in_flight"] = False
 
 
 def _queue_receiver_volume_action(action: str, *, _receiver_volume_queue, avr_slot_holder) -> bool:
@@ -313,10 +266,10 @@ def _resolve_receiver_input_label(*, receiver_overlay_state, receiver_standby_ho
     return ""
 
 
-def _on_hdmi_ocr_clues(clues, *, _apply_hdmi_ocr_clues, apple_tv_auto_state, root) -> None:
-    """Merge HDMI OCR into last_metadata. Spawn TMDb only when clues add a title."""
+def _on_hdmi_frame_checked(changed, *, _apply_hdmi_frame_check, apple_tv_auto_state, root) -> None:
+    """Hand a finished HDMI frame check back to the Tk thread."""
     try:
-        root.after(0, lambda c=clues: _apply_hdmi_ocr_clues(c))
+        root.after(0, lambda c=changed: _apply_hdmi_frame_check(c))
     except Exception:
-        # Tk gone / shutdown: clear the gate so OCR is not stuck off forever.
-        apple_tv_auto_state["ocr_in_flight"] = False
+        # Tk gone / shutdown: clear the gate so checks are not stuck off forever.
+        apple_tv_auto_state["hdmi_check_in_flight"] = False

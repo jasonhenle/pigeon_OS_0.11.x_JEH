@@ -637,7 +637,7 @@ CLOCK_SAVER_POSITION_STALL_GRACE_S = 5.0
 # controls were used for the same span, force the clock saver on (independent of the
 # 300 s UI+device idle path). Position not advancing is the primary signal; HDMI
 # frame/title changes also refresh the stamp. When metadata is driving the saver,
-# the HDMI 24-OCR streak rule is ignored.
+# the HDMI unchanged-frame streak rule is ignored.
 CLOCK_SAVER_METADATA_IDLE_AFTER_S = 120.0
 # Pause-hold span is CLOCK_SAVER_PAUSED_AFTER_S (clock_saver_policy).
 
@@ -2485,8 +2485,8 @@ def main() -> int:
             # and show "?" in the circles 2×3 poster slot.
             "tmdb_missing_art": False,
             "tmdb_exhausted_identity": None,
-            # HDMI OCR is another metadata source (confirm / fill / pause check).
-            "ocr_in_flight": False,
+            # One HDMI frame check (clock-saver fingerprint) at a time.
+            "hdmi_check_in_flight": False,
             # Last human-readable title decision (also mirrored on last_metadata).
             "last_title_decision": None,
         }
@@ -3166,7 +3166,7 @@ def main() -> int:
             md = apple_tv_auto_state.get("last_metadata")
             query = ""
             if isinstance(md, dict):
-                query = str(md.get("query") or md.get("ocr_title") or "").strip()
+                query = str(md.get("query") or "").strip()
             if not query:
                 query = str(apple_tv_auto_state.get("query") or "").strip()
             if not query:
@@ -3316,11 +3316,11 @@ def main() -> int:
                 incoming_audio=_program_audio_session(),
             ):
                 return True
-            # HDMI-only: 24 consecutive unchanged OCR frames → saver.
+            # HDMI-only: 24 consecutive unchanged HDMI frames → saver.
             # Ignored while player metadata is driving (position is authoritative).
             if not _metadata_drives_clock_saver():
                 try:
-                    from pigeon.hdmi_ocr import hdmi_clock_saver_due
+                    from pigeon.hdmi_capture import hdmi_clock_saver_due
                     from pigeon.source_toggles import source_enabled
 
                     if source_enabled("hdmi") and hdmi_clock_saver_due():
@@ -4066,7 +4066,7 @@ def main() -> int:
             if view_circles_widget is None:
                 return
             try:
-                from pigeon.hdmi_ocr import probe_hdmi_presence
+                from pigeon.hdmi_capture import probe_hdmi_presence
 
                 # HDMI probe grabs a capture frame on a worker; numpy on that
                 # frame holds the GIL and hitchs live widgets every ~1.5 s.
@@ -4245,7 +4245,6 @@ def main() -> int:
                         atv_title = str(
                             lm_vid.get("title")
                             or lm_vid.get("query")
-                            or lm_vid.get("ocr_title")
                             or ""
                         ).strip()
                 tt_fallback = (
@@ -6080,14 +6079,8 @@ def main() -> int:
 
         _view_four_metadata_source_on = _core_view_four._view_four_metadata_source_on
 
-        _collect_view_four_ocr_lines = _bind_deps(
-            _core_view_four._collect_view_four_ocr_lines,
-            _view_four_has_value=_view_four_has_value,
-        )
-
         _collect_view_four_raw_title_lines = _bind_deps(
             _core_view_four._collect_view_four_raw_title_lines,
-            _collect_view_four_ocr_lines=_collect_view_four_ocr_lines,
             _tmdb_info_current_and_available=_tmdb_info_current_and_available,
             _view_four_display_metadata=_view_four_display_metadata,
             _view_four_has_value=_view_four_has_value,
@@ -6101,7 +6094,7 @@ def main() -> int:
 
         def _metadata_debug_provider() -> dict[str, object]:
             """Rows for the [4] metadata inspector (player / hdmi / pigeon pages)."""
-            from pigeon.hdmi_ocr import hdmi_capture_available
+            from pigeon.hdmi_capture import hdmi_capture_available
             from pigeon.source_toggles import source_enabled
 
             lm = _view_four_display_metadata() or {}
@@ -6149,34 +6142,14 @@ def main() -> int:
                 "episode": p_episode,
             }
 
-            # --- hdmi: whatever OCR pulled off the video feed. No capture card
-            # connected → red LED and no metadata at all (stale OCR fields may
-            # still sit in last_metadata after an unplug).
-            h_episode = ""
-            h_title = ""
-            h_year_s = ""
-            if hdmi_active:
-                h_season = lm.get("ocr_season")
-                h_episode_n = lm.get("ocr_episode")
-                try:
-                    if h_season is not None and h_episode_n is not None:
-                        h_episode = f"S{int(h_season)} E{int(h_episode_n)}"
-                    elif h_episode_n is not None:
-                        h_episode = f"E{int(h_episode_n)}"
-                except (TypeError, ValueError):
-                    h_episode = ""
-                h_title = str(lm.get("ocr_title") or "").strip()
-                h_year = lm.get("ocr_year")
-                h_year_s = str(int(h_year)) if isinstance(h_year, (int, float)) else ""
+            # --- hdmi: signal only (LED). HDMI no longer supplies metadata
+            # since OCR was retired, so every field stays blank.
             hdmi_rows = {
                 "service": "",
                 "series": "",
-                "title": h_title,
-                "episode": h_episode,
-                "year": h_year_s,
-                "ocr_lines": list(lm.get("ocr_lines") or []) if hdmi_active else [],
-                "ocr_status": str(lm.get("ocr_status") or "").strip() if hdmi_active else "",
-                "ocr_reason": str(lm.get("ocr_reason") or "").strip() if hdmi_active else "",
+                "title": "",
+                "episode": "",
+                "year": "",
             }
 
             # --- pigeon: the final verdict (search terms + confidence) ---
@@ -6185,7 +6158,7 @@ def main() -> int:
                 or apple_tv_auto_state.get("last_tmdb_fetch_input")
                 or ""
             ).strip()
-            g_title = refined or _rt("raw_query") or p_title or hdmi_rows["title"]
+            g_title = refined or _rt("raw_query") or p_title
             g_year = ""
             try:
                 from pigeon.tmdb_poster import split_query_and_year
@@ -6197,8 +6170,6 @@ def main() -> int:
                     g_year = str(year)
             except Exception:
                 pass
-            if not g_year:
-                g_year = hdmi_rows["year"]
             g_series = p_series
             g_episode = ""
             se_i, ep_i = getattr(rt, "season_index", None), getattr(rt, "episode_index", None)
@@ -6206,7 +6177,6 @@ def main() -> int:
                 g_episode = _rt("layer_episode_title") or _rt("raw_episode_title")
                 if not g_episode and se_i is not None and ep_i is not None:
                     g_episode = f"S{se_i} E{ep_i}"
-                g_episode = g_episode or h_episode
             g_episode = g_episode or g_title
             svc_label = str(streaming_badge_state.get("label") or "").strip()
             pigeon_rows: dict[str, object] = {
@@ -8603,13 +8573,6 @@ def main() -> int:
                             strip_streaming_identity(md)
                         except Exception:
                             pass
-                    elif kind == "hdmi":
-                        try:
-                            from pigeon.hdmi_ocr import clear_ocr_fields
-
-                            clear_ocr_fields(md)
-                        except Exception:
-                            pass
                 skip_cache = None
                 return
 
@@ -10077,8 +10040,6 @@ def main() -> int:
             else:
                 query = pyatv_q
             if not query:
-                query = str(metadata.get("ocr_title") or "").strip()
-            if not query:
                 return None
             prefer = _tmdb_pref_from_metadata(metadata)
             title = str(metadata.get("title") or "").strip()
@@ -10725,27 +10686,24 @@ def main() -> int:
             if had_art:
                 render_once()
 
-        _apply_hdmi_ocr_clues = _bind_deps(
-            _core_device_control._apply_hdmi_ocr_clues,
+        _apply_hdmi_frame_check = _bind_deps(
+            _core_device_control._apply_hdmi_frame_check,
             _bump_clock_saver_significant_device=_bump_clock_saver_significant_device,
-            _content_key_from_metadata=_content_key_from_metadata,
             _note_metadata_activity=_note_metadata_activity,
             _sync_now_playing_screen_state=_sync_now_playing_screen_state,
             apple_tv_auto_state=apple_tv_auto_state,
-            spawn_tmdb_poster_fetch=spawn_tmdb_poster_fetch,
         )
 
-        _on_hdmi_ocr_clues = _bind_deps(
-            _core_device_control._on_hdmi_ocr_clues,
-            _apply_hdmi_ocr_clues=_apply_hdmi_ocr_clues,
+        _on_hdmi_frame_checked = _bind_deps(
+            _core_device_control._on_hdmi_frame_checked,
+            _apply_hdmi_frame_check=_apply_hdmi_frame_check,
             apple_tv_auto_state=apple_tv_auto_state,
             root=root,
         )
 
-        _schedule_hdmi_ocr_from_poll = _bind_deps(
-            _core_device_control._schedule_hdmi_ocr_from_poll,
-            _on_hdmi_ocr_clues=_on_hdmi_ocr_clues,
-            _tmdb_info_current_and_available=_tmdb_info_current_and_available,
+        _schedule_hdmi_frame_check_from_poll = _bind_deps(
+            _core_device_control._schedule_hdmi_frame_check_from_poll,
+            _on_hdmi_frame_checked=_on_hdmi_frame_checked,
             apple_tv_auto_state=apple_tv_auto_state,
         )
 
@@ -10764,10 +10722,7 @@ def main() -> int:
                 _sync_status_bar_visibility_for_playback(None)
                 if _PIGEON_EXT:
                     try:
-                        lm_ocr = apple_tv_auto_state.get("last_metadata")
-                        _schedule_hdmi_ocr_from_poll(
-                            lm_ocr if isinstance(lm_ocr, dict) else {}
-                        )
+                        _schedule_hdmi_frame_check_from_poll()
                     except Exception:
                         pass
                 root.after(APPLE_TV_POLL_MS, _apple_tv_auto_poll_tick)
@@ -10990,14 +10945,14 @@ def main() -> int:
                                 )
                         except Exception:
                             pass
-                        prev_ocr_md = apple_tv_auto_state.get("last_metadata")
+                        prev_md = apple_tv_auto_state.get("last_metadata")
                         try:
                             from pigeon.display_confidence import (
                                 hold_identity_across_idle_poll,
                             )
 
                             merged_md = hold_identity_across_idle_poll(
-                                prev_ocr_md if isinstance(prev_ocr_md, dict) else None,
+                                prev_md if isinstance(prev_md, dict) else None,
                                 merged_md,
                             )
                             merged_md["content_key"] = _content_key_from_metadata(
@@ -11016,18 +10971,12 @@ def main() -> int:
                                 player_metadata_adequate,
                             )
                             from pigeon.source_toggles import source_enabled
-                            from pigeon.hdmi_ocr import (
-                                apply_ocr_title_as_identity,
-                                clear_ocr_fields,
-                                copy_ocr_fields,
-                                ocr_session_anchor,
-                            )
 
                             prev_app = ""
-                            if isinstance(prev_ocr_md, dict):
+                            if isinstance(prev_md, dict):
                                 prev_app = str(
-                                    prev_ocr_md.get("app_id")
-                                    or prev_ocr_md.get("app_name")
+                                    prev_md.get("app_id")
+                                    or prev_md.get("app_name")
                                     or ""
                                 ).strip().casefold()
                             new_app = str(
@@ -11065,51 +11014,17 @@ def main() -> int:
                                         )
                                 except Exception:
                                     pass
-                            if source_enabled("hdmi"):
-                                # content_key includes the OCR-filled query, so it
-                                # changes on the next poll and used to drop clues.
-                                # Keep HDMI results until the Apple TV app / real
-                                # pyatv title changes (Disney+ is not a title).
-                                session = ocr_session_anchor(merged_md)
-                                prev_session = (
-                                    str(prev_ocr_md.get("ocr_session") or "")
-                                    if isinstance(prev_ocr_md, dict)
-                                    else ""
-                                )
-                                if app_changed and not player_ok:
-                                    # Metadata-rich app → no-meta app: drop stale
-                                    # identity/art; OCR will refill what it can.
-                                    mark_stale(merged_md)
-                                    _clear_displayed_tmdb_art_for_content_change()
-                                elif not prev_session or prev_session == session:
-                                    copy_ocr_fields(prev_ocr_md, merged_md)
-                                    if (
-                                        not player_ok
-                                        and isinstance(prev_ocr_md, dict)
-                                        and str(prev_ocr_md.get("identity_source") or "")
-                                        == "ocr"
-                                    ):
-                                        mark_identity(
-                                            merged_md,
-                                            source="ocr",
-                                            confidence=float(
-                                                prev_ocr_md.get("identity_confidence")
-                                                or 0.65
-                                            ),
-                                        )
-                                merged_md["ocr_session"] = session
-                                if apply_ocr_title_as_identity(merged_md):
-                                    merged_md["content_key"] = _content_key_from_metadata(
-                                        merged_md
-                                    )
-                            else:
-                                clear_ocr_fields(merged_md)
+                            if source_enabled("hdmi") and app_changed and not player_ok:
+                                # Metadata-rich app → no-meta app: drop stale
+                                # identity/art.
+                                mark_stale(merged_md)
+                                _clear_displayed_tmdb_art_for_content_change()
                         except Exception:
                             pass
                         apple_tv_auto_state["last_metadata"] = merged_md
                         if not meter_up:
                             try:
-                                _schedule_hdmi_ocr_from_poll(merged_md)
+                                _schedule_hdmi_frame_check_from_poll()
                             except Exception:
                                 pass
                             # Music artwork (bytes live only on the poll dict; not stored in last_metadata).
@@ -11302,14 +11217,7 @@ def main() -> int:
                     if not meter_up:
                         _sync_status_bar_visibility_for_playback(md_for_status)
                         try:
-                            ocr_md = (
-                                md_for_spawn
-                                if isinstance(md_for_spawn, dict)
-                                else apple_tv_auto_state.get("last_metadata")
-                            )
-                            _schedule_hdmi_ocr_from_poll(
-                                ocr_md if isinstance(ocr_md, dict) else {}
-                            )
+                            _schedule_hdmi_frame_check_from_poll()
                         except Exception:
                             pass
                     root.after(max(APPLE_TV_POLL_MS, int(next_poll_ms)), _apple_tv_auto_poll_tick)

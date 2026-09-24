@@ -1,8 +1,9 @@
 """How sure we are about each now-playing field.
 
-The player (pyatv / Roku) is trusted when it gives a real title. HDMI OCR
-takes over when that title is missing or is only a service name. After an
-app change, leftover identity is stale until a new source confirms it.
+The player (pyatv / Roku) is trusted when it gives a real title. When that
+title is missing or is only a service name, a live HDMI signal with an app in
+the foreground still keeps now-playing up. After an app change, leftover
+identity is stale until the player confirms it.
 
 The UI should only put up fields at or above ``DISPLAY_MIN``.
 """
@@ -13,8 +14,6 @@ from typing import Any, Mapping
 
 DISPLAY_MIN = 0.50
 PYATV_IDENTITY = 0.90
-OCR_IDENTITY = 0.65
-OCR_PENDING = 0.45
 STALE = 0.20
 POSITION_LIVE = 0.90
 ART_MATCHED = 0.80
@@ -29,7 +28,7 @@ TRT_LONG_RATIO = 0.75
 
 
 def is_placeholder_identity(value: str) -> bool:
-    """True when a string is empty, a service name, or OCR junk."""
+    """True when a string is empty or only a service name."""
     text = str(value or "").strip()
     if not text:
         return True
@@ -37,13 +36,6 @@ def is_placeholder_identity(value: str) -> bool:
         from pigeon.tmdb_poster import is_degenerate_tmdb_query
 
         if is_degenerate_tmdb_query(text):
-            return True
-    except ImportError:
-        pass
-    try:
-        from pigeon.ocr_clues import looks_like_ocr_junk
-
-        if looks_like_ocr_junk(text):
             return True
     except ImportError:
         pass
@@ -224,32 +216,24 @@ def has_foreground_app(metadata: Mapping[str, Any] | None) -> bool:
 
 
 def player_metadata_adequate(metadata: Mapping[str, Any] | None) -> bool:
-    """True when the player itself supplied a TMDb-ready title.
-
-    An OCR-filled ``query`` does not count — HDMI is then in charge.
-    """
+    """True when the player itself supplied a TMDb-ready title."""
     md = metadata if isinstance(metadata, dict) else {}
     source = str(md.get("identity_source") or "").strip().lower()
-    if source in ("ocr", "stale"):
+    if source == "stale":
         return False
     query = str(md.get("query") or "").strip()
     if is_placeholder_identity(query):
         return False
-    if source == "pyatv":
-        return True
-    ocr = str(md.get("ocr_title") or "").strip()
-    if ocr and query.casefold() == ocr.casefold():
-        return False
     return True
 
 
-def ocr_is_in_charge(
+def hdmi_in_charge(
     metadata: Mapping[str, Any] | None,
     *,
     hdmi_on: bool = True,
     hdmi_present: bool = True,
 ) -> bool:
-    """Upcoming / no-meta services: HDMI owns identity when the player does not."""
+    """No usable player title, but HDMI is on and carrying a picture."""
     if not hdmi_on or not hdmi_present:
         return False
     return not player_metadata_adequate(metadata)
@@ -266,20 +250,16 @@ def identity_confidence(metadata: Mapping[str, Any] | None) -> float:
     source = str(md.get("identity_source") or "").strip().lower()
     if source == "pyatv" and player_metadata_adequate(md):
         return PYATV_IDENTITY
-    if source == "ocr" and not is_placeholder_identity(str(md.get("query") or md.get("ocr_title") or "")):
-        return OCR_IDENTITY
     if source == "stale":
         return STALE
     if player_metadata_adequate(md):
         return PYATV_IDENTITY
-    if not is_placeholder_identity(str(md.get("ocr_title") or "")):
-        return OCR_IDENTITY
     return 0.0
 
 
 def identity_displayable(metadata: Mapping[str, Any] | None) -> bool:
     md = metadata if isinstance(metadata, dict) else {}
-    query = str(md.get("query") or md.get("ocr_title") or "").strip()
+    query = str(md.get("query") or "").strip()
     if is_placeholder_identity(query):
         return False
     return identity_confidence(md) >= DISPLAY_MIN
@@ -328,7 +308,7 @@ def content_should_stay_active(
         return True
     if playback_detected(metadata):
         return True
-    if has_foreground_app(metadata) and ocr_is_in_charge(
+    if has_foreground_app(metadata) and hdmi_in_charge(
         metadata, hdmi_on=hdmi_on, hdmi_present=hdmi_present
     ):
         return True
@@ -343,7 +323,7 @@ def metadata_is_playback_idle(metadata: Mapping[str, Any] | None) -> bool:
     md = metadata if isinstance(metadata, dict) else {}
     if identity_displayable(md) or player_metadata_adequate(md):
         return False
-    q = str(md.get("query") or md.get("title") or md.get("ocr_title") or "").strip()
+    q = str(md.get("query") or md.get("title") or "").strip()
     if q and not is_placeholder_identity(q):
         return False
     ds = str(md.get("device_state") or "")
@@ -370,15 +350,6 @@ _IDENTITY_HOLD_KEYS = (
     "title_decision_title",
     "title_decision_at",
     "content_key",
-    "ocr_title",
-    "ocr_lines",
-    "ocr_season",
-    "ocr_episode",
-    "ocr_year",
-    "ocr_runtime_min",
-    "ocr_extras",
-    "ocr_session",
-    "ocr_agrees",
     "prefer_pyatv_media",
     "inferred_prefer",
     "app_name",
@@ -400,7 +371,7 @@ def metadata_has_holdable_identity(metadata: Mapping[str, Any] | None) -> bool:
     md = metadata if isinstance(metadata, dict) else {}
     if identity_displayable(md) or player_metadata_adequate(md):
         return True
-    q = str(md.get("query") or md.get("title") or md.get("ocr_title") or "").strip()
+    q = str(md.get("query") or md.get("title") or "").strip()
     return bool(q) and not is_placeholder_identity(q)
 
 
@@ -482,8 +453,8 @@ def scores_for_metadata(
         ),
         "app": app_confidence(md),
         "trt": None if trt is None else float(trt),
-        "ocr_charge": 1.0
-        if ocr_is_in_charge(md, hdmi_on=hdmi_on, hdmi_present=hdmi_present)
+        "hdmi_charge": 1.0
+        if hdmi_in_charge(md, hdmi_on=hdmi_on, hdmi_present=hdmi_present)
         else 0.0,
     }
 

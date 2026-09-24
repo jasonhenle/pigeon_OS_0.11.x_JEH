@@ -372,7 +372,7 @@ def _atv_metadata_is_content_idle(metadata: dict[str, object], *, metadata_has_p
         pass
     try:
         from pigeon.display_confidence import content_should_stay_active
-        from pigeon.hdmi_ocr import hdmi_capture_available
+        from pigeon.hdmi_capture import hdmi_capture_available
         from pigeon.source_toggles import source_enabled
 
         if content_should_stay_active(
@@ -441,7 +441,7 @@ def _np_widgets_content_active(*, incoming: str = "", config: str = "", _apple_t
     ):
         q = ""
         if isinstance(lm, dict):
-            q = str(lm.get("query") or lm.get("title") or lm.get("ocr_title") or "").strip()
+            q = str(lm.get("query") or lm.get("title") or "").strip()
         if not q:
             q = str(apple_tv_auto_state.get("query") or "").strip()
         if q:

@@ -151,7 +151,7 @@ def classify_player_metadata(
         present = bool(player_metadata_adequate(md) or identity_displayable(md))
         if not present:
             q = str(
-                md.get("query") or md.get("title") or md.get("ocr_title") or ""
+                md.get("query") or md.get("title") or ""
             ).strip()
             present = bool(q) and not is_placeholder_identity(q)
     except Exception:

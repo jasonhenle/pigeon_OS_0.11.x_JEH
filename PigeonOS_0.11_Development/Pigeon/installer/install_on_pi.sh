@@ -102,8 +102,7 @@ pigeon_apt_install() {
         avahi-daemon \
         libnss-mdns \
         zenity \
-        rsync \
-        tesseract-ocr; then
+        rsync; then
         return 0
       fi
     fi

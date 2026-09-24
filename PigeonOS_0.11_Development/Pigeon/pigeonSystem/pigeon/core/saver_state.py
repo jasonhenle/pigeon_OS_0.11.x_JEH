@@ -143,10 +143,10 @@ def _something_playing_now(*, _apple_tv_is_off, _atv_metadata_is_content_idle, a
 
 
 def _metadata_drives_clock_saver(*, apple_tv_auto_state, apple_tv_playback_clock) -> bool:
-    """True when player metadata (not HDMI OCR streak) owns clock-saver idle.
+    """True when player metadata (not the HDMI unchanged-frame streak) owns clock-saver idle.
 
     Position progress is the primary signal. When metadata is driving, the
-    HDMI 24-OCR unchanged-frame rule is ignored.
+    HDMI 24-frame unchanged rule is ignored.
     """
     try:
         from pigeon.source_toggles import source_enabled

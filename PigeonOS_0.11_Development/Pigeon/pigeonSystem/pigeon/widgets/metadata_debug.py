@@ -7,7 +7,7 @@ backward steps player → hdmi → pigeon (no wrap); EXIT returns to the pigeon
 settings grid; [4] again jumps to the legacy metadata view.
 
 Data comes from a provider callback registered by ``pigeon_0_9`` (the widget
-layer has no access to pyatv / OCR state).
+layer has no access to pyatv / HDMI state).
 """
 
 from __future__ import annotations
@@ -335,93 +335,9 @@ def render_metadata_debug_bgra(
         font_mode="preferences",
     )
     bg = _full_theme_bgra(st, assets_dir=assets_dir, path=path)
-    out = _composite_bgra_over_bgra(bg, ui_bgra)
-    page_idx = max(0, min(len(METADATA_DEBUG_PAGES) - 1, int(st.metadata_debug_page)))
-    page = METADATA_DEBUG_PAGES[page_idx]
-    ocr_lines = _ocr_lines_from_data(payload if isinstance(payload, dict) else {}, page)
-    if ocr_lines:
-        _draw_hdmi_ocr_dump_bgra(out, ocr_lines)
-    return out
+    return _composite_bgra_over_bgra(bg, ui_bgra)
 
 
 def clear_metadata_debug_render_caches() -> None:
     _SVG_TREE_TEMPLATES.clear()
     _THEME_BG_CACHE.clear()
-
-
-_OCR_DUMP_MAX_LINES = 8
-_OCR_DUMP_FONT_PX = 16
-_OCR_DUMP_LINE_GAP = 4
-_OCR_DUMP_PAD_X = 28
-_OCR_DUMP_PAD_Y = 8
-
-
-def _ocr_lines_from_data(data: dict[str, Any], page: str) -> list[str]:
-    if page != "hdmi":
-        return []
-    rows = data.get("hdmi")
-    rows = rows if isinstance(rows, dict) else {}
-    raw = rows.get("ocr_lines")
-    if isinstance(raw, list):
-        lines = [str(x).strip() for x in raw if str(x or "").strip()]
-    else:
-        blob = str(raw or "").strip()
-        lines = [ln.strip() for ln in blob.splitlines() if ln.strip()] if blob else []
-    # Always surface status crumbs when OCR is empty so the dump proves the path.
-    if not lines:
-        status = str(rows.get("ocr_status") or "").strip()
-        reason = str(rows.get("ocr_reason") or "").strip()
-        if status:
-            lines.append(f"[{status}]")
-        if reason:
-            lines.append(f"reason={reason}")
-        if not lines:
-            lines.append("(no OCR text yet)")
-    return lines[:_OCR_DUMP_MAX_LINES]
-
-
-def _draw_hdmi_ocr_dump_bgra(bgra: np.ndarray, lines: list[str]) -> None:
-    """Paint raw OCR lines in the black band below the red system plate."""
-    if not lines:
-        return
-    from PIL import Image, ImageDraw
-
-    from pigeon.font_paths import resolve_ui_font_semibold
-    from pigeon.widgets.main_settings import _MENU_CONTAINER_BBOX
-
-    x0, _y0, x1, y1 = _MENU_CONTAINER_BBOX
-    region_top = int(y1) + _OCR_DUMP_PAD_Y
-    region_bottom = DESIGN_H - 6
-    if region_top >= region_bottom:
-        return
-    path = resolve_ui_font_semibold()
-    try:
-        font = (
-            ImageFont.truetype(str(path), _OCR_DUMP_FONT_PX)
-            if path
-            else ImageFont.load_default()
-        )
-    except OSError:
-        font = ImageFont.load_default()
-    max_w = max(24, int(x1 - x0) - 2 * _OCR_DUMP_PAD_X)
-    rgba = np.ascontiguousarray(bgra[:, :, [2, 1, 0, 3]])
-    img = Image.fromarray(rgba)
-    draw = ImageDraw.Draw(img)
-    y = region_top
-    line_h = _OCR_DUMP_FONT_PX + _OCR_DUMP_LINE_GAP
-    for raw in lines:
-        if y + line_h > region_bottom:
-            break
-        text = _truncate_text_to_width(str(raw), max_width_px=max_w, font=font)
-        draw.text(
-            (x0 + _OCR_DUMP_PAD_X, y),
-            text,
-            font=font,
-            fill=(255, 255, 255, 230),
-        )
-        y += line_h
-    out = np.asarray(img)
-    bgra[:, :, 0] = out[:, :, 2]
-    bgra[:, :, 1] = out[:, :, 1]
-    bgra[:, :, 2] = out[:, :, 0]
-    bgra[:, :, 3] = out[:, :, 3]

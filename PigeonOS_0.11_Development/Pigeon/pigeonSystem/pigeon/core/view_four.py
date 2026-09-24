@@ -7,8 +7,6 @@ takes the app state it used to close over as keyword-only arguments;
 
 from __future__ import annotations
 
-import time
-
 
 def _view_four_text_is_placeholder(s: str) -> bool:
     """Hide rows whose text is empty or ends with ``-`` / ``NONE`` (any case)."""
@@ -51,74 +49,8 @@ def _view_four_metadata_source_on() -> bool:
         return True
 
 
-def _collect_view_four_ocr_lines(md: dict[str, object], *, _view_four_has_value) -> list[str]:
-    """HDMI OCR clues for View 4 Title Info; omit empty fields."""
-    pairs = (
-        ("ocr_status", "ocr.status"),
-        ("ocr_title", "ocr.title"),
-        ("ocr_lines", "ocr.lines"),
-        ("ocr_season", "ocr.season"),
-        ("ocr_episode", "ocr.episode"),
-        ("ocr_year", "ocr.year"),
-        ("ocr_runtime_min", "ocr.runtime_min"),
-        ("ocr_extras", "ocr.extras"),
-        ("ocr_reason", "ocr.trigger"),
-        ("ocr_agrees", "ocr.agrees"),
-        ("ocr_at", "ocr.at"),
-        ("ocr_capture", "ocr.capture"),
-    )
-    out: list[str] = []
-    for key, label in pairs:
-        val: object = md.get(key)
-        if key == "ocr_reason":
-            mapped = {
-                "no_metadata": "no_pyatv_title",
-                "watch": "stay_alert",
-                "pause": "pause",
-                "confirm": "confirm",
-            }
-            val = mapped.get(str(val or ""), val)
-        if key == "ocr_at" and val is not None:
-            try:
-                val = time.strftime(
-                    "%Y-%m-%d %H:%M:%S", time.localtime(float(val))
-                )
-            except (TypeError, ValueError, OSError, OverflowError):
-                pass
-        if not _view_four_has_value(val):
-            continue
-        if isinstance(val, (list, tuple)):
-            items: list[str] = []
-            junk_fn = None
-            if key == "ocr_lines":
-                try:
-                    from pigeon.ocr_clues import looks_like_ocr_junk
-
-                    junk_fn = looks_like_ocr_junk
-                except Exception:
-                    junk_fn = None
-            for item in val:
-                text = str(item).strip()
-                if not _view_four_has_value(text):
-                    continue
-                if junk_fn is not None and junk_fn(text):
-                    continue
-                items.append(text)
-            if not items:
-                continue
-            shown = items[:6]
-            extra_n = len(items) - len(shown)
-            text = ", ".join(shown)
-            if extra_n > 0:
-                text = f"{text} +{extra_n} more"
-            out.append(f"{label}={text}")
-            continue
-        out.append(f"{label}={val!r}")
-    return out
-
-
-def _collect_view_four_raw_title_lines(*, _collect_view_four_ocr_lines, _tmdb_info_current_and_available, _view_four_display_metadata, _view_four_has_value, _view_four_metadata_source_on, _view_four_text_is_placeholder, apple_tv_auto_state, apple_tv_playback_clock, receiver_telnet_debug_holder, streaming_badge_state) -> list[tuple[str, bool]]:
-    """View 4: streaming label, rawTitle + OCR fields that have a value, last TMDb fetch."""
+def _collect_view_four_raw_title_lines(*, _tmdb_info_current_and_available, _view_four_display_metadata, _view_four_has_value, _view_four_metadata_source_on, _view_four_text_is_placeholder, apple_tv_auto_state, apple_tv_playback_clock, receiver_telnet_debug_holder, streaming_badge_state) -> list[tuple[str, bool]]:
+    """View 4: streaming label, rawTitle fields that have a value, last TMDb fetch."""
     rows: list[tuple[str, bool]] = []
 
     def _ln(s: str) -> None:
@@ -129,11 +61,9 @@ def _collect_view_four_raw_title_lines(*, _collect_view_four_ocr_lines, _tmdb_in
     lm_rt = _view_four_display_metadata()
     metadata_on = _view_four_metadata_source_on()
     if isinstance(lm_rt, dict):
-        for ocr_line in _collect_view_four_ocr_lines(lm_rt):
-            _ln(ocr_line)
         try:
             from pigeon.display_confidence import scores_for_metadata
-            from pigeon.hdmi_ocr import hdmi_capture_available
+            from pigeon.hdmi_capture import hdmi_capture_available
             from pigeon.source_toggles import source_enabled
             from pigeon.tmdb_poster import last_trt_comparison
 
@@ -164,19 +94,13 @@ def _collect_view_four_raw_title_lines(*, _collect_view_four_ocr_lines, _tmdb_in
                     _ln(f"title.decision={why}")
             except Exception:
                 pass
-            pending = str(lm_rt.get("ocr_pending_title") or "").strip()
-            if pending:
-                _ln(f"identity.pending={pending!r}")
-                hits = lm_rt.get("ocr_pending_hits")
-                if hits is not None:
-                    _ln(f"identity.pending_hits={hits!r}")
             for key in ("identity", "position", "art", "app", "trt"):
                 val = scores.get(key)
                 if val is None:
                     continue
                 _ln(f"confidence.{key}={float(val):.2f}")
-            if scores.get("ocr_charge"):
-                _ln("ocr.charge=true")
+            if scores.get("hdmi_charge"):
+                _ln("hdmi.charge=true")
         except Exception:
             pass
     if metadata_on:
@@ -233,17 +157,9 @@ def _collect_view_four_raw_title_lines(*, _collect_view_four_ocr_lines, _tmdb_in
         _ip = str(lm_rt.get("inferred_prefer") or "").strip().lower()
         if _ip in ("auto", "tv", "movie"):
             _ln(f"metadata.prefer_tmdb={_ip!r}")
-    ocr_guess = (
-        str(lm_rt.get("ocr_title") or "").strip().casefold()
-        if isinstance(lm_rt, dict)
-        else ""
-    )
-
     def _tmdb_row_allowed(q: object) -> bool:
-        if metadata_on:
-            return True
-        t = str(q or "").strip().casefold()
-        return bool(t and ocr_guess and (t == ocr_guess or t in ocr_guess or ocr_guess in t))
+        # With player metadata off nothing else names the show, so hide TMDb rows.
+        return bool(metadata_on)
 
     _ti = apple_tv_auto_state.get("last_tmdb_fetch_input")
     _tr = apple_tv_auto_state.get("last_tmdb_fetch_refined")
@@ -454,18 +370,6 @@ def _collect_view_four_source_lines(*, _view_four_display_metadata, _view_four_h
         "app_id",
         "volume_percent",
         "prefer",
-        "ocr_title",
-        "ocr_lines",
-        "ocr_season",
-        "ocr_episode",
-        "ocr_year",
-        "ocr_runtime_min",
-        "ocr_extras",
-        "ocr_reason",
-        "ocr_agrees",
-        "ocr_at",
-        "ocr_status",
-        "ocr_capture",
     }
     extra_keys = [
         k

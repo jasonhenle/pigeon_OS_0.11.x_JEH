@@ -295,8 +295,8 @@ def is_degenerate_tmdb_query(q: str) -> bool:
     """
     True if ``q`` should not be sent to TMDb alone (streaming app name, splash branding, etc.).
 
-    Short real titles (``It``, ``Up``, ``Us``) are valid. OCR glyph noise is filtered
-    at OCR ingestion, not here — player metadata must still trigger a search.
+    Short real titles (``It``, ``Up``, ``Us``) are valid — player metadata must
+    still trigger a search.
     """
     raw = (q or "").strip()
     if not raw or len(raw) < 2:

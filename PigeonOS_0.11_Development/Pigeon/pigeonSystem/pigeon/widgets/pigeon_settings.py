@@ -348,7 +348,7 @@ def _metadata_status_ok(state: MainSettingsState) -> bool:
 def _hdmi_device_present(state: MainSettingsState) -> bool:
     """True when HDMI can currently deliver a video frame to Pigeon."""
     try:
-        from pigeon.hdmi_ocr import hdmi_capture_available
+        from pigeon.hdmi_capture import hdmi_capture_available
 
         present = hdmi_capture_available()
         state.pigeon_hdmi_ok = present

@@ -453,7 +453,6 @@ def youtube_video_id_from_metadata(metadata: dict[str, object] | None) -> str | 
         "itunes_store_identifier",
         "query",
         "title",
-        "ocr_title",
     ):
         raw = str(metadata.get(key) or "").strip()
         if not raw:
@@ -473,7 +472,7 @@ def youtube_title_from_metadata(metadata: dict[str, object] | None) -> str:
     """Human title used to search YouTube when pyatv omits a video id."""
     if not isinstance(metadata, dict):
         return ""
-    for key in ("title", "query", "ocr_title", "album"):
+    for key in ("title", "query", "album"):
         raw = str(metadata.get(key) or "").strip()
         if raw:
             return raw

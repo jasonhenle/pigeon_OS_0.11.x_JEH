@@ -12,8 +12,7 @@ if _SYS_ROOT not in sys.path:
 
 import numpy as np  # noqa: E402
 
-from pigeon import hdmi_ocr as ho  # noqa: E402
-from pigeon.ocr_clues import OcrClues  # noqa: E402
+from pigeon import hdmi_capture as ho  # noqa: E402
 
 
 class _FakeCap:
@@ -43,7 +42,7 @@ class HdmiPresenceLedTests(unittest.TestCase):
         ho._hdmi_probe_in_flight = False
         ho._hdmi_probe_mono = 0.0
         ho._av_devices_cache = None
-        ho.reset_ocr_schedule()
+        ho.reset_frame_schedule()
 
     def tearDown(self) -> None:
         ho._cap = None
@@ -108,12 +107,53 @@ class HdmiPresenceLedTests(unittest.TestCase):
         self.assertTrue(ho._probe_hdmi_now())
         self.assertTrue(ho.hdmi_capture_available())
 
-    def test_capture_unavailable_drops_stale_ocr_title(self) -> None:
-        md = {"ocr_title": "Ted Lasso", "query": "Ted Lasso"}
-        clues = OcrClues(reason="watch", extras=["capture_unavailable"])
-        out = ho.apply_clues_to_metadata(md, clues)
-        self.assertNotIn("ocr_title", out)
-        self.assertEqual(out.get("ocr_status"), "capture_unavailable")
+
+
+class HdmiFrameCheckTests(unittest.TestCase):
+    """Frame fingerprints still drive the HDMI clock saver after OCR was retired."""
+
+    def setUp(self) -> None:
+        ho.reset_frame_schedule()
+        self._grab = ho._grab_frame
+
+    def tearDown(self) -> None:
+        ho._grab_frame = self._grab  # type: ignore[method-assign]
+        ho.reset_frame_schedule()
+
+    def test_check_cadence(self) -> None:
+        self.assertTrue(ho.frame_check_due(now=100.0))
+        self.assertFalse(ho.frame_check_due(now=100.0 + ho.FRAME_CHECK_INTERVAL_S - 0.1))
+        self.assertTrue(ho.frame_check_due(now=100.0 + ho.FRAME_CHECK_INTERVAL_S))
+
+    def test_unchanged_frames_arm_clock_saver(self) -> None:
+        frame = np.random.randint(0, 255, (270, 480, 3), dtype=np.uint8)
+        ho._grab_frame = lambda: frame  # type: ignore[method-assign]
+        seen: list = []
+        for _ in range(ho.CLOCK_SAVER_FRAME_STREAK + 1):
+            ho._frame_check_worker(seen.append)
+        self.assertTrue(seen[0])  # first fingerprint counts as a change
+        self.assertFalse(any(seen[1:]))
+        self.assertEqual(ho.hdmi_unchanged_streak(), ho.CLOCK_SAVER_FRAME_STREAK)
+        self.assertTrue(ho.hdmi_clock_saver_due())
+
+    def test_changed_frame_resets_streak(self) -> None:
+        a = np.zeros((270, 480, 3), dtype=np.uint8)
+        b = np.full((270, 480, 3), 200, dtype=np.uint8)
+        frames = [a, a, a, b]
+        ho._grab_frame = lambda: frames.pop(0)  # type: ignore[method-assign]
+        seen: list = []
+        for _ in range(4):
+            ho._frame_check_worker(seen.append)
+        self.assertEqual(seen, [True, False, False, True])
+        self.assertEqual(ho.hdmi_unchanged_streak(), 0)
+        self.assertTrue(ho.hdmi_last_frame_changed())
+
+    def test_no_frame_reports_none(self) -> None:
+        ho._grab_frame = lambda: None  # type: ignore[method-assign]
+        seen: list = []
+        ho._frame_check_worker(seen.append)
+        self.assertEqual(seen, [None])
+        self.assertEqual(ho.hdmi_unchanged_streak(), 0)
 
 
 if __name__ == "__main__":

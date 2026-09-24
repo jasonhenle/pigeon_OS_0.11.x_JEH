@@ -1,8 +1,8 @@
-"""On/off switches for Pigeon data sources (Wi‑Fi, Apple TV metadata, HDMI OCR, audio).
+"""On/off switches for Pigeon data sources (Wi‑Fi, Apple TV metadata, HDMI capture, audio).
 
 Persisted in ``state.json`` as ``source_toggles``. Default is on so existing
 devices keep working. The audio tile still gates capture; the LED follows
-``program_audio_present()``, the same gate as the visualizer.
+``program_audio_present()``.
 """
 
 from __future__ import annotations
@@ -65,7 +65,7 @@ def apply_toggles_to_settings_state(state: Any) -> None:
     state.source_audio_on = flags["audio"]
     # HDMI / audio LEDs follow a live signal, not the toggle or a stale handle.
     try:
-        from pigeon.hdmi_ocr import hdmi_capture_available
+        from pigeon.hdmi_capture import hdmi_capture_available
 
         state.pigeon_hdmi_ok = hdmi_capture_available()
     except Exception:
@@ -88,7 +88,7 @@ _IDENTITY_KEYS = (
 )
 
 # Extra poll fields that come from the same Apple TV / Roku metadata source.
-# Used when redacting View 4; live strip keeps play/pause and lets OCR refill title.
+# Used when redacting View 4; live strip keeps play/pause.
 _METADATA_DISPLAY_KEYS = _IDENTITY_KEYS + (
     "media_type",
     "prefer_pyatv_media",
@@ -126,8 +126,4 @@ def redact_disabled_source_fields(metadata: dict[str, Any]) -> dict[str, Any]:
         strip_streaming_identity(out)
         for key in _METADATA_DISPLAY_KEYS:
             out.pop(key, None)
-    if not source_enabled("hdmi"):
-        from pigeon.hdmi_ocr import clear_ocr_fields
-
-        clear_ocr_fields(out)
     return out

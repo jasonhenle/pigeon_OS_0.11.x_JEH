@@ -1045,7 +1045,7 @@ class MainSettingsState:
         except Exception:
             pass
         try:
-            from pigeon.hdmi_ocr import hdmi_capture_available, probe_hdmi_presence
+            from pigeon.hdmi_capture import hdmi_capture_available, probe_hdmi_presence
 
             self.pigeon_hdmi_ok = hdmi_capture_available()
             probe_hdmi_presence(force=True)
@@ -1079,7 +1079,7 @@ class MainSettingsState:
         self.show_metadata_debug = True
         self.metadata_debug_page = 0
         try:
-            from pigeon.hdmi_ocr import probe_hdmi_presence
+            from pigeon.hdmi_capture import probe_hdmi_presence
 
             probe_hdmi_presence(force=True)
         except Exception:
@@ -1122,7 +1122,7 @@ class MainSettingsState:
         # Land on zone1 — first editable target.
         self.preferences_focus_index = ring.index("zone1") if "zone1" in ring else 0
         try:
-            from pigeon.hdmi_ocr import hdmi_capture_available, probe_hdmi_presence
+            from pigeon.hdmi_capture import hdmi_capture_available, probe_hdmi_presence
 
             self.pigeon_hdmi_ok = hdmi_capture_available()
             probe_hdmi_presence(force=True)
@@ -6629,7 +6629,7 @@ class MainSettingsWidget:
         st = self._state
         if st.show_pigeon_settings or st.show_preferences:
             try:
-                from pigeon.hdmi_ocr import hdmi_capture_available, probe_hdmi_presence
+                from pigeon.hdmi_capture import hdmi_capture_available, probe_hdmi_presence
 
                 st.pigeon_hdmi_ok = hdmi_capture_available()
                 probe_hdmi_presence()
@@ -8551,7 +8551,7 @@ class MainSettingsWidget:
                 apply_toggles_to_settings_state(st)
                 if kind == "hdmi" and not on:
                     try:
-                        from pigeon.hdmi_ocr import release_capture
+                        from pigeon.hdmi_capture import release_capture
 
                         release_capture()
                     except Exception:
