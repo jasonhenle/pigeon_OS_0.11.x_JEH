@@ -100,6 +100,13 @@ marker = app_rel.rstrip("/") + "/"
 out.mkdir(parents=True, exist_ok=True)
 root = out.resolve()
 
+# Resource limits. A real Pigeon snapshot is far below these (largest file is
+# ~60 MB), so hitting one means a corrupt or hostile archive (e.g. a zip bomb).
+MAX_MEMBERS = 100_000
+MAX_FILE_BYTES = 1 << 30   # 1 GiB for any single file
+MAX_TOTAL_BYTES = 4 << 30  # 4 GiB extracted in total
+CHUNK_BYTES = 1 << 20      # stream in 1 MiB chunks; never load a whole file
+
 
 def safe_target(member_name):
     """Resolve a ZIP member under root; refuse anything that escapes it
@@ -115,10 +122,22 @@ def safe_target(member_name):
 with zipfile.ZipFile(zip_path) as zf:
     # Validate every member before writing anything, so a crafted archive
     # cannot leave a partial extraction behind.
-    for info in zf.infolist():
+    infos = zf.infolist()
+    if len(infos) > MAX_MEMBERS:
+        sys.exit(f"update archive has too many entries ({len(infos)})")
+    declared_total = 0
+    for info in infos:
         if safe_target(info.filename) is None:
             sys.exit(f"unsafe path in update archive: {info.filename!r}")
-    for info in zf.infolist():
+        if marker in info.filename and not info.is_dir():
+            if info.file_size > MAX_FILE_BYTES:
+                sys.exit(f"update archive member too large: {info.filename!r}")
+            declared_total += info.file_size
+    if declared_total > MAX_TOTAL_BYTES:
+        sys.exit(f"update archive expands to more than {MAX_TOTAL_BYTES} bytes")
+    # Sizes in ZIP headers can lie, so the copy below also counts real bytes.
+    written_total = 0
+    for info in infos:
         name = info.filename
         if marker not in name:
             continue
@@ -127,8 +146,17 @@ with zipfile.ZipFile(zip_path) as zf:
             target.mkdir(parents=True, exist_ok=True)
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
+        written_file = 0
         with zf.open(info) as src, open(target, "wb") as dst:
-            dst.write(src.read())
+            while True:
+                chunk = src.read(CHUNK_BYTES)
+                if not chunk:
+                    break
+                written_file += len(chunk)
+                written_total += len(chunk)
+                if written_file > MAX_FILE_BYTES or written_total > MAX_TOTAL_BYTES:
+                    sys.exit(f"update archive exceeds size limits at {name!r}")
+                dst.write(chunk)
         # zipfile does not restore Unix modes; keep +x so rsync -a does not
         # strip it from installed launchers (systemd execs them directly).
         mode = (info.external_attr >> 16) & 0o777  # no setuid/setgid/sticky
