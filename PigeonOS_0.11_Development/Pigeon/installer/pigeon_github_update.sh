@@ -90,7 +90,8 @@ log "downloading zip"
 curl -fsSL -o "${WORKDIR}/pigeon.zip" "${ZIP_URL}" || die "curl download failed (network or GitHub blocked)"
 
 log "extracting archive"
-python3 - <<'PY' "${WORKDIR}/pigeon.zip" "${WORKDIR}/extract" "${APP_REL}" || die "archive extraction failed or was rejected as unsafe"
+python3 -X utf8 - <<'PY' "${WORKDIR}/pigeon.zip" "${WORKDIR}/extract" "${APP_REL}" || die "archive extraction failed or was rejected as unsafe"
+import posixpath
 import sys
 import zipfile
 from pathlib import Path
@@ -109,14 +110,19 @@ CHUNK_BYTES = 1 << 20      # stream in 1 MiB chunks; never load a whole file
 
 
 def safe_target(member_name):
-    """Resolve a ZIP member under root; refuse anything that escapes it
-    (``../`` segments, absolute paths, backslash tricks)."""
-    if "\\" in member_name or member_name.startswith("/"):
+    """Map a ZIP member to a path under root; refuse anything that escapes it
+    (``../`` segments, absolute paths, backslash tricks).
+
+    Purely lexical (no filesystem calls), so an unusual character in a file
+    name (e.g. macOS's U+202F in screenshot names) cannot crash the check under
+    a non-UTF-8 locale. This script only ever writes regular files, so there
+    are no symlinks under root to follow."""
+    if not member_name or "\\" in member_name or "\x00" in member_name or member_name.startswith("/"):
         return None
-    target = (root / member_name).resolve()
-    if target == root or root not in target.parents:
+    norm = posixpath.normpath(member_name)
+    if norm in (".", "..") or norm.startswith("../"):
         return None
-    return target
+    return root / norm
 
 
 with zipfile.ZipFile(zip_path) as zf:
