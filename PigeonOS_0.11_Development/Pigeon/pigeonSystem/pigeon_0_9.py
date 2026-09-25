@@ -268,7 +268,6 @@ from pigeon.clock_saver_policy import (
     clock_saver_due_for_pause,
     pausesaver_hold_from_metadata_class,
     player_reports_playing,
-    should_hold_paused_screen,
     tick_pause_hold,
     tmdb_should_skip_refetch_on_resume,
 )
@@ -2150,8 +2149,7 @@ def main() -> int:
             Returns True when menus were closed (compose should show now-playing or
             clock saver via the normal OFF-phase path).
             """
-            nonlocal dev_phase, skip_cache
-            if dev_phase != DevPhase.MAIN_SETTINGS:
+            if dev_phase[0] != DevPhase.MAIN_SETTINGS:
                 return False
             now_i = float(now_mono if now_mono is not None else time.monotonic())
             if (now_i - float(last_pigeon_user_activity_mono[0])) < float(
@@ -2173,8 +2171,8 @@ def main() -> int:
                     main_settings_widget.invalidate()
                 except Exception:
                     pass
-            dev_phase = DevPhase.OFF
-            skip_cache = None
+            dev_phase[0] = DevPhase.OFF
+            skip_cache[0] = None
             try:
                 sync_developer_chrome()
             except Exception:
@@ -2222,7 +2220,7 @@ def main() -> int:
                 has_playback
                 or prog is not None
                 or (poster is not None and getattr(poster, "size", 0) > 0)
-                or bool(str(active_tmdb_title_key or "").strip())
+                or bool(str(active_tmdb_title_key[0] or "").strip())
             )
             if not live:
                 _clear_prefs_live()
@@ -2289,7 +2287,7 @@ def main() -> int:
                 st_ms.preferences_tt_bgra = poster
             else:
                 st_ms.preferences_song_title = str(
-                    active_tmdb_display_title or ""
+                    active_tmdb_display_title[0] or ""
                 ).strip()
                 st_ms.preferences_album_title = ""
                 st_ms.preferences_artist_title = ""
@@ -2297,7 +2295,7 @@ def main() -> int:
                 try:
                     from pigeon.tmdb_poster import get_cached_tmdb_cast
 
-                    tk = str(active_tmdb_title_key or "").strip()
+                    tk = str(active_tmdb_title_key[0] or "").strip()
                     if tk:
                         cast_rows = list(get_cached_tmdb_cast(tk) or [])
                 except Exception:
@@ -2955,7 +2953,7 @@ def main() -> int:
 
         def _view_one_layout_effective() -> int:
             if _PIGEON_EXT and (
-                dev_phase == DevPhase.GRID or display_view_holder[0] == DisplayView.FIVE
+                dev_phase[0] == DevPhase.GRID or display_view_holder[0] == DisplayView.FIVE
             ):
                 return int(last_view_one_layout_snapshot[0])
             return int(view_one_layout_holder[0])
@@ -2963,7 +2961,7 @@ def main() -> int:
         def _stage_is_view_one_video_layout() -> bool:
             if not _PIGEON_EXT:
                 return False
-            if dev_phase == DevPhase.GRID or display_view_holder[0] == DisplayView.FIVE:
+            if dev_phase[0] == DevPhase.GRID or display_view_holder[0] == DisplayView.FIVE:
                 return True
             return display_view_holder[0] == DisplayView.ONE
 
@@ -3154,7 +3152,7 @@ def main() -> int:
                 return False
             if apple_tv_auto_state.get("tmdb_fetch_in_flight"):
                 return False
-            if not str(active_tmdb_title_key or "").strip():
+            if not str(active_tmdb_title_key[0] or "").strip():
                 return False
             md = apple_tv_auto_state.get("last_metadata")
             query = ""
@@ -3267,7 +3265,7 @@ def main() -> int:
                 return False
             if not _clock_saver_user_enabled():
                 return False
-            if dev_phase != DevPhase.OFF:
+            if dev_phase[0] != DevPhase.OFF:
                 return False
             paused_hold = _pausesaver_is_holding()
             paused_age = _refresh_paused_row_stamp(now)
@@ -3338,7 +3336,7 @@ def main() -> int:
                     f"ui_age={ui_age:.0f}s need={CLOCK_SAVER_METADATA_IDLE_AFTER_S:.0f}s "
                     f"pause_age={paused_age:.0f}s pause_need={CLOCK_SAVER_PAUSED_AFTER_S:.0f}s "
                     f"active={bool(meta_idle)} boot={bool(_boot_clock_saver_until_playback[0])} "
-                    f"scene={bool(scene_enabled)} phase={dev_phase!s}\n"
+                    f"scene={bool(scene_enabled)} phase={dev_phase[0]!s}\n"
                 )
                 sys.stderr.flush()
             if meta_idle:
@@ -3346,14 +3344,6 @@ def main() -> int:
             ui_idle = (now - float(last_pigeon_user_activity_mono[0])) >= _clock_saver_idle_need()
             dev_idle = (now - float(last_clock_saver_significant_device_mono[0])) >= _clock_saver_idle_need()
             return ui_idle and dev_idle
-
-        def _effective_display_view() -> DisplayView:
-            """Logical display for composition. GRID / view 5 overlay preview as view 1 + snapshot layout."""
-            if _PIGEON_EXT and (
-                dev_phase == DevPhase.GRID or display_view_holder[0] == DisplayView.FIVE
-            ):
-                return DisplayView.ONE
-            return display_view_holder[0]
 
         _clock_startup_intro_opacity = _bind_deps(
             _core_startup._clock_startup_intro_opacity,
@@ -3366,10 +3356,6 @@ def main() -> int:
         def _backdrop_active_for_view() -> bool:
             """True when backdrop scene should be used by the current effective view."""
             return bool(use_backdrop_scene and _effective_display_view() != DisplayView.SIX)
-
-        def _design_grid_overlay_active() -> bool:
-            """Grid overlay on the composite (developer GRID phase or view 5)."""
-            return dev_phase == DevPhase.GRID or display_view_holder[0] == DisplayView.FIVE
 
         _stage_grid_overlay_mode = _bind_deps(
             _core_stage_render._stage_grid_overlay_mode,
@@ -3471,7 +3457,6 @@ def main() -> int:
             )
 
         def _apply_auto_widget_policy():
-            nonlocal dev_phase, skip_cache
             from pigeon.auto_widgets import resolve_auto_widgets, set_live_plan
             from pigeon.paused_screen import set_pausesaver_backdrop
 
@@ -3479,7 +3464,7 @@ def main() -> int:
             set_live_plan(plan)
             try:
                 src = _paused_screen_backdrop_bgr()
-                key = str(active_tmdb_title_key or "").strip()
+                key = str(active_tmdb_title_key[0] or "").strip()
                 if not key:
                     md_bd = apple_tv_auto_state.get("last_metadata")
                     if isinstance(md_bd, dict):
@@ -3504,7 +3489,7 @@ def main() -> int:
                         main_settings_widget.invalidate()
                 except Exception:
                     pass
-            if plan.force_settings and dev_phase != DevPhase.MAIN_SETTINGS:
+            if plan.force_settings and dev_phase[0] != DevPhase.MAIN_SETTINGS:
                 if main_settings_widget is not None:
                     try:
                         if main_settings_widget.state.keyboard_open:
@@ -3512,8 +3497,8 @@ def main() -> int:
                         main_settings_widget.prefetch_scans_for_settings()
                     except Exception:
                         pass
-                dev_phase = DevPhase.MAIN_SETTINGS
-                skip_cache = None
+                dev_phase[0] = DevPhase.MAIN_SETTINGS
+                skip_cache[0] = None
             return plan
 
         def _clock_saver_for_compose(now: float) -> bool:
@@ -3524,7 +3509,7 @@ def main() -> int:
                 if _tmdb_info_current_and_available():
                     return False
                 return True
-            if dev_phase != DevPhase.OFF:
+            if dev_phase[0] != DevPhase.OFF:
                 return False
             # Splash overlay: keep underlay black until reveal frame, then paint clock under PNG alpha.
             if startup_ph[0] is not None:
@@ -3637,27 +3622,6 @@ def main() -> int:
             except Exception:
                 return False
 
-        def _np_drawing_live_audio() -> bool:
-            """True when NP is actually painting visualizer / VU / levels this frame.
-
-            Capture can stay on for countdown widgets; skip-cache cadence follows
-            what is on screen. Now-playing forces ``scene_enabled`` off, so this
-            must also drive the scene-off skip key (otherwise the well is 1 Hz).
-            """
-            if view_circles_widget is None:
-                return False
-            if not _view_one_uses_now_playing_screen():
-                return False
-            try:
-                if _clock_saver_for_compose(time.monotonic()):
-                    return False
-            except Exception:
-                pass
-            try:
-                return bool(view_circles_widget._live_audio_widgets_on())
-            except Exception:
-                return False
-
         _audio_capture_wanted = _bind_deps(
             _core_saver_state._audio_capture_wanted,
             _idle_audio_listen=_idle_audio_listen,
@@ -3668,7 +3632,6 @@ def main() -> int:
 
         def _toggle_clock_saver_force(event: tk.Event | None = None) -> str | None:
             """Shift+2: force clock saver on/off."""
-            nonlocal skip_cache
             if event is not None and _widget_accepts_typing(event.widget):
                 return None
             if not _PIGEON_EXT or clock_saver_composite_bgra is None:
@@ -3685,7 +3648,7 @@ def main() -> int:
                 clock_saver_force_on[0] = True
                 if event is not None:
                     _bump_pigeon_user_activity(event)
-            skip_cache = None
+            skip_cache[0] = None
             try:
                 render_once()
             except Exception:
@@ -3753,11 +3716,29 @@ def main() -> int:
             scaled_display = _disp_fit().scale_and_crop(last_frame)
             scaled_version = 1
 
-        skip_cache: tuple[object, ...] | None = None
+        skip_cache: list[tuple[object, ...] | None] = [None]
         _nav_coalescer_holder: list[object] = [None]
         _nav_request: list[object] = [None]
         scene_enabled = _load_persisted_scene_enabled(True)
-        dev_phase = DevPhase.OFF
+        dev_phase = [DevPhase.OFF]
+
+        _effective_display_view = _bind_deps(
+            _core_stage_render._effective_display_view,
+            DevPhase=DevPhase,
+            DisplayView=DisplayView,
+            _PIGEON_EXT=_PIGEON_EXT,
+            dev_phase=dev_phase,
+            display_view_holder=display_view_holder,
+        )
+
+        _design_grid_overlay_active = _bind_deps(
+            _core_stage_render._design_grid_overlay_active,
+            DevPhase=DevPhase,
+            DisplayView=DisplayView,
+            dev_phase=dev_phase,
+            display_view_holder=display_view_holder,
+        )
+
         # Advanced matrix: temporarily show GRID behind the dialog when opened from Settings; restore on close.
         advanced_matrix_restore_phase: list[object] = [None]
         advanced_matrix_close_skip: list[bool] = [False]
@@ -3843,8 +3824,8 @@ def main() -> int:
             if _PIGEON_EXT and TmdbLogoWidget is not None
             else None
         )
-        active_tmdb_title_key: str | None = None
-        active_tmdb_display_title: str | None = None
+        active_tmdb_title_key: list[str | None] = [None]
+        active_tmdb_display_title: list[str | None] = [None]
         # When TMDb returns no match for the current playback title, surface the streaming
         # app's own logo in the content-logo slot instead of popping an error dialog.
         # ``_warm_tmdb_logo_patch`` consults this flag whenever no TMDb logo is active.
@@ -3853,9 +3834,8 @@ def main() -> int:
         # TT logo via ``pigeon.tmdb_tt_contrast.pick_gradient_bgr`` and stores the winning
         # ``(B, G, R)`` here. Default black preserves legacy behaviour when no TT is loaded.
         tmdb_tt_gradient_bgr_holder: list[tuple[int, int, int]] = [GRADIENT_BGR_DARK]
-        status_bar_widget = None
-        if _PIGEON_EXT and StatusBarWidget is not None:
-            status_bar_widget = StatusBarWidget(
+        status_bar_widget = (
+            StatusBarWidget(
                 assets_dir=Path(_PROJECT_DIR) / "pigeonAssets",
                 trt_row=TRT_DISPLAY_ROW,
                 trt_played_col=TRT_PLAYED_COL,
@@ -3865,6 +3845,9 @@ def main() -> int:
                 trt_label_span_wide=TRT_LABEL_SPAN_W,
                 trt_label_span_tall=TRT_LABEL_SPAN_H,
             )
+            if _PIGEON_EXT and StatusBarWidget is not None
+            else None
+        )
 
         receiver_overlay_state: dict[str, str] = {
             "incoming": "",
@@ -3955,11 +3938,12 @@ def main() -> int:
             )
 
         # Now-playing: five-zone circles skin only.
-        view_circles_widget = None
-        if _PIGEON_EXT and ViewCirclesWidget is not None:
-            view_circles_widget = ViewCirclesWidget(
-                assets_dir=Path(_PROJECT_DIR) / "pigeonAssets",
-            )
+        view_circles_widget = (
+            ViewCirclesWidget(assets_dir=Path(_PROJECT_DIR) / "pigeonAssets")
+            if _PIGEON_EXT and ViewCirclesWidget is not None
+            else None
+        )
+        if view_circles_widget is not None:
             try:
                 from pigeon.widgets.preferences_settings import (
                     ensure_now_playing_layout_defaults,
@@ -3968,42 +3952,45 @@ def main() -> int:
                 ensure_now_playing_layout_defaults()
             except Exception:
                 pass
-        main_settings_widget = None
-        if _PIGEON_EXT and MainSettingsWidget is not None:
-            main_settings_widget = MainSettingsWidget(
-                assets_dir=Path(_PROJECT_DIR) / "pigeonAssets",
-            )
+        main_settings_widget = (
+            MainSettingsWidget(assets_dir=Path(_PROJECT_DIR) / "pigeonAssets")
+            if _PIGEON_EXT and MainSettingsWidget is not None
+            else None
+        )
+        if main_settings_widget is not None:
             try:
                 main_settings_widget.state.version_string = version_string()
                 main_settings_widget.state.update_local_version = version_string()
             except Exception:
                 pass
 
-        def _view_one_uses_now_playing_screen() -> bool:
-            return (
-                _effective_display_view() == DisplayView.ONE
-                and view_circles_widget is not None
-            )
+        _view_one_uses_now_playing_screen = _bind_deps(
+            _core_view_one._view_one_uses_now_playing_screen,
+            DisplayView=DisplayView,
+            _effective_display_view=_effective_display_view,
+            view_circles_widget=view_circles_widget,
+        )
 
-        def _settings_is_native_1280() -> bool:
-            """True when settings is on screen — all current pages are 1280×800."""
-            return dev_phase == DevPhase.MAIN_SETTINGS and main_settings_widget is not None
+        _np_drawing_live_audio = _bind_deps(
+            _core_now_playing._np_drawing_live_audio,
+            _clock_saver_for_compose=_clock_saver_for_compose,
+            _view_one_uses_now_playing_screen=_view_one_uses_now_playing_screen,
+            view_circles_widget=view_circles_widget,
+        )
 
-        def _settings_menu_is_static() -> bool:
-            """True when settings is up and not running a scan/spinner animation."""
-            if dev_phase != DevPhase.MAIN_SETTINGS or main_settings_widget is None:
-                return False
-            try:
-                st = main_settings_widget.state
-            except Exception:
-                return False
-            return not (
-                st.wifi_scanning
-                or st.wifi_connecting
-                or st.box2_devices.scanning
-                or st.box3_devices.scanning
-                or st.location_switching
-            )
+        _settings_is_native_1280 = _bind_deps(
+            _core_settings_ui._settings_is_native_1280,
+            DevPhase=DevPhase,
+            dev_phase=dev_phase,
+            main_settings_widget=main_settings_widget,
+        )
+
+        _settings_menu_is_static = _bind_deps(
+            _core_settings_ui._settings_menu_is_static,
+            DevPhase=DevPhase,
+            dev_phase=dev_phase,
+            main_settings_widget=main_settings_widget,
+        )
 
         def _composite_settings_on_canvas(canvas: np.ndarray) -> None:
             """Paint settings, then the NP status bar on settings_main while content is up."""
@@ -4051,7 +4038,6 @@ def main() -> int:
                 pass
 
         def _sync_now_playing_screen_state() -> None:
-            nonlocal skip_cache
             if view_circles_widget is None:
                 return
             try:
@@ -4191,7 +4177,7 @@ def main() -> int:
                 try:
                     from pigeon.tmdb_poster import get_cached_tmdb_cast
 
-                    tk = str(active_tmdb_title_key or "").strip()
+                    tk = str(active_tmdb_title_key[0] or "").strip()
                     if tk:
                         cast_rows = get_cached_tmdb_cast(tk)
                 except Exception:
@@ -4237,7 +4223,7 @@ def main() -> int:
                             or ""
                         ).strip()
                 tt_fallback = (
-                    str(active_tmdb_display_title or "").strip() or song_t or atv_title
+                    str(active_tmdb_display_title[0] or "").strip() or song_t or atv_title
                 )
                 if view_circles_widget.update_state(
                     progress=progress,
@@ -4273,7 +4259,7 @@ def main() -> int:
                 ):
                     changed = True
             if changed:
-                skip_cache = None
+                skip_cache[0] = None
             try:
                 t_dump = time.monotonic()
                 if t_dump - _np_dump_mono[0] >= 5.0:
@@ -4287,8 +4273,8 @@ def main() -> int:
                     Path("/tmp/pigeon-np-zones.json").write_text(
                         json.dumps(
                             {
-                                "title_key": active_tmdb_title_key,
-                                "display_title": active_tmdb_display_title,
+                                "title_key": active_tmdb_title_key[0],
+                                "display_title": active_tmdb_display_title[0],
                                 "tt_title": getattr(st, "tt_title", None),
                                 "cast_n": len(getattr(st, "cast", None) or []),
                                 "cast0": (getattr(st, "cast", None) or [None])[0],
@@ -4321,30 +4307,21 @@ def main() -> int:
             except Exception:
                 pass
 
-        def _sync_now_playing_screen_state_for_frame() -> None:
-            """Throttle NP metadata while live audio widgets are painting at 30 Hz."""
-            live = False
-            try:
-                live = bool(
-                    view_circles_widget is not None
-                    and view_circles_widget._live_audio_widgets_on()
-                )
-            except Exception:
-                live = False
-            if live:
-                t_sync = time.monotonic()
-                if t_sync - _np_state_sync_mono[0] < 1.0:
-                    return
-                _np_state_sync_mono[0] = t_sync
-            _sync_now_playing_screen_state()
+        _sync_now_playing_screen_state_for_frame = _bind_deps(
+            _core_now_playing._sync_now_playing_screen_state_for_frame,
+            _np_state_sync_mono=_np_state_sync_mono,
+            _sync_now_playing_screen_state=_sync_now_playing_screen_state,
+            view_circles_widget=view_circles_widget,
+        )
 
-        def _clear_now_playing_view_caches() -> None:
-            if view_circles_widget is not None:
-                view_circles_widget.clear_cache()
+        _clear_now_playing_view_caches = _bind_deps(
+            _core_now_playing._clear_now_playing_view_caches,
+            view_circles_widget=view_circles_widget,
+        )
 
         def _enable_now_playing_screen() -> None:
             """Show View 1 now-playing chrome (circles skin). Idempotent."""
-            nonlocal skip_cache, last_frame, scene_enabled, brightness_current, brightness_from, brightness_target
+            nonlocal last_frame, scene_enabled, brightness_current, brightness_from, brightness_target
             if not _PIGEON_EXT or view_circles_widget is None:
                 return
             display_view_holder[0] = DisplayView.ONE
@@ -4357,14 +4334,13 @@ def main() -> int:
             _sync_status_bar_visibility_for_playback(
                 md_sb if isinstance(md_sb, dict) else None
             )
-            skip_cache = None
+            skip_cache[0] = None
 
         def _activate_now_playing_after_splash() -> None:
             """Splash lifted — now-playing should already be live under the overlay."""
-            nonlocal skip_cache
             _enable_now_playing_screen()
             _startup_splash_complete[0] = True
-            skip_cache = None
+            skip_cache[0] = None
             render_once()
 
         _post_splash_startup_hook[0] = _activate_now_playing_after_splash
@@ -4376,43 +4352,15 @@ def main() -> int:
             _app_startup_mono=_app_startup_mono,
         )
 
-        def _warm_view_one_splash_chrome_only(*, phase: str = "chrome-only") -> None:
-            """Rasterize View 1 SVG chrome early (no playback poll helpers required)."""
-            if not _PIGEON_EXT or view_circles_widget is None:
-                return
-            t0 = time.monotonic()
-            display_view_holder[0] = DisplayView.ONE
-            # Clock-only until content is live — do not force the empty status bar on.
-            if view_circles_widget.set_now_playing_chrome_visible(True):
-                view_circles_widget.clear_cache()
-            try:
-                view_circles_widget.bgra_frame()
-            except Exception:
-                pass
-            try:
-                root.update_idletasks()
-            except tk.TclError:
-                pass
-            _log_view_one_startup_phase(f"{phase} ({(time.monotonic() - t0) * 1000.0:.0f} ms raster)")
-
-        def _warm_view_one_under_splash(*, phase: str = "full-warm") -> None:
-            """Full View 1 enable + state sync once playback helpers exist."""
-            if not _PIGEON_EXT:
-                return
-            t0 = time.monotonic()
-            _enable_now_playing_screen()
-            _warm_status_bar_blits()
-            try:
-                if view_circles_widget is not None:
-                    view_circles_widget.bgra_frame()
-            except Exception:
-                pass
-            try:
-                root.update_idletasks()
-            except tk.TclError:
-                pass
-            _splash_view_one_warm_done[0] = True
-            _log_view_one_startup_phase(f"{phase} ({(time.monotonic() - t0) * 1000.0:.0f} ms)")
+        _warm_view_one_splash_chrome_only = _bind_deps(
+            _core_startup._warm_view_one_splash_chrome_only,
+            DisplayView=DisplayView,
+            _PIGEON_EXT=_PIGEON_EXT,
+            _log_view_one_startup_phase=_log_view_one_startup_phase,
+            display_view_holder=display_view_holder,
+            root=root,
+            view_circles_widget=view_circles_widget,
+        )
 
         root.after(150, lambda: _warm_view_one_splash_chrome_only(phase="chrome-early"))
 
@@ -4442,8 +4390,8 @@ def main() -> int:
                 return False
             nonlocal cap, scene_enabled, playing, use_backdrop_scene, backdrop_master_bgr
             nonlocal saved_backdrop_master_bgr, backdrop_app_logo_letterbox_fit, saved_backdrop_app_logo_letterbox_fit
-            nonlocal last_frame, scaled_display, scaled_version, skip_cache
-            nonlocal active_tmdb_title_key, active_tmdb_display_title, tmdb_logo_patch_bgra
+            nonlocal last_frame, scaled_display, scaled_version
+            nonlocal tmdb_logo_patch_bgra
             nonlocal tmdb_logo_app_fallback_active
             nonlocal brightness_current, brightness_from, brightness_target, brightness_t0
 
@@ -4457,12 +4405,12 @@ def main() -> int:
                 backdrop_app_logo_letterbox_fit = True
                 scaled_display = None
                 scaled_version += 1
-                skip_cache = None
+                skip_cache[0] = None
                 if status_bar_widget is not None:
                     bd_arr = np.asarray(logo_bd, dtype=np.uint8)
                     if status_bar_widget.set_accent_from_backdrop_bgr(bd_arr):
                         _warm_status_bar_blits()
-                        skip_cache = None
+                        skip_cache[0] = None
                 return True
 
             if not scene_enabled:
@@ -4470,8 +4418,8 @@ def main() -> int:
             if not str(current_apple_tv.get("identifier") or "").strip():
                 return False
 
-            active_tmdb_title_key = None
-            active_tmdb_display_title = None
+            active_tmdb_title_key[0] = None
+            active_tmdb_display_title[0] = None
             tmdb_logo_app_fallback_active = False
             if tmdb_logo_widget is not None:
                 tmdb_logo_widget.clear_cache()
@@ -4498,12 +4446,12 @@ def main() -> int:
             _save_persisted_scene_enabled(True)
             brightness_current = brightness_from = brightness_target = BACKDROP_BRIGHTNESS
             brightness_t0 = time.monotonic()
-            skip_cache = None
+            skip_cache[0] = None
             if status_bar_widget is not None:
                 bd_arr = np.asarray(logo_bd, dtype=np.uint8)
                 if status_bar_widget.set_accent_from_backdrop_bgr(bd_arr):
                     _warm_status_bar_blits()
-                    skip_cache = None
+                    skip_cache[0] = None
             return True
 
         _pigeon_ui_started_mono = time.monotonic()
@@ -4528,7 +4476,7 @@ def main() -> int:
         )
 
         def _refresh_stage_from_poster() -> None:
-            nonlocal black_photo, skip_cache
+            nonlocal black_photo
             if not _PIGEON_EXT:
                 set_stage_bgr(0, 0, 0)
             else:
@@ -4537,7 +4485,7 @@ def main() -> int:
                 sync_stage_background_from_active_poster()
             _apply_stage_chrome_colors()
             black_photo = None
-            skip_cache = None
+            skip_cache[0] = None
 
         _refresh_stage_from_poster()
 
@@ -4576,6 +4524,17 @@ def main() -> int:
                 return
             status_bar_blits = list(status_bar_widget.design_blits())
 
+        _warm_view_one_under_splash = _bind_deps(
+            _core_startup._warm_view_one_under_splash,
+            _PIGEON_EXT=_PIGEON_EXT,
+            _enable_now_playing_screen=_enable_now_playing_screen,
+            _log_view_one_startup_phase=_log_view_one_startup_phase,
+            _splash_view_one_warm_done=_splash_view_one_warm_done,
+            _warm_status_bar_blits=_warm_status_bar_blits,
+            root=root,
+            view_circles_widget=view_circles_widget,
+        )
+
         _set_playback_overlay_clock_saver_volume_flag = _bind_deps(
             _core_saver_state._set_playback_overlay_clock_saver_volume_flag,
             _backdrop_active_for_view=_backdrop_active_for_view,
@@ -4605,19 +4564,16 @@ def main() -> int:
             except Exception as exc:
                 print(f"[pigeon] info cluster blit warmup failed: {exc}", flush=True)
 
-        def _info_cluster_compose_active(now_mono: float) -> bool:
-            if not _PIGEON_EXT:
-                return False
-            if dev_phase != DevPhase.OFF:
-                return False
-            if _effective_display_view() == DisplayView.FOUR:
-                return False
-            if _clock_saver_for_compose(now_mono):
-                return False
-            # New now-playing screen (070326) draws clock, audio config, and volume.
-            if _view_one_uses_now_playing_screen():
-                return False
-            return True
+        _info_cluster_compose_active = _bind_deps(
+            _core_stage_render._info_cluster_compose_active,
+            DevPhase=DevPhase,
+            DisplayView=DisplayView,
+            _PIGEON_EXT=_PIGEON_EXT,
+            _clock_saver_for_compose=_clock_saver_for_compose,
+            _effective_display_view=_effective_display_view,
+            _view_one_uses_now_playing_screen=_view_one_uses_now_playing_screen,
+            dev_phase=dev_phase,
+        )
 
         def _warm_info_cluster_blits(now_mono: float) -> None:
             nonlocal info_cluster_blits
@@ -4699,130 +4655,23 @@ def main() -> int:
 
         _styled_video_content_c_poster = _core_stage_render._styled_video_content_c_poster
 
-        def _active_tmdb_poster_bgra() -> np.ndarray | None:
-            """Return cached TMDb *poster* BGRA for the active title key (or ``None``).
+        _active_tmdb_poster_bgra = _bind_deps(
+            _core_tmdb_flow._active_tmdb_poster_bgra,
+            _tmdb_poster_cache=_tmdb_poster_cache,
+            active_tmdb_title_key=active_tmdb_title_key,
+        )
 
-            Tries the active key, then a year-stripped alias — Apple TV raw titles often
-            keep ``(YYYY)`` while assets are stored under the clean TMDb display name.
-            Never falls back to backdrop art (circles poster slot is poster-only).
-            """
-            if not active_tmdb_title_key:
-                return None
-            try:
-                from pigeon.media_cache import ASSET_POSTER_ART, find_cached_reformatted_asset
-                from pigeon.image_ui_protocol import load_image_bgra
-                from pigeon.tmdb_poster import split_query_and_year
-            except Exception:
-                return None
-            keys: list[str] = []
-            tk0 = str(active_tmdb_title_key).strip()
-            if tk0:
-                keys.append(tk0)
-            try:
-                cleaned, _year = split_query_and_year(tk0)
-                cleaned = (cleaned or "").strip()
-                if cleaned and cleaned not in keys:
-                    keys.append(cleaned)
-            except Exception:
-                pass
-            poster_path = None
-            for tk in keys:
-                poster_path = find_cached_reformatted_asset(tk, ASSET_POSTER_ART)
-                if poster_path is not None and poster_path.is_file():
-                    break
-                poster_path = None
-            if poster_path is None:
-                return None
-            try:
-                mtime = poster_path.stat().st_mtime
-            except OSError:
-                return None
-            key = (str(poster_path), float(mtime))
-            if _tmdb_poster_cache.get("key") == key:
-                hit = _tmdb_poster_cache.get("bgra")
-                return hit if isinstance(hit, np.ndarray) else None
-            raw = load_image_bgra(poster_path)
-            if raw is None or raw.size == 0:
-                _tmdb_poster_cache["key"] = key
-                _tmdb_poster_cache["bgra"] = None
-                return None
-            _tmdb_poster_cache["key"] = key
-            _tmdb_poster_cache["bgra"] = raw
-            return raw
+        _active_tmdb_tt_src_bgra = _bind_deps(
+            _core_tmdb_flow._active_tmdb_tt_src_bgra,
+            _tmdb_tt_src_cache=_tmdb_tt_src_cache,
+            active_tmdb_display_title=active_tmdb_display_title,
+            active_tmdb_title_key=active_tmdb_title_key,
+        )
 
-        def _active_tmdb_tt_src_bgra() -> np.ndarray | None:
-            """Return cached TMDb title-treatment (LogoEn) BGRA, or ``None``.
-
-            Logo art only — no text fallback and no streaming-app logo substitute.
-            Tries the active key, then a year-stripped alias.
-            """
-            if not active_tmdb_title_key:
-                return None
-            try:
-                from pigeon.media_cache import (
-                    ASSET_LOGO,
-                    ASSET_LOGO_EN,
-                    find_cached_reformatted_asset,
-                    title_key as tmdb_title_key,
-                )
-                from pigeon.image_ui_protocol import load_image_bgra
-                from pigeon.tmdb_poster import split_query_and_year
-            except Exception:
-                return None
-            keys: list[str] = []
-            tk0 = str(active_tmdb_title_key).strip()
-            if tk0:
-                keys.append(tk0)
-            disp = str(active_tmdb_display_title or "").strip()
-            if disp:
-                try:
-                    tk_disp = (tmdb_title_key(disp) or "").strip()
-                except Exception:
-                    tk_disp = ""
-                if tk_disp and tk_disp not in keys:
-                    keys.append(tk_disp)
-            try:
-                cleaned, _year = split_query_and_year(tk0)
-                cleaned = (cleaned or "").strip()
-                if cleaned and cleaned not in keys:
-                    keys.append(cleaned)
-            except Exception:
-                pass
-            logo_path = None
-            for tk in keys:
-                for asset in (ASSET_LOGO_EN, ASSET_LOGO):
-                    logo_path = find_cached_reformatted_asset(tk, asset)
-                    if logo_path is not None and logo_path.is_file():
-                        break
-                    logo_path = None
-                if logo_path is not None:
-                    break
-            if logo_path is None:
-                return None
-            try:
-                mtime = logo_path.stat().st_mtime
-            except OSError:
-                return None
-            key = (str(logo_path), float(mtime))
-            if _tmdb_tt_src_cache.get("key") == key:
-                hit = _tmdb_tt_src_cache.get("bgra")
-                return hit if isinstance(hit, np.ndarray) else None
-            raw = load_image_bgra(logo_path)
-            if raw is None or raw.size == 0:
-                _tmdb_tt_src_cache["key"] = key
-                _tmdb_tt_src_cache["bgra"] = None
-                return None
-            _tmdb_tt_src_cache["key"] = key
-            _tmdb_tt_src_cache["bgra"] = raw
-            return raw
-
-        def _sync_settings_zone2_tt() -> None:
-            """Box1 stays pigeon wordmark + IP; drop any leftover TT payload."""
-            if main_settings_widget is None:
-                return
-            st_ms = main_settings_widget.state
-            if getattr(st_ms, "zone2_tt_bgra", None) is not None:
-                st_ms.zone2_tt_bgra = None
+        _sync_settings_zone2_tt = _bind_deps(
+            _core_settings_ui._sync_settings_zone2_tt,
+            main_settings_widget=main_settings_widget,
+        )
 
         _clear_music_artwork_cache = _bind_deps(
             _core_now_playing._clear_music_artwork_cache,
@@ -4904,7 +4753,6 @@ def main() -> int:
                     raw = None
 
                 def finish() -> None:
-                    nonlocal skip_cache
                     apple_tv_auto_state["youtube_thumb_in_flight"] = False
                     apple_tv_auto_state["youtube_thumb_key"] = key
                     if raw:
@@ -4918,7 +4766,7 @@ def main() -> int:
                         _sync_now_playing_screen_state()
                     except Exception:
                         pass
-                    skip_cache = None
+                    skip_cache[0] = None
                     try:
                         render_once()
                     except Exception:
@@ -4949,7 +4797,7 @@ def main() -> int:
             tmdb_tt_gradient_bgr_holder[0] = chosen
             if chosen != prev:
                 label = "white" if chosen == (255, 255, 255) else "black"
-                title = active_tmdb_display_title or active_tmdb_title_key or "(no-title)"
+                title = active_tmdb_display_title[0] or active_tmdb_title_key[0] or "(no-title)"
                 lum_s = f"{lum:.3f}" if lum is not None else "n/a"
                 print(
                     f"pigeon: TT contrast → {label} gradient (luminance={lum_s}, title={title!r})",
@@ -4964,10 +4812,10 @@ def main() -> int:
                 _refresh_tmdb_tt_gradient_tint()
                 return
             patch_wh = None
-            if active_tmdb_title_key:
+            if active_tmdb_title_key[0]:
                 tmdb_logo_patch_bgra = logo_w.bgra_patch_for_title(
-                    active_tmdb_title_key,
-                    display_title=active_tmdb_display_title,
+                    active_tmdb_title_key[0],
+                    display_title=active_tmdb_display_title[0],
                     patch_wh=patch_wh,
                 ).copy()
                 _refresh_tmdb_tt_gradient_tint()
@@ -4988,17 +4836,11 @@ def main() -> int:
         # These probe live state so ``_current_view_one_variant`` can route the
         # View-1 composition path through the correct fallback. See
         # ``pigeon/view_one_variants.py`` for the decision table.
-        def _playback_display_title() -> str:
-            """Best on-screen title: TMDb display name, else Apple TV metadata."""
-            if (active_tmdb_display_title or "").strip():
-                return str(active_tmdb_display_title).strip()
-            lm = apple_tv_auto_state.get("last_metadata")
-            if isinstance(lm, dict):
-                for key in ("title", "series_name", "query", "artist"):
-                    s = str(lm.get(key) or "").strip()
-                    if s:
-                        return s
-            return ""
+        _playback_display_title = _bind_deps(
+            _core_now_playing._playback_display_title,
+            active_tmdb_display_title=active_tmdb_display_title,
+            apple_tv_auto_state=apple_tv_auto_state,
+        )
 
         _vv_has_content_title = _bind_deps(
             _core_now_playing._vv_has_content_title,
@@ -5023,8 +4865,10 @@ def main() -> int:
                 return True
             return False
 
-        def _vv_has_tmdb_tt() -> bool:
-            return bool(active_tmdb_title_key)
+        _vv_has_tmdb_tt = _bind_deps(
+            _core_tmdb_flow._vv_has_tmdb_tt,
+            active_tmdb_title_key=active_tmdb_title_key,
+        )
 
         _vv_has_app_logo = _bind_deps(
             _core_now_playing._vv_has_app_logo,
@@ -5223,37 +5067,19 @@ def main() -> int:
                 poster = None
             return _stable_bgr_from_bgra(poster)
 
-        def _paused_screen_active() -> bool:
-            try:
-                plan = _apply_auto_widget_policy()
-                from pigeon.auto_widgets import (
-                    LAYOUT_ZONE6_PAUSESAVER,
-                    LAYOUT_ZONE10_PAUSESAVER,
-                )
-
-                if plan.layout == LAYOUT_ZONE10_PAUSESAVER:
-                    # Backdrop + zone-4 plate + zone-5 status are drawn by NP.
-                    return False
-                if plan.layout == LAYOUT_ZONE6_PAUSESAVER:
-                    return False
-            except Exception:
-                pass
-            if dev_phase != DevPhase.OFF:
-                return False
-            paused = _show_paused_row_overlay()
-            has_backdrop = _paused_screen_backdrop_bgr() is not None
-            if paused and _vv_is_music():
-                # Music pause still gets the plate even if artwork has not landed.
-                has_backdrop = True
-            saver_on = False
-            if clock_saver_composite_bgra is not None and _clock_saver_user_enabled():
-                now_ps = time.monotonic()
-                saver_on = bool(_clock_saver_active(now_ps) or clock_saver_force_on[0])
-            return should_hold_paused_screen(
-                paused_with_content=paused,
-                has_backdrop=has_backdrop,
-                clock_saver_active=saver_on,
-            )
+        _paused_screen_active = _bind_deps(
+            _core_saver_state._paused_screen_active,
+            DevPhase=DevPhase,
+            _apply_auto_widget_policy=_apply_auto_widget_policy,
+            _clock_saver_active=_clock_saver_active,
+            _clock_saver_user_enabled=_clock_saver_user_enabled,
+            _paused_screen_backdrop_bgr=_paused_screen_backdrop_bgr,
+            _show_paused_row_overlay=_show_paused_row_overlay,
+            _vv_is_music=_vv_is_music,
+            clock_saver_composite_bgra=clock_saver_composite_bgra,
+            clock_saver_force_on=clock_saver_force_on,
+            dev_phase=dev_phase,
+        )
 
         _paused_screen_font = _bind_deps(
             _core_saver_state._paused_screen_font,
@@ -5337,7 +5163,7 @@ def main() -> int:
                 np_live = (
                     not meter_v1
                     and intro_op is None
-                    and not (dev_phase == DevPhase.MAIN_SETTINGS and main_settings_widget is not None)
+                    and not (dev_phase[0] == DevPhase.MAIN_SETTINGS and main_settings_widget is not None)
                     and not cs_v1
                 )
                 if not meter_v1 and not np_live:
@@ -5365,7 +5191,7 @@ def main() -> int:
                     ):
                         roi2 = canvas_np[sy : sy + sh, sx : sx + sw]
                         roi2[:] = alpha_blend_bgra_over_bgr(roi2, cs_bgra)
-                elif dev_phase == DevPhase.MAIN_SETTINGS and main_settings_widget is not None:
+                elif dev_phase[0] == DevPhase.MAIN_SETTINGS and main_settings_widget is not None:
                     _composite_settings_on_canvas(canvas_np)
                 elif (
                     cs_v1
@@ -5591,7 +5417,7 @@ def main() -> int:
                         sub = base[y : y + rh, x : x + rw]
                         sub[:] = alpha_blend_bgra_over_bgr(sub, patch)
                 if (
-                    dev_phase == DevPhase.OFF
+                    dev_phase[0] == DevPhase.OFF
                     and location_toast_patch_bgra is not None
                     and alpha_blend_bgra_over_bgr is not None
                     and (
@@ -5630,7 +5456,7 @@ def main() -> int:
                 if (
                     _effective_display_view() not in (DisplayView.FOUR, DisplayView.TWO)
                     and (_logo_w := _active_tmdb_logo_widget()) is not None
-                    and active_tmdb_title_key
+                    and active_tmdb_title_key[0]
                     and alpha_blend_bgra_over_bgr is not None
                     and not _view_one_uses_now_playing_screen()
                 ):
@@ -5643,8 +5469,8 @@ def main() -> int:
                         dwx, dwy, dww, dwh = _logo_w.design_rect()
                     x, y, rw, rh = _design_rect_to_target(dwx, dwy, dww, dwh, cap_w, cap_h)
                     _logo_patch = _logo_w.bgra_patch_for_title(
-                        active_tmdb_title_key,
-                        display_title=active_tmdb_display_title,
+                        active_tmdb_title_key[0],
+                        display_title=active_tmdb_display_title[0],
                         patch_wh=(int(dww), int(dwh)),
                     )
                     _ph, _pw = int(_logo_patch.shape[0]), int(_logo_patch.shape[1])
@@ -5711,13 +5537,13 @@ def main() -> int:
                     logo_w is None
                     or rw < 1
                     or rh < 1
-                    or not active_tmdb_title_key
+                    or not active_tmdb_title_key[0]
                     or alpha_blend_bgra_over_bgr is None
                 ):
                     return
                 patch_bgra = logo_w.bgra_patch_for_title(
-                    active_tmdb_title_key,
-                    display_title=active_tmdb_display_title,
+                    active_tmdb_title_key[0],
+                    display_title=active_tmdb_display_title[0],
                     patch_wh=(rw, rh),
                 )
                 ph, pw = int(patch_bgra.shape[0]), int(patch_bgra.shape[1])
@@ -5825,7 +5651,7 @@ def main() -> int:
                 canvas = np.ascontiguousarray(canvas)
             if _maybe_exit_settings_menus_on_idle():
                 pass
-            if dev_phase == DevPhase.MAIN_SETTINGS and main_settings_widget is not None:
+            if dev_phase[0] == DevPhase.MAIN_SETTINGS and main_settings_widget is not None:
                 _composite_settings_on_canvas(canvas)
                 dw, dh = display_dims[0], display_dims[1]
                 cap_w, cap_h, use_cap = _composite_cap_dims(dw, dh)
@@ -5868,7 +5694,7 @@ def main() -> int:
                 if startup_ph[0] is not None and not _splash_reveal_clock[0]:
                     # Pre-reveal splash underlay stays black.
                     pass
-                elif dev_phase == DevPhase.MAIN_SETTINGS and main_settings_widget is not None:
+                elif dev_phase[0] == DevPhase.MAIN_SETTINGS and main_settings_widget is not None:
                     _composite_settings_on_canvas(canvas)
                 else:
                     t_sync0 = time.perf_counter()
@@ -5977,7 +5803,7 @@ def main() -> int:
                         patch = p.bgra[sy0 : sy0 + (y1 - y0), sx0 : sx0 + (x1 - x0)]
                         roi[:] = alpha_blend_bgra_over_bgr(roi, patch)
                 if (
-                    dev_phase == DevPhase.OFF
+                    dev_phase[0] == DevPhase.OFF
                     and location_toast_patch_bgra is not None
                     and alpha_blend_bgra_over_bgr is not None
                     and (
@@ -6019,7 +5845,7 @@ def main() -> int:
                         )
                     elif (
                         _effective_display_view() == DisplayView.ONE
-                        and active_tmdb_title_key
+                        and active_tmdb_title_key[0]
                     ):
                         _dwx, _dwy, _dww, _dwh = _view_one_video_content_a_tt_contain_rect_design()
                         _paste_tmdb_logo_uniform_cover_design(
@@ -6028,8 +5854,8 @@ def main() -> int:
                     else:
                         _logo_w2.render(
                             canvas,
-                            title_key_str=active_tmdb_title_key,
-                            display_title=active_tmdb_display_title,
+                            title_key_str=active_tmdb_title_key[0],
+                            display_title=active_tmdb_display_title[0],
                         )
             if show_grid:
                 ov = build_stage_overlay_source_bgra(_stage_grid_overlay_mode())
@@ -6037,7 +5863,7 @@ def main() -> int:
             tw, th = display_dims[0], display_dims[1]
             native_np = (
                 _view_one_uses_now_playing_screen()
-                and dev_phase == DevPhase.OFF
+                and dev_phase[0] == DevPhase.OFF
             ) or _settings_is_native_1280()
             return _present_frame_to_display(
                 canvas, tw, th, native_now_playing=bool(native_np)
@@ -6699,7 +6525,6 @@ def main() -> int:
         )
 
         def _start_location_toast(*, startup: bool = False) -> None:
-            nonlocal skip_cache
             if not _PIGEON_EXT:
                 return
             st = location_toast_state
@@ -6708,20 +6533,20 @@ def main() -> int:
             st["t0"] = time.monotonic()
             st["startup_top_left"] = bool(startup)
             st["hold_full_s"] = 15.0 if startup else 5.0
-            skip_cache = None
+            skip_cache[0] = None
 
         def sync_developer_chrome() -> None:
             was_phase = prev_dev_phase_for_location_toast[0]
             _apply_dev_phase_widgets()
             _layout_chrome()
-            if dev_phase == DevPhase.GRID:
+            if dev_phase[0] == DevPhase.GRID:
                 root.title(f"Pigeon {version_string()} — Developer mode (grid)")
                 label.configure(
                     highlightthickness=3,
                     highlightbackground="#0a84ff",
                     highlightcolor="#0a84ff",
                 )
-            elif dev_phase == DevPhase.MAIN_SETTINGS:
+            elif dev_phase[0] == DevPhase.MAIN_SETTINGS:
                 root.title(f"Pigeon {version_string()} — settings")
                 try:
                     label.configure(highlightthickness=0)
@@ -6735,10 +6560,10 @@ def main() -> int:
             if command_entry_visible:
                 place_command_bar()
                 command_bar.lift()
-            if _PIGEON_EXT and dev_phase == DevPhase.OFF and was_phase != DevPhase.OFF:
+            if _PIGEON_EXT and dev_phase[0] == DevPhase.OFF and was_phase != DevPhase.OFF:
                 # Keep the same launch placement after leaving Settings.
                 _start_location_toast(startup=True)
-            prev_dev_phase_for_location_toast[0] = dev_phase
+            prev_dev_phase_for_location_toast[0] = dev_phase[0]
 
         def toggle_play(_event=None) -> None:
             nonlocal playing, brightness_from, brightness_target, brightness_t0, brightness_duration_s
@@ -6758,9 +6583,8 @@ def main() -> int:
 
         def cycle_dev_phase(_event=None) -> str:
             """Toggle OFF ↔ MAIN_SETTINGS (also exits GRID → OFF)."""
-            nonlocal dev_phase, skip_cache
             _bump_pigeon_user_activity()
-            if dev_phase == DevPhase.MAIN_SETTINGS:
+            if dev_phase[0] == DevPhase.MAIN_SETTINGS:
                 if main_settings_widget is not None:
                     try:
                         if not bool(getattr(main_settings_widget.state, "exit_enabled", True)):
@@ -6776,9 +6600,9 @@ def main() -> int:
                         main_settings_widget.invalidate()
                     except Exception:
                         pass
-                dev_phase = DevPhase.OFF
-            elif dev_phase == DevPhase.GRID:
-                dev_phase = DevPhase.OFF
+                dev_phase[0] = DevPhase.OFF
+            elif dev_phase[0] == DevPhase.GRID:
+                dev_phase[0] = DevPhase.OFF
             else:
                 if main_settings_widget is not None:
                     try:
@@ -6800,10 +6624,10 @@ def main() -> int:
                         main_settings_widget.prefetch_scans_for_settings()
                     except Exception:
                         pass
-                dev_phase = DevPhase.MAIN_SETTINGS
-            skip_cache = None
+                dev_phase[0] = DevPhase.MAIN_SETTINGS
+            skip_cache[0] = None
             sync_developer_chrome()
-            if dev_phase == DevPhase.MAIN_SETTINGS:
+            if dev_phase[0] == DevPhase.MAIN_SETTINGS:
                 try:
                     from pigeon.weather import DEFAULT_WEATHER_ZIP, refresh_weather
 
@@ -6828,7 +6652,7 @@ def main() -> int:
             return True
 
         def toggle_scene(_event=None, *, require_overlay: bool = True) -> None:
-            nonlocal cap, scene_enabled, last_frame, scaled_display, scaled_version, skip_cache, black_photo, playing, frame_interval_ms, use_backdrop_scene, backdrop_master_bgr
+            nonlocal cap, scene_enabled, last_frame, scaled_display, scaled_version, black_photo, playing, frame_interval_ms, use_backdrop_scene, backdrop_master_bgr
             _bump_pigeon_user_activity()
             if require_overlay and not _design_grid_overlay_active():
                 return
@@ -6844,7 +6668,7 @@ def main() -> int:
                 scene_enabled = True
 
             _save_persisted_scene_enabled(scene_enabled)
-            skip_cache = None
+            skip_cache[0] = None
 
             if not scene_enabled:
                 if _PIGEON_EXT:
@@ -6935,7 +6759,7 @@ def main() -> int:
 
         def apply_saved_tmdb_backdrop_to_display() -> None:
             """Apply last TMDb backdrop + title logo (same as F10’s backdrop step)."""
-            nonlocal playing, backdrop_master_bgr, backdrop_app_logo_letterbox_fit, use_backdrop_scene, scene_enabled, last_frame, scaled_display, scaled_version, skip_cache, brightness_current, brightness_from, brightness_target, brightness_t0
+            nonlocal playing, backdrop_master_bgr, backdrop_app_logo_letterbox_fit, use_backdrop_scene, scene_enabled, last_frame, scaled_display, scaled_version, brightness_current, brightness_from, brightness_target, brightness_t0
             if saved_backdrop_master_bgr is None:
                 return
             playing = False
@@ -6948,7 +6772,7 @@ def main() -> int:
                 if view_circles_widget is not None:
                     view_circles_widget.clear_cache()
                 _sync_now_playing_screen_state()
-                skip_cache = None
+                skip_cache[0] = None
                 render_once()
                 return
             use_backdrop_scene = True
@@ -6975,7 +6799,7 @@ def main() -> int:
             brightness_t0 = time.monotonic()
             _warm_tmdb_logo_patch()
             _save_persisted_scene_enabled(True)
-            skip_cache = None
+            skip_cache[0] = None
             _apply_netflix_backdrop_when_running()
             render_once()
 
@@ -6983,7 +6807,7 @@ def main() -> int:
             """
             Developer grid only: F10 cycles display on (landing) → off → backdrop (if saved) → landing.
             """
-            nonlocal cap, scene_enabled, last_frame, scaled_display, scaled_version, skip_cache, playing, frame_interval_ms, use_backdrop_scene, backdrop_master_bgr, brightness_current, brightness_from, brightness_target, brightness_t0
+            nonlocal cap, scene_enabled, last_frame, scaled_display, scaled_version, playing, frame_interval_ms, use_backdrop_scene, backdrop_master_bgr, brightness_current, brightness_from, brightness_target, brightness_t0
 
             _bump_pigeon_user_activity()
             landing_on = scene_enabled and (not use_backdrop_scene) and last_frame is not None
@@ -6992,7 +6816,7 @@ def main() -> int:
                 if not _open_landing_scene():
                     scene_enabled = False
                     _save_persisted_scene_enabled(False)
-                    skip_cache = None
+                    skip_cache[0] = None
                     render_once()
                     return
                 scene_enabled = True
@@ -7000,7 +6824,7 @@ def main() -> int:
                 brightness_current = brightness_from = brightness_target = LANDING_DISPLAY_BRIGHTNESS
                 brightness_t0 = time.monotonic()
                 _save_persisted_scene_enabled(True)
-                skip_cache = None
+                skip_cache[0] = None
                 render_once()
                 return
 
@@ -7012,7 +6836,7 @@ def main() -> int:
                 last_frame = None
                 scaled_display = None
                 _save_persisted_scene_enabled(False)
-                skip_cache = None
+                skip_cache[0] = None
                 render_once()
                 return
 
@@ -7023,12 +6847,12 @@ def main() -> int:
             if not _open_landing_scene():
                 scene_enabled = False
                 _save_persisted_scene_enabled(False)
-                skip_cache = None
+                skip_cache[0] = None
                 render_once()
                 return
             scene_enabled = True
             _save_persisted_scene_enabled(True)
-            skip_cache = None
+            skip_cache[0] = None
             render_once()
 
         on_f10_key = _bind_deps(
@@ -7053,7 +6877,7 @@ def main() -> int:
 
         def show_command_entry(_event=None) -> None:
             nonlocal command_entry_visible
-            if dev_phase != DevPhase.GRID and display_view_holder[0] != DisplayView.FIVE:
+            if dev_phase[0] != DevPhase.GRID and display_view_holder[0] != DisplayView.FIVE:
                 return
             command_entry_visible = True
             place_command_bar()
@@ -7092,10 +6916,10 @@ def main() -> int:
             for classic scene restore after a full idle. Resets ``tmdb_key`` so the
             next spawn is not suppressed as “same identity”.
             """
-            nonlocal active_tmdb_title_key, active_tmdb_display_title, tmdb_logo_patch_bgra
-            nonlocal tmdb_logo_app_fallback_active, skip_cache, backdrop_master_bgr
-            active_tmdb_title_key = None
-            active_tmdb_display_title = None
+            nonlocal tmdb_logo_patch_bgra
+            nonlocal tmdb_logo_app_fallback_active, backdrop_master_bgr
+            active_tmdb_title_key[0] = None
+            active_tmdb_display_title[0] = None
             tmdb_logo_app_fallback_active = False
             backdrop_master_bgr = None
             try:
@@ -7122,7 +6946,7 @@ def main() -> int:
             if _view_one_uses_now_playing_screen():
                 _clear_now_playing_view_caches()
                 _sync_now_playing_screen_state()
-            skip_cache = None
+            skip_cache[0] = None
 
         _mark_tmdb_missing_art = _bind_deps(
             _core_tmdb_flow._mark_tmdb_missing_art,
@@ -7275,7 +7099,7 @@ def main() -> int:
                 match_tier: int = 0,
                 search_query: str = "",
             ) -> None:
-                nonlocal skip_cache, cap, scene_enabled, last_frame, scaled_display, scaled_version, playing, use_backdrop_scene, backdrop_master_bgr, saved_backdrop_master_bgr, saved_backdrop_app_logo_letterbox_fit, backdrop_app_logo_letterbox_fit, brightness_current, brightness_from, brightness_target, brightness_t0, active_tmdb_title_key, active_tmdb_display_title, tmdb_logo_patch_bgra, tmdb_logo_app_fallback_active
+                nonlocal cap, scene_enabled, last_frame, scaled_display, scaled_version, playing, use_backdrop_scene, backdrop_master_bgr, saved_backdrop_master_bgr, saved_backdrop_app_logo_letterbox_fit, backdrop_app_logo_letterbox_fit, brightness_current, brightness_from, brightness_target, brightness_t0, tmdb_logo_patch_bgra, tmdb_logo_app_fallback_active
                 apple_tv_auto_state["tmdb_fetch_in_flight"] = False
                 sys.stderr.write(f"pigeon: tmdb → {msg_m}\n")
                 sys.stderr.flush()
@@ -7359,12 +7183,12 @@ def main() -> int:
                         if _view_one_uses_now_playing_screen():
                             _clear_now_playing_view_caches()
                             _sync_now_playing_screen_state()
-                        skip_cache = None
+                        skip_cache[0] = None
                         render_once()
                         _drain_pending_tmdb_spawn()
                         return
-                    active_tmdb_title_key = None
-                    active_tmdb_display_title = None
+                    active_tmdb_title_key[0] = None
+                    active_tmdb_display_title[0] = None
                     tmdb_logo_app_fallback_active = True
                     if tmdb_logo_widget is not None:
                         tmdb_logo_widget.clear_cache()
@@ -7374,7 +7198,7 @@ def main() -> int:
                     if _view_one_uses_now_playing_screen():
                         _clear_now_playing_view_caches()
                         _sync_now_playing_screen_state()
-                    skip_cache = None
+                    skip_cache[0] = None
                     render_once()
                     _drain_pending_tmdb_spawn()
                     return
@@ -7383,11 +7207,11 @@ def main() -> int:
                 # msg_m includes a prefix when successful: "<title_key>::<display_title>::<summary>"
                 parts = msg_m.split("::", 2)
                 if len(parts) >= 2:
-                    active_tmdb_title_key = parts[0].strip() or None
-                    active_tmdb_display_title = parts[1].strip() or None
+                    active_tmdb_title_key[0] = parts[0].strip() or None
+                    active_tmdb_display_title[0] = parts[1].strip() or None
                 else:
-                    active_tmdb_title_key = None
-                    active_tmdb_display_title = None
+                    active_tmdb_title_key[0] = None
+                    active_tmdb_display_title[0] = None
                 if ok_m and not tier_ok:
                     sys.stderr.write(
                         f"pigeon: TMDb match tier {match_tier} below threshold for {search_query or q!r} "
@@ -7420,7 +7244,7 @@ def main() -> int:
                             bd_arr = np.asarray(backdrop_master_bgr, dtype=np.uint8)
                             if status_bar_widget.set_accent_from_backdrop_bgr(bd_arr):
                                 _warm_status_bar_blits()
-                                skip_cache = None
+                                skip_cache[0] = None
                     else:
                         if cap is not None:
                             try:
@@ -7445,17 +7269,17 @@ def main() -> int:
                                 bd_arr = np.asarray(backdrop_master_bgr, dtype=np.uint8)
                                 if status_bar_widget.set_accent_from_backdrop_bgr(bd_arr):
                                     _warm_status_bar_blits()
-                                    skip_cache = None
+                                    skip_cache[0] = None
                 # Match-quality counters: score only when TMDb material changes to a
                 # new content event key (not on same-content retries/refetches).
-                if active_tmdb_title_key:
+                if active_tmdb_title_key[0]:
                     try:
                         ev_key = str(apple_tv_auto_state.get("content_key") or "").strip()
                         if not ev_key:
                             # Fallback so manual fetches without poll metadata still have
                             # a deterministic event key.
                             qk = str(apple_tv_auto_state.get("query") or "").strip()
-                            ev_key = f"{str(active_tmdb_title_key or '').strip()}::{qk}"
+                            ev_key = f"{str(active_tmdb_title_key[0] or '').strip()}::{qk}"
                         if ev_key and ev_key != str(tmdb_quality_last_scored_event_key[0] or ""):
                             had_qe = bool(tmdb_quality_error_flag[0])
                             if had_qe:
@@ -7469,8 +7293,8 @@ def main() -> int:
                                 try:
                                     _append_tmdb_quality_event_report_log(
                                         outcome="SUCCESS",
-                                        title_key=active_tmdb_title_key,
-                                        display_title=active_tmdb_display_title,
+                                        title_key=active_tmdb_title_key[0],
+                                        display_title=active_tmdb_display_title[0],
                                         msg_m=msg_m,
                                     )
                                 except Exception:
@@ -7482,7 +7306,7 @@ def main() -> int:
                 if _view_one_uses_now_playing_screen():
                     _clear_now_playing_view_caches()
                     _sync_now_playing_screen_state()
-                skip_cache = None
+                skip_cache[0] = None
                 render_once()
                 _drain_pending_tmdb_spawn()
 
@@ -7589,30 +7413,28 @@ def main() -> int:
         )
 
         def _clear_tmdb_quality_flag(*, undo: bool, show_overlay: bool) -> None:
-            nonlocal skip_cache
             if tmdb_quality_error_flag[0] and undo:
                 _adjust_tmdb_quality_failure_delta(-1)
             tmdb_quality_error_flag[0] = False
             _cancel_tmdb_quality_auto_unlog_timer()
             if show_overlay:
                 _trigger_tmdb_quality_toggle_overlay("undo")
-            skip_cache = None
+            skip_cache[0] = None
 
         def _schedule_tmdb_quality_auto_expire() -> None:
             _cancel_tmdb_quality_auto_unlog_timer()
             delay_ms = int(round(TMDB_QUALITY_UNLOG_WINDOW_S * 1000.0))
 
             def _expire() -> None:
-                nonlocal skip_cache
                 tmdb_quality_auto_unlog_after_id[0] = None
                 if tmdb_quality_error_flag[0]:
                     tmdb_quality_error_flag[0] = False
-                    skip_cache = None
+                    skip_cache[0] = None
 
             tmdb_quality_auto_unlog_after_id[0] = root.after(delay_ms, _expire)
 
         def _apply_rawtitle_text_tt_fallback() -> bool:
-            nonlocal active_tmdb_title_key, active_tmdb_display_title, tmdb_logo_app_fallback_active
+            nonlocal tmdb_logo_app_fallback_active
             try:
                 from pigeon.raw_title import raw_title_from_metadata_dict
                 from pigeon.tmdb_poster import title_key
@@ -7628,9 +7450,9 @@ def main() -> int:
             # TT/display can use the Apple TV raw label, but do not replace an existing
             # TMDb media key — poster/cast are cached under the clean match title
             # (e.g. ``Game Night``), while raw often keeps ``(YYYY)``.
-            if not active_tmdb_title_key:
-                active_tmdb_title_key = title_key(raw)
-            active_tmdb_display_title = raw
+            if not active_tmdb_title_key[0]:
+                active_tmdb_title_key[0] = title_key(raw)
+            active_tmdb_display_title[0] = raw
             tmdb_logo_app_fallback_active = False
             return True
 
@@ -7791,8 +7613,7 @@ def main() -> int:
                     _warm_playback_overlay_blits()
                 except Exception:
                     pass
-                nonlocal skip_cache
-                skip_cache = None
+                skip_cache[0] = None
                 try:
                     render_once()
                 except Exception:
@@ -7835,8 +7656,7 @@ def main() -> int:
             describe_current_apple_tv()
             _rebuild_paired_devices_panel()
             _schedule_refresh_pairing_leds()
-            nonlocal skip_cache
-            skip_cache = None
+            skip_cache[0] = None
             try:
                 render_once()
             except Exception:
@@ -7987,8 +7807,7 @@ def main() -> int:
                 _warm_playback_overlay_blits()
             except Exception:
                 pass
-            nonlocal skip_cache
-            skip_cache = None
+            skip_cache[0] = None
             try:
                 render_once()
             except Exception:
@@ -8001,7 +7820,6 @@ def main() -> int:
             """Reload holders and runtime targets from the persisted current location."""
             nonlocal last_atv_interaction_mono, _atv_ix_sig_ds, _atv_ix_sig_ck
             nonlocal _atv_ix_pos, _atv_ix_pos_mono, _atv_ix_extrap_playing, _atv_ix_prev_idle
-            nonlocal skip_cache
             streaming_slot_holder[0] = read_saved_streaming_device()
             avr_slot_holder[0] = read_saved_av_receiver()
             st2 = streaming_slot_holder[0]
@@ -8078,7 +7896,7 @@ def main() -> int:
                 _warm_playback_overlay_blits()
             except Exception:
                 pass
-            skip_cache = None
+            skip_cache[0] = None
             _start_location_toast()
             _sync_status_bar_visibility_for_playback(None)
             try:
@@ -8527,7 +8345,6 @@ def main() -> int:
         )
 
         def _handle_main_settings_action(action: str) -> None:
-            nonlocal skip_cache
             if main_settings_widget is None:
                 return
             st = main_settings_widget.state
@@ -8672,7 +8489,7 @@ def main() -> int:
                 except Exception:
                     pass
                 main_settings_widget.invalidate()
-                skip_cache = None
+                skip_cache[0] = None
                 return
 
             if action == "update_popup:open":
@@ -8685,7 +8502,7 @@ def main() -> int:
                 st.update_github_branch = None
                 st.update_changelog = "Checking GitHub for updates…"
                 main_settings_widget.invalidate()
-                skip_cache = None
+                skip_cache[0] = None
 
                 def worker_ms_update_check() -> None:
                     try:
@@ -8703,7 +8520,6 @@ def main() -> int:
                         )
 
                     def finish_ms_check() -> None:
-                        nonlocal skip_cache
                         from pigeon.widgets.update_popup import (
                             DEFAULT_CHANGELOG,
                             UP_TO_DATE_CHANGELOG,
@@ -8743,7 +8559,7 @@ def main() -> int:
                         except Exception:
                             pass
                         main_settings_widget.invalidate()
-                        skip_cache = None
+                        skip_cache[0] = None
 
                     root.after(0, finish_ms_check)
 
@@ -8752,7 +8568,7 @@ def main() -> int:
 
             if action in ("update_popup:later", "update_popup:dismiss", "update_popup:busy"):
                 main_settings_widget.invalidate()
-                skip_cache = None
+                skip_cache[0] = None
                 return
 
             if action == "update_popup:now":
@@ -8761,7 +8577,7 @@ def main() -> int:
                 if not st.update_available:
                     st.close_update_popup()
                     main_settings_widget.invalidate()
-                    skip_cache = None
+                    skip_cache[0] = None
                     return
                 remote = str(st.update_remote_version or "?")
                 branch = st.update_github_branch
@@ -8769,7 +8585,7 @@ def main() -> int:
                 st.update_progress = 0.0
                 st.update_changelog = f"Downloading {remote}…"
                 main_settings_widget.invalidate()
-                skip_cache = None
+                skip_cache[0] = None
                 # Worker never calls root.after — Tk is not thread-safe and flooding
                 # after() from download progress can drop the final restart callback.
                 _ms_events: queue.Queue = queue.Queue()
@@ -8791,7 +8607,6 @@ def main() -> int:
                     _ms_events.put(("progress", frac, lab))
 
                 def _ms_poll_events() -> None:
-                    nonlocal skip_cache
                     if main_settings_widget is None:
                         return
                     done_payload = None
@@ -8804,7 +8619,7 @@ def main() -> int:
                                     st.update_progress = float(frac)
                                     st.update_changelog = str(lab)
                                     main_settings_widget.invalidate()
-                                    skip_cache = None
+                                    skip_cache[0] = None
                             elif kind == "done":
                                 done_payload = payload[0]
                     except queue.Empty:
@@ -8826,7 +8641,7 @@ def main() -> int:
                             except Exception:
                                 pass
                             main_settings_widget.invalidate()
-                            skip_cache = None
+                            skip_cache[0] = None
 
                             def _restart_ms() -> None:
                                 try:
@@ -8854,7 +8669,7 @@ def main() -> int:
                         st.update_error = result.message
                         st.update_changelog = (result.message or "Update failed.")[:96]
                         main_settings_widget.invalidate()
-                        skip_cache = None
+                        skip_cache[0] = None
                         messagebox.showerror(
                             "Update failed",
                             result.message,
@@ -8909,12 +8724,12 @@ def main() -> int:
                 st.network_password_error = False
                 st.ensure_focus_ring()
                 main_settings_widget.invalidate()
-                skip_cache = None
+                skip_cache[0] = None
                 return
 
             if action == "wifi_logout:no":
                 main_settings_widget.invalidate()
-                skip_cache = None
+                skip_cache[0] = None
                 return
 
             if action == "keyboard_go:network":
@@ -8928,7 +8743,7 @@ def main() -> int:
                 st.wifi_scan_angle_deg = 0.0
                 st.network_password_error = False
                 main_settings_widget.invalidate()
-                skip_cache = None
+                skip_cache[0] = None
 
                 def worker_wifi_join() -> None:
                     try:
@@ -8939,7 +8754,6 @@ def main() -> int:
                         ok_w, _msg_w = False, "incorrect password"
 
                     def finish_wifi() -> None:
-                        nonlocal skip_cache
                         st.wifi_connecting = False
                         if ok_w:
                             st.wifi_logged_out = False
@@ -8971,7 +8785,7 @@ def main() -> int:
                                 trigger_button="main_dual_network_button",
                             )
                         main_settings_widget.invalidate()
-                        skip_cache = None
+                        skip_cache[0] = None
 
                     root.after(0, finish_wifi)
 
@@ -8989,7 +8803,7 @@ def main() -> int:
                 if picked and str(picked[1] or "").strip():
                     receiver_http_host["host"] = str(picked[1]).strip()
                 main_settings_widget.invalidate()
-                skip_cache = None
+                skip_cache[0] = None
                 return
 
             if action == "keyboard_go:location":
@@ -9012,7 +8826,7 @@ def main() -> int:
                 if st.show_location_picker:
                     st.ensure_focus_ring()
                 main_settings_widget.invalidate()
-                skip_cache = None
+                skip_cache[0] = None
                 return
 
             if action == "location_switch:busy":
@@ -9027,10 +8841,9 @@ def main() -> int:
                 except Exception:
                     pass
                 main_settings_widget.invalidate()
-                skip_cache = None
+                skip_cache[0] = None
 
                 def _finish_location_switch() -> None:
-                    nonlocal skip_cache
                     if main_settings_widget is None:
                         return
                     st_fin = main_settings_widget.state
@@ -9040,10 +8853,9 @@ def main() -> int:
                         return
                     st_fin.finish_location_switching()
                     main_settings_widget.invalidate()
-                    skip_cache = None
+                    skip_cache[0] = None
 
                 def _run_location_switch() -> None:
-                    nonlocal skip_cache
                     try:
                         _apply_persisted_location_to_runtime()
                         try:
@@ -9061,7 +8873,7 @@ def main() -> int:
                             pass
                     finally:
                         main_settings_widget.invalidate()
-                        skip_cache = None
+                        skip_cache[0] = None
                         root.after(0, _finish_location_switch)
 
                 # Yield so the UI can paint; spinner appears if reload exceeds ~2s.
@@ -9081,7 +8893,7 @@ def main() -> int:
                 st.show_box3_panel = True
                 st.clear_box_pairing()
                 main_settings_widget.invalidate()
-                skip_cache = None
+                skip_cache[0] = None
                 _schedule_refresh_pairing_leds()
                 _rebuild_paired_devices_panel()
                 return
@@ -9109,12 +8921,11 @@ def main() -> int:
                         ok_w, msg_w, session_key_w = False, str(e), None
 
                     def finish_rb_settings() -> None:
-                        nonlocal skip_cache
                         if not ok_w or not session_key_w:
                             end_apple_tv_operation()
                             st.clear_box_pairing()
                             main_settings_widget.invalidate()
-                            skip_cache = None
+                            skip_cache[0] = None
                             messagebox.showerror("AppleTV Remote", msg_w or "Pairing failed to start.")
                             return
                         if st.box_pairing is not None:
@@ -9122,7 +8933,7 @@ def main() -> int:
                             st.box_pairing.step = "remote_pin"
                         st.open_keyboard("pin", assets_dir=main_settings_widget._assets_dir)
                         main_settings_widget.invalidate()
-                        skip_cache = None
+                        skip_cache[0] = None
                         describe_current_apple_tv(suffix="enter Remote PIN")
 
                     root.after(0, finish_rb_settings)
@@ -9160,12 +8971,11 @@ def main() -> int:
                             time.sleep(1.5)
 
                         def done_rf_settings() -> None:
-                            nonlocal skip_cache
                             if not ok_f:
                                 end_apple_tv_operation()
                                 st.clear_box_pairing()
                                 main_settings_widget.invalidate()
-                                skip_cache = None
+                                skip_cache[0] = None
                                 messagebox.showerror("AppleTV Remote", msg_f)
                                 _schedule_refresh_pairing_leds()
                                 return
@@ -9183,7 +8993,7 @@ def main() -> int:
                                 end_apple_tv_operation()
                                 st.clear_box_pairing()
                                 main_settings_widget.invalidate()
-                                skip_cache = None
+                                skip_cache[0] = None
                                 messagebox.showerror("AppleTV AirPlay", msg_a or "AirPlay pairing failed to start.")
                                 _schedule_refresh_pairing_leds()
                                 return
@@ -9192,7 +9002,7 @@ def main() -> int:
                                 st.box_pairing.step = "airplay_pin"
                             st.open_keyboard("pin", assets_dir=main_settings_widget._assets_dir)
                             main_settings_widget.invalidate()
-                            skip_cache = None
+                            skip_cache[0] = None
                             describe_current_apple_tv(suffix="enter AirPlay PIN")
 
                         root.after(0, done_rf_settings)
@@ -9215,7 +9025,6 @@ def main() -> int:
                             ok_af, msg_af = False, str(e)
 
                         def done_air_settings() -> None:
-                            nonlocal skip_cache
                             end_apple_tv_operation()
                             if ok_af:
                                 _save_box_pair_device_row(2, row)
@@ -9223,7 +9032,7 @@ def main() -> int:
                                 st.show_box2_panel = True
                             st.clear_box_pairing()
                             main_settings_widget.invalidate()
-                            skip_cache = None
+                            skip_cache[0] = None
                             if ok_af:
                                 try:
                                     sys.stderr.write(
@@ -9254,16 +9063,14 @@ def main() -> int:
                 pass
 
         def _on_advanced_matrix_closed() -> None:
-            nonlocal dev_phase, skip_cache
             tgt = advanced_matrix_restore_phase[0]
             if tgt is not None:
                 advanced_matrix_restore_phase[0] = None
-                dev_phase = tgt  # type: ignore[assignment]
-                skip_cache = None
+                dev_phase[0] = tgt  # type: ignore[assignment]
+                skip_cache[0] = None
                 sync_developer_chrome()
 
         def _open_advanced_capability_matrix() -> None:
-            nonlocal dev_phase, skip_cache
             try:
                 from settings_advanced_matrix import open_advanced_capability_matrix
             except ImportError as e:
@@ -9821,7 +9628,6 @@ def main() -> int:
             run_scan(force_network=False)
 
         def on_reset_pigeon_devices_and_media() -> None:
-            nonlocal skip_cache
             if not messagebox.askokcancel(
                 "Reset",
                 "This wipes everything Pigeon has stored for devices and local image media:\n\n"
@@ -9873,7 +9679,7 @@ def main() -> int:
                 _warm_playback_overlay_blits()
             except Exception:
                 pass
-            skip_cache = None
+            skip_cache[0] = None
             try:
                 render_once()
             except Exception:
@@ -10149,19 +9955,17 @@ def main() -> int:
         )
 
         def _refresh_trt_progress_only() -> None:
-            nonlocal skip_cache
             if status_bar_widget is None:
                 return
             pfrac = _playback_progress_fraction_for_bar()
             prog = pfrac if pfrac is not None else 0.0
             if status_bar_widget.set_now_playing_display(progress=prog):
                 _warm_status_bar_blits()
-                skip_cache = None
+                skip_cache[0] = None
             _sync_now_playing_screen_state()
 
         def _sync_trt_text_to_true_once() -> None:
             """Set TRT text to the latest polled integer second (used to recover from missed metronome ticks)."""
-            nonlocal skip_cache
             try:
                 if status_bar_widget is None:
                     return
@@ -10174,7 +9978,7 @@ def main() -> int:
                         progress=0.0,
                     ):
                         _warm_status_bar_blits()
-                        skip_cache = None
+                        skip_cache[0] = None
                     return
 
                 pair = _playback_extrapolated_pair()
@@ -10200,7 +10004,7 @@ def main() -> int:
                     progress=prog,
                 ):
                     _warm_status_bar_blits()
-                    skip_cache = None
+                    skip_cache[0] = None
             finally:
                 _sync_status_bar_trt_substantive()
 
@@ -10220,7 +10024,6 @@ def main() -> int:
 
         def _refresh_extrapolated_timecodes(*, tick_steps: int = 1) -> None:
             """Update TRT labels + progress using stepped display time (steady rhythm)."""
-            nonlocal skip_cache
             if status_bar_widget is None:
                 return
             if _idle_audio_meter_active():
@@ -10234,7 +10037,7 @@ def main() -> int:
                         progress=0.0,
                     ):
                         _warm_status_bar_blits()
-                        skip_cache = None
+                        skip_cache[0] = None
                     return
                 pair = _playback_extrapolated_pair()
                 pfrac = _playback_progress_fraction_for_bar()
@@ -10243,7 +10046,7 @@ def main() -> int:
                     clk["trt_next_fire_mono"] = None
                     if status_bar_widget.set_now_playing_display(progress=0.0):
                         _warm_status_bar_blits()
-                        skip_cache = None
+                        skip_cache[0] = None
                     return
                 played_true, _rem_true = pair
                 lt_use = clk.get("latched_total")
@@ -10289,7 +10092,7 @@ def main() -> int:
                     progress=prog,
                 ):
                     _warm_status_bar_blits()
-                    skip_cache = None
+                    skip_cache[0] = None
             finally:
                 _sync_status_bar_trt_substantive()
 
@@ -10386,16 +10189,14 @@ def main() -> int:
         )
 
         def _sync_status_bar_trt_substantive() -> None:
-            nonlocal skip_cache
             if status_bar_widget is None:
                 return
             if status_bar_widget.set_trt_substantive(_trt_substantive_for_status_bar()):
                 _warm_status_bar_blits()
-                skip_cache = None
+                skip_cache[0] = None
 
         def _sync_status_bar_visibility_for_playback(metadata: dict[str, object] | None) -> None:
             """Hide now-playing bar + TRT pills when idle; show when content / AVR is live."""
-            nonlocal skip_cache
             if status_bar_widget is None:
                 return
             if _effective_display_view() == DisplayView.ONE:
@@ -10413,7 +10214,7 @@ def main() -> int:
                 show = bool(clk.get("has_sync"))
             if status_bar_widget.set_now_playing_chrome_visible(show):
                 _warm_status_bar_blits()
-                skip_cache = None
+                skip_cache[0] = None
             _sync_status_bar_trt_substantive()
             _sync_now_playing_screen_state()
 
@@ -10439,7 +10240,6 @@ def main() -> int:
             roku_app_name: str | None = None,
         ) -> None:
             """Streaming-service badge: pyatv metadata when present, else Roku ECP active-app name."""
-            nonlocal skip_cache
             if playback_overlay_widget is None:
                 return
             from pigeon.streaming_service_badges import resolve_streaming_badge_media
@@ -10509,7 +10309,7 @@ def main() -> int:
             if _idle_audio_meter_active():
                 return
             _warm_playback_overlay_blits()
-            skip_cache = None
+            skip_cache[0] = None
             _apply_netflix_backdrop_when_running()
             try:
                 render_once()
@@ -10518,8 +10318,8 @@ def main() -> int:
 
         def _return_to_landing_if_atv_idle(metadata: dict[str, object]) -> None:
             """When Apple TV reports no playback, drop TMDb backdrop and show the static landing page."""
-            nonlocal use_backdrop_scene, backdrop_master_bgr, backdrop_app_logo_letterbox_fit, last_frame, scaled_display, scaled_version, skip_cache
-            nonlocal active_tmdb_title_key, active_tmdb_display_title, tmdb_logo_patch_bgra, scene_enabled, playing
+            nonlocal use_backdrop_scene, backdrop_master_bgr, backdrop_app_logo_letterbox_fit, last_frame, scaled_display, scaled_version
+            nonlocal tmdb_logo_patch_bgra, scene_enabled, playing
             nonlocal tmdb_logo_app_fallback_active
             if not _atv_metadata_is_content_idle(metadata):
                 return
@@ -10574,7 +10374,7 @@ def main() -> int:
                 clk["sync_mono"] = time.monotonic()
                 _sync_status_bar_visibility_for_playback(metadata)
                 _sync_now_playing_screen_state()
-                skip_cache = None
+                skip_cache[0] = None
                 render_once()
                 return
             apple_tv_auto_state["content_key"] = None
@@ -10591,7 +10391,7 @@ def main() -> int:
                 lm["query"] = ""
                 lm["content_key"] = None
 
-            had_art = bool(use_backdrop_scene or backdrop_master_bgr is not None or active_tmdb_title_key)
+            had_art = bool(use_backdrop_scene or backdrop_master_bgr is not None or active_tmdb_title_key[0])
 
             use_backdrop_scene = False
             backdrop_master_bgr = None
@@ -10603,8 +10403,8 @@ def main() -> int:
                 pass
             backdrop_app_logo_letterbox_fit = False
             playing = False
-            active_tmdb_title_key = None
-            active_tmdb_display_title = None
+            active_tmdb_title_key[0] = None
+            active_tmdb_display_title[0] = None
             tmdb_logo_app_fallback_active = False
             if tmdb_logo_widget is not None:
                 tmdb_logo_widget.clear_cache()
@@ -10636,7 +10436,7 @@ def main() -> int:
                 else:
                     scaled_display = None
             scaled_version += 1
-            skip_cache = None
+            skip_cache[0] = None
             _refresh_content_indicator()
 
             if had_art:
@@ -10765,7 +10565,6 @@ def main() -> int:
                             wk_roku_title = None
 
                 def finish() -> None:
-                    nonlocal skip_cache
                     apple_tv_auto_state["running"] = False
                     meter_up = bool(_idle_audio_meter_active())
                     pyatv_ok = bool(ok_w and isinstance(metadata_w, dict))
@@ -11013,7 +10812,7 @@ def main() -> int:
                                             receiver_overlay_state["volume"] = v_line
                                             _bump_clock_saver_significant_device()
                                             _warm_playback_overlay_blits()
-                                            skip_cache = None
+                                            skip_cache[0] = None
                                             render_once()
                     md_poll = metadata_w if isinstance(metadata_w, dict) else None
                     _sync_streaming_badge_from_playback_sources(
@@ -11058,7 +10857,7 @@ def main() -> int:
                             # ``tmdb_missing_art`` so this path cannot spin forever.
                             if (
                                 not needs_spawn
-                                and active_tmdb_title_key is None
+                                and active_tmdb_title_key[0] is None
                                 and not apple_tv_auto_state.get("tmdb_fetch_in_flight")
                                 and not apple_tv_auto_state.get("pending_tmdb")
                                 and not apple_tv_auto_state.get("tmdb_missing_art")
@@ -11069,7 +10868,7 @@ def main() -> int:
                                 prev_content_key=prev_key,
                                 has_tmdb_identity=bool(
                                     apple_tv_auto_state.get("tmdb_key")
-                                    or active_tmdb_title_key
+                                    or active_tmdb_title_key[0]
                                 ),
                             ):
                                 needs_spawn = False
@@ -11127,7 +10926,7 @@ def main() -> int:
                                 )
                                 if (
                                     not r_needs
-                                    and active_tmdb_title_key is None
+                                    and active_tmdb_title_key[0] is None
                                     and not apple_tv_auto_state.get("tmdb_fetch_in_flight")
                                     and not apple_tv_auto_state.get("pending_tmdb")
                                     and not apple_tv_auto_state.get("tmdb_missing_art")
@@ -11138,7 +10937,7 @@ def main() -> int:
                                     prev_content_key=prev_rk,
                                     has_tmdb_identity=bool(
                                         apple_tv_auto_state.get("tmdb_key")
-                                        or active_tmdb_title_key
+                                        or active_tmdb_title_key[0]
                                     ),
                                 ):
                                     r_needs = False
@@ -11224,7 +11023,6 @@ def main() -> int:
             from ``finish_tmdb`` on failure). After the cycle is exhausted, marks
             missing art so the circles poster shows "?" instead of respawning forever.
             """
-            nonlocal skip_cache
             if not _PIGEON_EXT:
                 return
             rules = TMDB_ERROR_FLAG_RETRY_RULES
@@ -11240,7 +11038,7 @@ def main() -> int:
                 if _view_one_uses_now_playing_screen():
                     _clear_now_playing_view_caches()
                     _sync_now_playing_screen_state()
-                skip_cache = None
+                skip_cache[0] = None
                 try:
                     render_once()
                 except Exception:
@@ -11283,64 +11081,19 @@ def main() -> int:
             )
             sys.stderr.flush()
 
-        def _perform_tmdb_artwork_retry() -> None:
-            if not _PIGEON_EXT:
-                return
-            rules = [
-                ("movie", "primary", "movie+primary"),
-                ("tv", "primary", "tv+primary"),
-                ("auto", "alternate", "auto+alternate_query"),
-                ("auto", "primary", "auto+primary"),
-            ]
-            idx = tmdb_retry_rule_idx[0] % len(rules)
-            prefer, qsource, rule_id = rules[idx]
-            primary = str(apple_tv_auto_state.get("query") or "").strip()
-            md_raw = apple_tv_auto_state.get("last_metadata")
-            md = md_raw if isinstance(md_raw, dict) else {}
-            alt = _alternate_tmdb_query_from_metadata(md if md else None, primary)
-            if qsource == "primary":
-                q = primary
-            else:
-                q = (alt or primary).strip()
-            if not q:
-                messagebox.showwarning(
-                    "TMDb retry",
-                    "No playback search query yet. Play something on the device and wait for metadata, "
-                    "or type a query in the command bar (tmdb …).",
-                )
-                return
-            tmdb_retry_rule_idx[0] = idx + 1
-            entry = {
-                "event": "tmdb_retry_hotkey",
-                "rule_index": idx,
-                "rule_id": rule_id,
-                "prefer": prefer,
-                "query_source": qsource,
-                "query_sent": q,
-                "primary_query": primary,
-                "alternate_available": bool(alt),
-                "alternate_query": alt,
-                "active_tmdb_title_key_before": active_tmdb_title_key,
-                "active_tmdb_display_title_before": active_tmdb_display_title,
-                "apple_tv_auto_prefer": apple_tv_auto_state.get("prefer"),
-                "content_key": apple_tv_auto_state.get("content_key"),
-                "live_mode": apple_tv_playback_clock.get("live_mode"),
-                "metadata_excerpt": {
-                    k: md.get(k)
-                    for k in ("title", "artist", "series_name", "media_type", "inferred_prefer", "device_state")
-                    if md.get(k)
-                },
-            }
-            _tmdb_retry_log_append(entry)
-            ts = time.strftime("%Y-%m-%d %H:%M:%SZ", time.gmtime())
-            was = active_tmdb_display_title or "—"
-            _append_tmdb_retry_log_ui(f"{ts}  {rule_id}  prefer={prefer}  q={q!r}  was={was!r}")
-            # Manual "?" / retry hotkey clears give-up so this attempt can run.
-            apple_tv_auto_state["tmdb_missing_art"] = False
-            apple_tv_auto_state["tmdb_exhausted_identity"] = None
-            spawn_tmdb_poster_fetch(q, prefer=prefer, force=True)
-            sys.stderr.write(f"pigeon: tmdb retry ({rule_id}) prefer={prefer} q={q!r}\n")
-            sys.stderr.flush()
+        _perform_tmdb_artwork_retry = _bind_deps(
+            _core_tmdb_flow._perform_tmdb_artwork_retry,
+            _PIGEON_EXT=_PIGEON_EXT,
+            _alternate_tmdb_query_from_metadata=_alternate_tmdb_query_from_metadata,
+            _append_tmdb_retry_log_ui=_append_tmdb_retry_log_ui,
+            _tmdb_retry_log_append=_tmdb_retry_log_append,
+            active_tmdb_display_title=active_tmdb_display_title,
+            active_tmdb_title_key=active_tmdb_title_key,
+            apple_tv_auto_state=apple_tv_auto_state,
+            apple_tv_playback_clock=apple_tv_playback_clock,
+            spawn_tmdb_poster_fetch=spawn_tmdb_poster_fetch,
+            tmdb_retry_rule_idx=tmdb_retry_rule_idx,
+        )
 
         on_tmdb_retry_hotkey = _bind_deps(
             _core_input_keys.on_tmdb_retry_hotkey,
@@ -11357,7 +11110,6 @@ def main() -> int:
             Bound only to Control/Command+Shift+X, so trust the binding — Wayland/X11
             often omits modifier bits from ``event.state`` after the combo is matched.
             """
-            nonlocal skip_cache
             _bump_pigeon_user_activity(event)
             if not _PIGEON_EXT:
                 return None
@@ -11374,7 +11126,7 @@ def main() -> int:
                 elapsed = now_q - float(tmdb_quality_flag_set_mono[0] or 0.0)
                 if elapsed <= TMDB_QUALITY_UNLOG_WINDOW_S:
                     _clear_tmdb_quality_flag(undo=True, show_overlay=True)
-                    skip_cache = None  # force redraw so undo X appears immediately
+                    skip_cache[0] = None  # force redraw so undo X appears immediately
                     try:
                         sys.stderr.write(
                             "pigeon: TMDb quality flag undone within 20s window (⌘⇧X).\n"
@@ -11388,12 +11140,12 @@ def main() -> int:
             tmdb_quality_flag_set_mono[0] = now_q
             _adjust_tmdb_quality_failure_delta(1)
             _trigger_tmdb_quality_toggle_overlay("flag")
-            skip_cache = None  # force redraw so confirmation X appears immediately
+            skip_cache[0] = None  # force redraw so confirmation X appears immediately
             try:
                 _append_tmdb_quality_event_report_log(
                     outcome="FAILURE",
-                    title_key=active_tmdb_title_key,
-                    display_title=active_tmdb_display_title,
+                    title_key=active_tmdb_title_key[0],
+                    display_title=active_tmdb_display_title[0],
                     msg_m="user_flagged",
                 )
             except Exception:
@@ -11522,39 +11274,20 @@ def main() -> int:
         root.after(2500, _apple_tv_auto_poll_tick)
         root.after(PLAYBACK_UI_TICK_MS, _playback_ui_tick)
 
-        def submit_command_entry(_event=None) -> str:
-            nonlocal skip_cache
-            if dev_phase != DevPhase.GRID and display_view_holder[0] != DisplayView.FIVE:
-                return "break"
-            _bump_pigeon_user_activity()
-            now_sub = time.monotonic()
-            if now_sub - _last_command_submit_mono[0] < 0.2:
-                return "break"
-            _last_command_submit_mono[0] = now_sub
-            text = command_entry.get().strip()
-            key = text.lower()
-            if text and _PIGEON_EXT:
-                m_tmdb = re.match(r"(?i)tmdb\s+(?P<q>.+)$", text)
-                if m_tmdb:
-                    qrest = m_tmdb.group("q").strip()
-                    if qrest:
-                        q2, pref = parse_tmdb_command_phrase(qrest)
-                        if q2:
-                            spawn_tmdb_poster_fetch(q2, prefer=pref, force=True)
-                    else:
-                        sys.stderr.write("pigeon: tmdb: empty query (use: tmdb Movie Title)\n")
-                        sys.stderr.flush()
-                else:
-                    # Plain title or tv/movie hint — TMDb (auto picks movie vs TV by popularity)
-                    q2, pref = parse_tmdb_command_phrase(text)
-                    if q2:
-                        spawn_tmdb_poster_fetch(q2, prefer=pref, force=True)
-            elif text:
-                sys.stderr.write(f"pigeon: command: {text}\n")
-                sys.stderr.flush()
-            command_entry.delete(0, tk.END)
-            hide_command_entry()
-            return "break"
+        submit_command_entry = _bind_deps(
+            _core_tmdb_flow.submit_command_entry,
+            DevPhase=DevPhase,
+            DisplayView=DisplayView,
+            _PIGEON_EXT=_PIGEON_EXT,
+            _bump_pigeon_user_activity=_bump_pigeon_user_activity,
+            _last_command_submit_mono=_last_command_submit_mono,
+            command_entry=command_entry,
+            dev_phase=dev_phase,
+            display_view_holder=display_view_holder,
+            hide_command_entry=hide_command_entry,
+            parse_tmdb_command_phrase=parse_tmdb_command_phrase,
+            spawn_tmdb_poster_fetch=spawn_tmdb_poster_fetch,
+        )
 
         for _seq in ("<Return>", "<KeyPress-Return>"):
             command_entry.bind(_seq, submit_command_entry)
@@ -11565,13 +11298,12 @@ def main() -> int:
         # Tap-to-wake: some platforms deliver release more reliably for “tap” than press alone.
         # While the saver layer is visible, a tap brightens it briefly (see CLOCK_SAVER_PEEK_S).
         def _on_label_button_release_peek_or_bump(event: tk.Event) -> None:
-            nonlocal skip_cache
             if _PIGEON_EXT and clock_saver_composite_bgra is not None:
                 now_e = time.monotonic()
                 if _clock_saver_for_compose(now_e):
                     clock_saver_peek_until_mono[0] = now_e + CLOCK_SAVER_PEEK_S
                     _bump_pigeon_user_activity(event)
-                    skip_cache = None
+                    skip_cache[0] = None
                     try:
                         render_once()
                     except Exception:
@@ -11651,7 +11383,7 @@ def main() -> int:
                 return None
             if _widget_accepts_typing(w):
                 return None
-            if dev_phase == DevPhase.GRID or display_view_holder[0] == DisplayView.FIVE:
+            if dev_phase[0] == DevPhase.GRID or display_view_holder[0] == DisplayView.FIVE:
                 if command_entry_visible:
                     try:
                         command_entry.focus_force()
@@ -11736,7 +11468,6 @@ def main() -> int:
             return True
 
         def on_space_play(event: tk.Event) -> str | None:
-            nonlocal dev_phase, skip_cache
             if _widget_accepts_typing(event.widget):
                 return None
             _bump_pigeon_user_activity(event)
@@ -11744,22 +11475,22 @@ def main() -> int:
             if now - _last_space_mono[0] < 0.12:
                 return "break"
             _last_space_mono[0] = now
-            if dev_phase == DevPhase.MAIN_SETTINGS and main_settings_widget is not None:
+            if dev_phase[0] == DevPhase.MAIN_SETTINGS and main_settings_widget is not None:
                 action = main_settings_widget.activate()
                 if action == "exit":
                     if main_settings_widget is not None and not bool(
                         getattr(main_settings_widget.state, "exit_enabled", True)
                     ):
-                        skip_cache = None
+                        skip_cache[0] = None
                         render_once()
                     else:
-                        dev_phase = DevPhase.OFF
-                        skip_cache = None
+                        dev_phase[0] = DevPhase.OFF
+                        skip_cache[0] = None
                         sync_developer_chrome()
                         render_once()
                 else:
                     _handle_main_settings_action(action)
-                    skip_cache = None
+                    skip_cache[0] = None
                     render_once()
                 return "break"
             if _send_player_play_pause_hotkey():
@@ -11783,11 +11514,10 @@ def main() -> int:
             ch = getattr(event, "char", "") or ""
             if ch not in "012345678":
                 return None
-            nonlocal skip_cache, dev_phase
             st_md = main_settings_widget.state if main_settings_widget is not None else None
             md_open = bool(
                 st_md is not None
-                and dev_phase == DevPhase.MAIN_SETTINGS
+                and dev_phase[0] == DevPhase.MAIN_SETTINGS
                 and st_md.show_metadata_debug
             )
             if md_open and ch != "0":
@@ -11795,23 +11525,23 @@ def main() -> int:
                 _bump_pigeon_user_activity(event)
                 return "break"
             if ch == "0" and st_md is not None:
-                if dev_phase == DevPhase.MAIN_SETTINGS and st_md.keyboard is not None:
+                if dev_phase[0] == DevPhase.MAIN_SETTINGS and st_md.keyboard is not None:
                     return None
                 if md_open:
                     st_md.close_metadata_debug()
                     st_md.exit_pigeon_settings()
                     main_settings_widget.invalidate()
-                    dev_phase = DevPhase.OFF
+                    dev_phase[0] = DevPhase.OFF
                 else:
                     st_md.open_metadata_debug()
                     main_settings_widget.invalidate()
-                    if dev_phase != DevPhase.MAIN_SETTINGS:
-                        dev_phase = DevPhase.MAIN_SETTINGS
+                    if dev_phase[0] != DevPhase.MAIN_SETTINGS:
+                        dev_phase[0] = DevPhase.MAIN_SETTINGS
                         try:
                             main_settings_widget.prefetch_scans_for_settings()
                         except Exception:
                             pass
-                skip_cache = None
+                skip_cache[0] = None
                 sync_developer_chrome()
                 _bump_pigeon_user_activity(event)
                 _capture_last_view_one_layout_from_live_view()
@@ -11822,7 +11552,7 @@ def main() -> int:
                 sh_key = bool(st_key & 0x0001)
                 if sh_key:
                     return _toggle_clock_saver_force(event)
-            if dev_phase != DevPhase.OFF:
+            if dev_phase[0] != DevPhase.OFF:
                 _bump_pigeon_user_activity(event)
                 return "break"
             if ch == "1":
@@ -11843,7 +11573,7 @@ def main() -> int:
                         sys.stderr.flush()
                     except Exception:
                         pass
-                    skip_cache = None
+                    skip_cache[0] = None
                     try:
                         render_once()
                     except Exception:
@@ -11868,7 +11598,7 @@ def main() -> int:
                         view_one_layout_holder[0] = int(ViewOneLayout.PIGEON_POSTER)
                     else:
                         view_one_layout_holder[0] = int(ViewOneLayout.PIGEON_FULL)
-                    skip_cache = None
+                    skip_cache[0] = None
                     _bump_pigeon_user_activity(event)
                     _capture_last_view_one_layout_from_live_view()
                     return "break"
@@ -11897,19 +11627,19 @@ def main() -> int:
                     _sync_now_playing_screen_state()
                 except Exception:
                     pass
-                skip_cache = None
+                skip_cache[0] = None
                 _bump_pigeon_user_activity(event)
                 _capture_last_view_one_layout_from_live_view()
                 render_once()
                 return "break"
             if ch == "4" and display_view_holder[0] == DisplayView.FOUR:
                 view_four_subview_holder[0] = (int(view_four_subview_holder[0]) + 1) % 3
-                skip_cache = None
+                skip_cache[0] = None
                 _bump_pigeon_user_activity(event)
                 return "break"
             if ch == "5" and display_view_holder[0] == DisplayView.FIVE:
                 view_five_mode_holder[0] = (int(view_five_mode_holder[0]) + 1) % 3
-                skip_cache = None
+                skip_cache[0] = None
                 _bump_pigeon_user_activity(event)
                 return "break"
             if ch in "145":
@@ -11920,7 +11650,7 @@ def main() -> int:
                     view_four_subview_holder[0] = 0
                 if ch == "5":
                     view_five_mode_holder[0] = 0
-                skip_cache = None
+                skip_cache[0] = None
                 _bump_pigeon_user_activity(event)
                 _capture_last_view_one_layout_from_live_view()
                 return "break"
@@ -11937,17 +11667,16 @@ def main() -> int:
             ks = getattr(event, "keysym", "") or ""
             if ks not in ("Up", "Down", "Left", "Right"):
                 return None
-            if dev_phase == DevPhase.MAIN_SETTINGS and main_settings_widget is not None:
-                nonlocal skip_cache
+            if dev_phase[0] == DevPhase.MAIN_SETTINGS and main_settings_widget is not None:
                 if ks == "Right":
                     main_settings_widget.navigate(forward=True)
-                    skip_cache = None
+                    skip_cache[0] = None
                     req = _nav_request[0]
                     req() if req is not None else render_once()
                     return "break"
                 if ks == "Left":
                     main_settings_widget.navigate(forward=False)
-                    skip_cache = None
+                    skip_cache[0] = None
                     req = _nav_request[0]
                     req() if req is not None else render_once()
                     return "break"
@@ -12080,88 +11809,19 @@ def main() -> int:
             _widget_accepts_typing=_widget_accepts_typing,
         )
 
-        def on_dev_series_title_training_hotkey(event: tk.Event) -> str | None:
-            """Dev-only: map current playback metadata fingerprint → series title (training JSON)."""
-            _bump_pigeon_user_activity(event)
-            if not _PIGEON_EXT:
-                return None
-            if dev_phase != DevPhase.GRID and display_view_holder[0] != DisplayView.FIVE:
-                return None
-            if _widget_accepts_typing(event.widget):
-                return None
-            lm = apple_tv_auto_state.get("last_metadata")
-            if not isinstance(lm, dict) or not any(
-                str(lm.get(k) or "").strip()
-                for k in ("title", "series_name", "artist", "album", "query")
-            ):
-                messagebox.showinfo(
-                    "Series title training",
-                    "No playback metadata snapshot yet. Start playback and wait for a poll, then try again.",
-                    parent=root,
-                )
-                return "break"
-            try:
-                from pigeon.raw_title import raw_title_from_metadata_dict
-                from pigeon.series_title_training import add_training_mapping
-            except ImportError:
-                messagebox.showinfo(
-                    "Series title training",
-                    "Training modules are not available in this build.",
-                    parent=root,
-                )
-                return "break"
-
-            rt = raw_title_from_metadata_dict(lm)
-            sig = rt.training_signature_normalized()
-            if not sig:
-                messagebox.showinfo(
-                    "Series title training",
-                    "Could not build a stable fingerprint from the current metadata.",
-                    parent=root,
-                )
-                return "break"
-
-            tw = tk.Toplevel(root)
-            tw.title("Series title training")
-            tw.transient(root)
-            tk.Label(
-                tw,
-                text="Map this playback fingerprint to a TMDb series title.\n"
-                f"Saved under {PIGEON_STATE_DIR_TILDE}/series_title_training_hints.json",
-                justify="center",
-            ).pack(padx=12, pady=(10, 4))
-            preview = sig[:180] + ("…" if len(sig) > 180 else "")
-            tk.Label(
-                tw,
-                text=f"Key: {preview}",
-                fg="#888",
-                wraplength=420,
-                justify="left",
-            ).pack(padx=12, pady=4)
-            ent = tk.Entry(tw, width=48)
-            ent.pack(padx=12, pady=6)
-            hint = (rt.layer_series_title or rt.raw_series_name or rt.raw_title or "").strip()
-            if hint:
-                ent.insert(0, hint)
-
-            def _save_training() -> None:
-                q_sp = ent.get().strip()
-                ok_h, msg_h = add_training_mapping(sig, q_sp)
-                if ok_h:
-                    sys.stderr.write(f"pigeon: series title training: {msg_h}\n")
-                    sys.stderr.flush()
-                    tw.destroy()
-                    if q_sp:
-                        spawn_tmdb_poster_fetch(q_sp, prefer=str(apple_tv_auto_state.get("prefer") or "auto"), force=True)
-                else:
-                    messagebox.showerror("Series title training", msg_h, parent=tw)
-
-            bf = tk.Frame(tw)
-            bf.pack(pady=(4, 12))
-            tk.Button(bf, text="Save & refetch TMDb", command=_save_training).pack(side=tk.LEFT, padx=6)
-            tk.Button(bf, text="Cancel", command=tw.destroy).pack(side=tk.LEFT, padx=6)
-            root.after_idle(lambda: ent.focus_set())
-            return "break"
+        on_dev_series_title_training_hotkey = _bind_deps(
+            _core_input_keys.on_dev_series_title_training_hotkey,
+            DevPhase=DevPhase,
+            DisplayView=DisplayView,
+            _PIGEON_EXT=_PIGEON_EXT,
+            _bump_pigeon_user_activity=_bump_pigeon_user_activity,
+            _widget_accepts_typing=_widget_accepts_typing,
+            apple_tv_auto_state=apple_tv_auto_state,
+            dev_phase=dev_phase,
+            display_view_holder=display_view_holder,
+            root=root,
+            spawn_tmdb_poster_fetch=spawn_tmdb_poster_fetch,
+        )
 
         for _plus_key in (
             "<KeyPress-plus>",
@@ -12182,7 +11842,6 @@ def main() -> int:
         _par_chord_fired = [False]
 
         def _on_par_chord_press(event: tk.Event) -> str | None:
-            nonlocal skip_cache
             if _widget_accepts_typing(event.widget):
                 return None
             ks = (getattr(event, "keysym", "") or "").lower()
@@ -12209,7 +11868,7 @@ def main() -> int:
                 append_pigeon_log(msg)
             except Exception:
                 pass
-            skip_cache = None
+            skip_cache[0] = None
             try:
                 render_once()
             except Exception:
@@ -12238,10 +11897,9 @@ def main() -> int:
         # Prefer a direct callback so settings work even when Tk focus is elsewhere.
         def _enter_main_settings_for_rotary() -> bool:
             """Bring up main settings so the encoder can drive the new menus."""
-            nonlocal skip_cache, dev_phase
             if main_settings_widget is None:
                 return False
-            if dev_phase == DevPhase.MAIN_SETTINGS:
+            if dev_phase[0] == DevPhase.MAIN_SETTINGS:
                 return True
             try:
                 if main_settings_widget.state.keyboard_open:
@@ -12256,7 +11914,7 @@ def main() -> int:
                 main_settings_widget.invalidate()
             except Exception:
                 pass
-            dev_phase = DevPhase.MAIN_SETTINGS
+            dev_phase[0] = DevPhase.MAIN_SETTINGS
             try:
                 main_settings_widget.prefetch_scans_for_settings()
             except Exception:
@@ -12267,15 +11925,14 @@ def main() -> int:
                 refresh_weather(zip_code=DEFAULT_WEATHER_ZIP, force=True)
             except Exception:
                 pass
-            skip_cache = None
+            skip_cache[0] = None
             sync_developer_chrome()
             render_once()
             return True
 
         def _on_rotary_action(action: str) -> None:
-            nonlocal skip_cache, dev_phase
             _bump_pigeon_user_activity()
-            was_main = dev_phase == DevPhase.MAIN_SETTINGS
+            was_main = dev_phase[0] == DevPhase.MAIN_SETTINGS
             if not _enter_main_settings_for_rotary():
                 try:
                     from pigeon.rotary_serial import inject_keysym
@@ -12295,13 +11952,13 @@ def main() -> int:
                 return
             if action == "forward":
                 main_settings_widget.navigate(forward=True)
-                skip_cache = None
+                skip_cache[0] = None
                 req = _nav_request[0]
                 req() if req is not None else render_once()
                 return
             if action == "backward":
                 main_settings_widget.navigate(forward=False)
-                skip_cache = None
+                skip_cache[0] = None
                 req = _nav_request[0]
                 req() if req is not None else render_once()
                 return
@@ -12311,16 +11968,16 @@ def main() -> int:
                     if main_settings_widget is not None and not bool(
                         getattr(main_settings_widget.state, "exit_enabled", True)
                     ):
-                        skip_cache = None
+                        skip_cache[0] = None
                         render_once()
                     else:
-                        dev_phase = DevPhase.OFF
-                        skip_cache = None
+                        dev_phase[0] = DevPhase.OFF
+                        skip_cache[0] = None
                         sync_developer_chrome()
                         render_once()
                 else:
                     _handle_main_settings_action(ms_action)
-                    skip_cache = None
+                    skip_cache[0] = None
                     render_once()
 
         _volume_rotary_fail_log_count = [0]
@@ -12418,7 +12075,6 @@ def main() -> int:
 
         def _nudge_clock_saver_volume(action: str) -> None:
             """Move the saver line immediately; the AVR poll confirms the real level."""
-            nonlocal skip_cache
             from pigeon.widgets.clock_saver import step_clock_saver_volume
 
             cur = _clock_saver_volume_raw()
@@ -12450,7 +12106,7 @@ def main() -> int:
                     denon_vol_cache["np_hold"] = nxt
                 except NameError:
                     pass
-            skip_cache = None
+            skip_cache[0] = None
             saver_up = False
             try:
                 saver_up = bool(
@@ -12507,7 +12163,7 @@ def main() -> int:
             sys.stderr.flush()
 
         def _apply_shell_size(w: int, h: int) -> None:
-            nonlocal skip_cache, black_photo, scaled_display, scaled_version
+            nonlocal black_photo, scaled_display, scaled_version
             if w < 32 or h < 32:
                 return
             if display_dims[0] == w and display_dims[1] == h:
@@ -12523,7 +12179,7 @@ def main() -> int:
                 pass
             fit_holder[0] = SceneFit(target_w=w, target_h=h)
             black_photo = None
-            skip_cache = None
+            skip_cache[0] = None
             if use_backdrop_scene and backdrop_master_bgr is not None and not _PIGEON_EXT:
                 from pigeon.image_ui_protocol import backdrop_scene_bgr_for_display
 
@@ -12546,7 +12202,7 @@ def main() -> int:
         sync_developer_chrome()
 
         def render_once() -> None:
-            nonlocal last_frame, brightness_current, scaled_display, scaled_version, skip_cache, black_photo
+            nonlocal last_frame, brightness_current, scaled_display, scaled_version, black_photo
             nonlocal scene_enabled, playing, use_backdrop_scene, backdrop_master_bgr
 
             if _render_after_id[0] is not None:
@@ -12612,7 +12268,7 @@ def main() -> int:
                     return 33
                 # WiFi / box scan spinner: keep responsive without 60 FPS full-frame uploads on Pi.
                 if (
-                    dev_phase == DevPhase.MAIN_SETTINGS
+                    dev_phase[0] == DevPhase.MAIN_SETTINGS
                     and main_settings_widget is not None
                     and (
                         main_settings_widget.state.wifi_scanning
@@ -12671,7 +12327,7 @@ def main() -> int:
                     # Inner ``render_once`` schedules the loop, but guarantee a timer if that path returns early.
                     _schedule_next_render()
                     return
-                skip_cache = None
+                skip_cache[0] = None
                 _warm_playback_overlay_blits()
 
             if _PIGEON_EXT:
@@ -12691,7 +12347,7 @@ def main() -> int:
                     settings_tok = (
                         main_settings_widget.frame_cache_token()
                         if (
-                            dev_phase == DevPhase.MAIN_SETTINGS
+                            dev_phase[0] == DevPhase.MAIN_SETTINGS
                             and main_settings_widget is not None
                         )
                         else ()
@@ -12711,7 +12367,7 @@ def main() -> int:
                     )
                     no_anim = True
                     if (
-                        dev_phase == DevPhase.MAIN_SETTINGS
+                        dev_phase[0] == DevPhase.MAIN_SETTINGS
                         and main_settings_widget is not None
                     ):
                         st_ms = main_settings_widget.state
@@ -12736,7 +12392,7 @@ def main() -> int:
                     tick_key_off = (
                         main_settings_widget.frame_cache_token()
                         if (
-                            dev_phase == DevPhase.MAIN_SETTINGS
+                            dev_phase[0] == DevPhase.MAIN_SETTINGS
                             and main_settings_widget is not None
                         )
                         else int(time.time())
@@ -12781,7 +12437,7 @@ def main() -> int:
                         except Exception:
                             _np_vol_sig = ""
                     scene_off_key = (
-                        int(dev_phase),
+                        int(dev_phase[0]),
                         settings_tok,
                         display_dims[0],
                         display_dims[1],
@@ -12797,7 +12453,7 @@ def main() -> int:
                         int(display_view_holder[0]),
                         _np_vol_sig,
                     )
-                    if no_anim and skip_cache == scene_off_key:
+                    if no_anim and skip_cache[0] == scene_off_key:
                         _schedule_next_render()
                         return
                     t_compose0 = time.perf_counter()
@@ -12826,7 +12482,7 @@ def main() -> int:
                     t_compose2 = time.perf_counter()
                     if meter_active_off or live_audio_off:
                         _record_live_audio_timing(t_compose0, t_compose1, t_compose2)
-                    skip_cache = scene_off_key
+                    skip_cache[0] = scene_off_key
                 else:
                     if black_photo is None:
                         black_photo = _bgr_to_tk_image(_black_screen_bgr())
@@ -12879,7 +12535,7 @@ def main() -> int:
             # Main settings has no clock — use its frame token so static UI can skip uploads.
             if (
                 _PIGEON_EXT
-                and dev_phase == DevPhase.MAIN_SETTINGS
+                and dev_phase[0] == DevPhase.MAIN_SETTINGS
                 and main_settings_widget is not None
             ):
                 tick_key = main_settings_widget.frame_cache_token()
@@ -12980,11 +12636,11 @@ def main() -> int:
                 and not location_toast_animating
                 and not tmdb_x_animating
                 and not clock_intro_animating
-                and skip_cache
+                and skip_cache[0]
                 == (
                     scaled_version,
                     b_key,
-                    int(dev_phase),
+                    int(dev_phase[0]),
                     int(display_view_holder[0]),
                     int(_effective_display_view()),
                     int(view_five_mode_holder[0]),
@@ -13057,10 +12713,10 @@ def main() -> int:
                 and not tmdb_x_animating
                 and not clock_intro_animating
             ):
-                skip_cache = (
+                skip_cache[0] = (
                     scaled_version,
                     b_key,
-                    int(dev_phase),
+                    int(dev_phase[0]),
                     int(display_view_holder[0]),
                     int(_effective_display_view()),
                     int(view_five_mode_holder[0]),
@@ -13084,13 +12740,12 @@ def main() -> int:
                     clock_intro_cache_key,
                 )
             else:
-                skip_cache = None
+                skip_cache[0] = None
 
             _schedule_next_render()
 
         def _paint_coalesced_settings_nav() -> None:
-            nonlocal skip_cache
-            skip_cache = None
+            skip_cache[0] = None
             coalescer = _nav_coalescer_holder[0]
             if main_settings_widget is not None and (
                 coalescer is None or not coalescer.is_hot()
@@ -13111,8 +12766,7 @@ def main() -> int:
             _nav_coalescer_holder[0] = None
 
         def _request_settings_nav_paint() -> None:
-            nonlocal skip_cache
-            skip_cache = None
+            skip_cache[0] = None
             if main_settings_widget is not None:
                 main_settings_widget._nav_scrub = True
             coalescer = _nav_coalescer_holder[0]
@@ -13188,14 +12842,13 @@ def main() -> int:
                 return
 
             def apply() -> None:
-                nonlocal skip_cache
                 _note_volume_source_lines(telnet_line=line)
                 changed = _commit_receiver_volume(line)
                 if not changed and not _volume_lines.fading():
                     return
                 if _idle_audio_meter_active():
                     return
-                skip_cache = None
+                skip_cache[0] = None
                 try:
                     if _view_one_uses_now_playing_screen() and not (
                         _clock_saver_for_compose(time.monotonic())
@@ -13271,7 +12924,6 @@ def main() -> int:
                     vol, src = "", ""
 
                 def apply() -> None:
-                    nonlocal skip_cache
                     _volume_quick_busy[0] = False
                     if not vol:
                         return
@@ -13280,7 +12932,7 @@ def main() -> int:
                         return
                     if _idle_audio_meter_active():
                         return
-                    skip_cache = None
+                    skip_cache[0] = None
                     try:
                         if _view_one_uses_now_playing_screen() and not (
                             _clock_saver_for_compose(time.monotonic())
@@ -13348,7 +13000,7 @@ def main() -> int:
                 volume: str,
                 input_label: str | None = None,
             ) -> None:
-                nonlocal skip_cache, last_device_interaction_mono
+                nonlocal last_device_interaction_mono
                 from pigeon.widgets.playback_overlay import _looks_like_receiver_debug_blob
 
                 receiver_poll_busy["active"] = False
@@ -13393,7 +13045,7 @@ def main() -> int:
                     if _view_one_uses_now_playing_screen() and not saver_up:
                         _sync_now_playing_screen_state()
                     if saver_up and _clock_saver_receiver_off() and not _idle_audio_meter_active():
-                        skip_cache = None
+                        skip_cache[0] = None
                         render_once()
                     return
                 last_device_interaction_mono = time.monotonic()
@@ -13402,7 +13054,7 @@ def main() -> int:
                 if _idle_audio_meter_active():
                     return
                 _warm_playback_overlay_blits()
-                skip_cache = None
+                skip_cache[0] = None
                 if _view_one_uses_now_playing_screen() and not saver_up:
                     _sync_now_playing_screen_state()
                 render_once()
@@ -13744,8 +13396,7 @@ def main() -> int:
             if not _PIGEON_EXT:
                 return
             _warm_view_one_under_splash()
-            nonlocal skip_cache
-            skip_cache = None
+            skip_cache[0] = None
             render_once()
             try:
                 root.update_idletasks()
@@ -13758,7 +13409,7 @@ def main() -> int:
 
         _warm_view_one_under_splash(phase="full-warm-bootstrap-end")
         _enable_now_playing_screen()
-        skip_cache = None
+        skip_cache[0] = None
         t_render0 = time.monotonic()
         render_once()
         _log_view_one_startup_phase(f"first-render ({(time.monotonic() - t_render0) * 1000.0:.0f} ms)")

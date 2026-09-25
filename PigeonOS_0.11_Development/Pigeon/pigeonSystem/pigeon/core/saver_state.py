@@ -16,6 +16,7 @@ from PIL import ImageFont
 from pigeon.compositing import cv_resize_interp
 import cv2
 import os
+from pigeon.clock_saver_policy import should_hold_paused_screen
 
 
 def _bump_pigeon_user_activity(_event: object | None = None, *, _boot_clock_saver_until_playback, last_metadata_activity_mono, last_pigeon_user_activity_mono) -> None:
@@ -401,3 +402,36 @@ def _clock_saver_layer_opacity(now: float, *, CLOCK_SAVER_DIM_OPACITY, _boot_clo
     if _boot_clock_saver_until_playback[0] or _splash_reveal_clock[0]:
         return 1.0
     return CLOCK_SAVER_DIM_OPACITY
+
+
+def _paused_screen_active(*, DevPhase, _apply_auto_widget_policy, _clock_saver_active, _clock_saver_user_enabled, _paused_screen_backdrop_bgr, _show_paused_row_overlay, _vv_is_music, clock_saver_composite_bgra, clock_saver_force_on, dev_phase) -> bool:
+    try:
+        plan = _apply_auto_widget_policy()
+        from pigeon.auto_widgets import (
+            LAYOUT_ZONE6_PAUSESAVER,
+            LAYOUT_ZONE10_PAUSESAVER,
+        )
+
+        if plan.layout == LAYOUT_ZONE10_PAUSESAVER:
+            # Backdrop + zone-4 plate + zone-5 status are drawn by NP.
+            return False
+        if plan.layout == LAYOUT_ZONE6_PAUSESAVER:
+            return False
+    except Exception:
+        pass
+    if dev_phase[0] != DevPhase.OFF:
+        return False
+    paused = _show_paused_row_overlay()
+    has_backdrop = _paused_screen_backdrop_bgr() is not None
+    if paused and _vv_is_music():
+        # Music pause still gets the plate even if artwork has not landed.
+        has_backdrop = True
+    saver_on = False
+    if clock_saver_composite_bgra is not None and _clock_saver_user_enabled():
+        now_ps = time.monotonic()
+        saver_on = bool(_clock_saver_active(now_ps) or clock_saver_force_on[0])
+    return should_hold_paused_screen(
+        paused_with_content=paused,
+        has_backdrop=has_backdrop,
+        clock_saver_active=saver_on,
+    )

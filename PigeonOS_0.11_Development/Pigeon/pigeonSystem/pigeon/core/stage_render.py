@@ -18,7 +18,7 @@ from pigeon.compositing import cv_resize_interp
 import sys
 
 if TYPE_CHECKING:
-    from pigeon_0_9 import SceneFit
+    from pigeon_0_9 import DisplayView, SceneFit
 
 
 def _black_screen_bgr(*, display_dims) -> np.ndarray:
@@ -274,3 +274,32 @@ def _location_toast_alpha(now: float, *, LOCATION_TOAST_FADE_S, LOCATION_TOAST_F
         return max(0.0, 1.0 - (elapsed - hold) / LOCATION_TOAST_FADE_S)
     st["active"] = False
     return 0.0
+
+
+def _info_cluster_compose_active(now_mono: float, *, DevPhase, DisplayView, _PIGEON_EXT, _clock_saver_for_compose, _effective_display_view, _view_one_uses_now_playing_screen, dev_phase) -> bool:
+    if not _PIGEON_EXT:
+        return False
+    if dev_phase[0] != DevPhase.OFF:
+        return False
+    if _effective_display_view() == DisplayView.FOUR:
+        return False
+    if _clock_saver_for_compose(now_mono):
+        return False
+    # New now-playing screen (070326) draws clock, audio config, and volume.
+    if _view_one_uses_now_playing_screen():
+        return False
+    return True
+
+
+def _effective_display_view(*, DevPhase, DisplayView, _PIGEON_EXT, dev_phase, display_view_holder) -> DisplayView:
+    """Logical display for composition. GRID / view 5 overlay preview as view 1 + snapshot layout."""
+    if _PIGEON_EXT and (
+        dev_phase[0] == DevPhase.GRID or display_view_holder[0] == DisplayView.FIVE
+    ):
+        return DisplayView.ONE
+    return display_view_holder[0]
+
+
+def _design_grid_overlay_active(*, DevPhase, DisplayView, dev_phase, display_view_holder) -> bool:
+    """Grid overlay on the composite (developer GRID phase or view 5)."""
+    return dev_phase[0] == DevPhase.GRID or display_view_holder[0] == DisplayView.FIVE

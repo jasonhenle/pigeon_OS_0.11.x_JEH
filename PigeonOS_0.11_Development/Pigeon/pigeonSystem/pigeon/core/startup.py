@@ -8,6 +8,8 @@ takes the app state it used to close over as keyword-only arguments;
 from __future__ import annotations
 
 import numpy as np
+import time
+import tkinter as tk
 
 
 def _early_splash_clock_underlay(*, _bgr_to_tk_image, _early_clock_underlay_photo, _reveal_clock_under_splash, _splash_reveal_clock, _splash_underlay_bgr, label) -> None:
@@ -57,3 +59,43 @@ def _capture_splash_underlay(out_bgr: np.ndarray, *, WINDOW_H, WINDOW_W, _presen
             )
     except Exception:
         pass
+
+
+def _warm_view_one_splash_chrome_only(*, phase: str = "chrome-only", DisplayView, _PIGEON_EXT, _log_view_one_startup_phase, display_view_holder, root, view_circles_widget) -> None:
+    """Rasterize View 1 SVG chrome early (no playback poll helpers required)."""
+    if not _PIGEON_EXT or view_circles_widget is None:
+        return
+    t0 = time.monotonic()
+    display_view_holder[0] = DisplayView.ONE
+    # Clock-only until content is live — do not force the empty status bar on.
+    if view_circles_widget.set_now_playing_chrome_visible(True):
+        view_circles_widget.clear_cache()
+    try:
+        view_circles_widget.bgra_frame()
+    except Exception:
+        pass
+    try:
+        root.update_idletasks()
+    except tk.TclError:
+        pass
+    _log_view_one_startup_phase(f"{phase} ({(time.monotonic() - t0) * 1000.0:.0f} ms raster)")
+
+
+def _warm_view_one_under_splash(*, phase: str = "full-warm", _PIGEON_EXT, _enable_now_playing_screen, _log_view_one_startup_phase, _splash_view_one_warm_done, _warm_status_bar_blits, root, view_circles_widget) -> None:
+    """Full View 1 enable + state sync once playback helpers exist."""
+    if not _PIGEON_EXT:
+        return
+    t0 = time.monotonic()
+    _enable_now_playing_screen()
+    _warm_status_bar_blits()
+    try:
+        if view_circles_widget is not None:
+            view_circles_widget.bgra_frame()
+    except Exception:
+        pass
+    try:
+        root.update_idletasks()
+    except tk.TclError:
+        pass
+    _splash_view_one_warm_done[0] = True
+    _log_view_one_startup_phase(f"{phase} ({(time.monotonic() - t0) * 1000.0:.0f} ms)")

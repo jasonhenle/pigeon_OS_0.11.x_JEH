@@ -10,6 +10,8 @@ from __future__ import annotations
 import time
 import tkinter as tk
 import sys
+from pigeon.runtime_paths import PIGEON_STATE_DIR_TILDE
+import tkinter.messagebox as messagebox
 
 
 def quit_app(_event=None, *, root) -> None:
@@ -229,3 +231,87 @@ def _on_play_pause_gpio_action(*, _bump_pigeon_user_activity, _play_pause_gpio_l
         sys.stderr.flush()
     except Exception:
         pass
+
+
+def on_dev_series_title_training_hotkey(event: tk.Event, *, DevPhase, DisplayView, _PIGEON_EXT, _bump_pigeon_user_activity, _widget_accepts_typing, apple_tv_auto_state, dev_phase, display_view_holder, root, spawn_tmdb_poster_fetch) -> str | None:
+    """Dev-only: map current playback metadata fingerprint → series title (training JSON)."""
+    _bump_pigeon_user_activity(event)
+    if not _PIGEON_EXT:
+        return None
+    if dev_phase[0] != DevPhase.GRID and display_view_holder[0] != DisplayView.FIVE:
+        return None
+    if _widget_accepts_typing(event.widget):
+        return None
+    lm = apple_tv_auto_state.get("last_metadata")
+    if not isinstance(lm, dict) or not any(
+        str(lm.get(k) or "").strip()
+        for k in ("title", "series_name", "artist", "album", "query")
+    ):
+        messagebox.showinfo(
+            "Series title training",
+            "No playback metadata snapshot yet. Start playback and wait for a poll, then try again.",
+            parent=root,
+        )
+        return "break"
+    try:
+        from pigeon.raw_title import raw_title_from_metadata_dict
+        from pigeon.series_title_training import add_training_mapping
+    except ImportError:
+        messagebox.showinfo(
+            "Series title training",
+            "Training modules are not available in this build.",
+            parent=root,
+        )
+        return "break"
+
+    rt = raw_title_from_metadata_dict(lm)
+    sig = rt.training_signature_normalized()
+    if not sig:
+        messagebox.showinfo(
+            "Series title training",
+            "Could not build a stable fingerprint from the current metadata.",
+            parent=root,
+        )
+        return "break"
+
+    tw = tk.Toplevel(root)
+    tw.title("Series title training")
+    tw.transient(root)
+    tk.Label(
+        tw,
+        text="Map this playback fingerprint to a TMDb series title.\n"
+        f"Saved under {PIGEON_STATE_DIR_TILDE}/series_title_training_hints.json",
+        justify="center",
+    ).pack(padx=12, pady=(10, 4))
+    preview = sig[:180] + ("…" if len(sig) > 180 else "")
+    tk.Label(
+        tw,
+        text=f"Key: {preview}",
+        fg="#888",
+        wraplength=420,
+        justify="left",
+    ).pack(padx=12, pady=4)
+    ent = tk.Entry(tw, width=48)
+    ent.pack(padx=12, pady=6)
+    hint = (rt.layer_series_title or rt.raw_series_name or rt.raw_title or "").strip()
+    if hint:
+        ent.insert(0, hint)
+
+    def _save_training() -> None:
+        q_sp = ent.get().strip()
+        ok_h, msg_h = add_training_mapping(sig, q_sp)
+        if ok_h:
+            sys.stderr.write(f"pigeon: series title training: {msg_h}\n")
+            sys.stderr.flush()
+            tw.destroy()
+            if q_sp:
+                spawn_tmdb_poster_fetch(q_sp, prefer=str(apple_tv_auto_state.get("prefer") or "auto"), force=True)
+        else:
+            messagebox.showerror("Series title training", msg_h, parent=tw)
+
+    bf = tk.Frame(tw)
+    bf.pack(pady=(4, 12))
+    tk.Button(bf, text="Save & refetch TMDb", command=_save_training).pack(side=tk.LEFT, padx=6)
+    tk.Button(bf, text="Cancel", command=tw.destroy).pack(side=tk.LEFT, padx=6)
+    root.after_idle(lambda: ent.focus_set())
+    return "break"

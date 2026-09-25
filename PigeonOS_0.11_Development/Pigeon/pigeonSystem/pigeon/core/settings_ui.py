@@ -1063,3 +1063,34 @@ def _remove_saved_player_device(for_location_id: str | None = None, *, _clear_re
     describe_current_apple_tv()
     _rebuild_paired_devices_panel()
     _schedule_refresh_pairing_leds()
+
+
+def _settings_is_native_1280(*, DevPhase, dev_phase, main_settings_widget) -> bool:
+    """True when settings is on screen — all current pages are 1280×800."""
+    return dev_phase[0] == DevPhase.MAIN_SETTINGS and main_settings_widget is not None
+
+
+def _settings_menu_is_static(*, DevPhase, dev_phase, main_settings_widget) -> bool:
+    """True when settings is up and not running a scan/spinner animation."""
+    if dev_phase[0] != DevPhase.MAIN_SETTINGS or main_settings_widget is None:
+        return False
+    try:
+        st = main_settings_widget.state
+    except Exception:
+        return False
+    return not (
+        st.wifi_scanning
+        or st.wifi_connecting
+        or st.box2_devices.scanning
+        or st.box3_devices.scanning
+        or st.location_switching
+    )
+
+
+def _sync_settings_zone2_tt(*, main_settings_widget) -> None:
+    """Box1 stays pigeon wordmark + IP; drop any leftover TT payload."""
+    if main_settings_widget is None:
+        return
+    st_ms = main_settings_widget.state
+    if getattr(st_ms, "zone2_tt_bgra", None) is not None:
+        st_ms.zone2_tt_bgra = None

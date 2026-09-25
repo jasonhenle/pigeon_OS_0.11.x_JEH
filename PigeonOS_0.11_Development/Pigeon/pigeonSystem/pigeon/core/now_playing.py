@@ -545,3 +545,61 @@ def _update_status_bar_from_metadata(metadata: dict[str, object] | None, *, _app
     # Sync TRT digits to the latest polled integer second. The steady 1 Hz metronome
     # continues stepping from this anchor.
     _sync_trt_text_to_true_once()
+
+
+def _sync_now_playing_screen_state_for_frame(*, _np_state_sync_mono, _sync_now_playing_screen_state, view_circles_widget) -> None:
+    """Throttle NP metadata while live audio widgets are painting at 30 Hz."""
+    live = False
+    try:
+        live = bool(
+            view_circles_widget is not None
+            and view_circles_widget._live_audio_widgets_on()
+        )
+    except Exception:
+        live = False
+    if live:
+        t_sync = time.monotonic()
+        if t_sync - _np_state_sync_mono[0] < 1.0:
+            return
+        _np_state_sync_mono[0] = t_sync
+    _sync_now_playing_screen_state()
+
+
+def _clear_now_playing_view_caches(*, view_circles_widget) -> None:
+    if view_circles_widget is not None:
+        view_circles_widget.clear_cache()
+
+
+def _playback_display_title(*, active_tmdb_display_title, apple_tv_auto_state) -> str:
+    """Best on-screen title: TMDb display name, else Apple TV metadata."""
+    if (active_tmdb_display_title[0] or "").strip():
+        return str(active_tmdb_display_title[0]).strip()
+    lm = apple_tv_auto_state.get("last_metadata")
+    if isinstance(lm, dict):
+        for key in ("title", "series_name", "query", "artist"):
+            s = str(lm.get(key) or "").strip()
+            if s:
+                return s
+    return ""
+
+
+def _np_drawing_live_audio(*, _clock_saver_for_compose, _view_one_uses_now_playing_screen, view_circles_widget) -> bool:
+    """True when NP is actually painting visualizer / VU / levels this frame.
+
+    Capture can stay on for countdown widgets; skip-cache cadence follows
+    what is on screen. Now-playing forces ``scene_enabled`` off, so this
+    must also drive the scene-off skip key (otherwise the well is 1 Hz).
+    """
+    if view_circles_widget is None:
+        return False
+    if not _view_one_uses_now_playing_screen():
+        return False
+    try:
+        if _clock_saver_for_compose(time.monotonic()):
+            return False
+    except Exception:
+        pass
+    try:
+        return bool(view_circles_widget._live_audio_widgets_on())
+    except Exception:
+        return False

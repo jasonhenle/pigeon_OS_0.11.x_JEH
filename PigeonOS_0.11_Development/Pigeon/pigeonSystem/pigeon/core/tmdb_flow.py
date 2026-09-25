@@ -16,6 +16,7 @@ from pigeon.app_state import read_app_state
 from pigeon.runtime_paths import pigeon_state_dir
 import sys
 from pigeon.app_state import write_app_state
+import tkinter.messagebox as messagebox
 
 
 def _trigger_tmdb_quality_toggle_overlay(mode: str, *, tmdb_quality_overlay_mode, tmdb_quality_overlay_t0) -> None:
@@ -414,3 +415,220 @@ def on_reset_tmdb_match_quality_stats(*, _PIGEON_EXT, _refresh_match_quality_gla
         _refresh_match_quality_glance_label()
     except Exception:
         pass
+
+
+def _active_tmdb_poster_bgra(*, _tmdb_poster_cache, active_tmdb_title_key) -> np.ndarray | None:
+    """Return cached TMDb *poster* BGRA for the active title key (or ``None``).
+
+    Tries the active key, then a year-stripped alias — Apple TV raw titles often
+    keep ``(YYYY)`` while assets are stored under the clean TMDb display name.
+    Never falls back to backdrop art (circles poster slot is poster-only).
+    """
+    if not active_tmdb_title_key[0]:
+        return None
+    try:
+        from pigeon.media_cache import ASSET_POSTER_ART, find_cached_reformatted_asset
+        from pigeon.image_ui_protocol import load_image_bgra
+        from pigeon.tmdb_poster import split_query_and_year
+    except Exception:
+        return None
+    keys: list[str] = []
+    tk0 = str(active_tmdb_title_key[0]).strip()
+    if tk0:
+        keys.append(tk0)
+    try:
+        cleaned, _year = split_query_and_year(tk0)
+        cleaned = (cleaned or "").strip()
+        if cleaned and cleaned not in keys:
+            keys.append(cleaned)
+    except Exception:
+        pass
+    poster_path = None
+    for tk in keys:
+        poster_path = find_cached_reformatted_asset(tk, ASSET_POSTER_ART)
+        if poster_path is not None and poster_path.is_file():
+            break
+        poster_path = None
+    if poster_path is None:
+        return None
+    try:
+        mtime = poster_path.stat().st_mtime
+    except OSError:
+        return None
+    key = (str(poster_path), float(mtime))
+    if _tmdb_poster_cache.get("key") == key:
+        hit = _tmdb_poster_cache.get("bgra")
+        return hit if isinstance(hit, np.ndarray) else None
+    raw = load_image_bgra(poster_path)
+    if raw is None or raw.size == 0:
+        _tmdb_poster_cache["key"] = key
+        _tmdb_poster_cache["bgra"] = None
+        return None
+    _tmdb_poster_cache["key"] = key
+    _tmdb_poster_cache["bgra"] = raw
+    return raw
+
+
+def _active_tmdb_tt_src_bgra(*, _tmdb_tt_src_cache, active_tmdb_display_title, active_tmdb_title_key) -> np.ndarray | None:
+    """Return cached TMDb title-treatment (LogoEn) BGRA, or ``None``.
+
+    Logo art only — no text fallback and no streaming-app logo substitute.
+    Tries the active key, then a year-stripped alias.
+    """
+    if not active_tmdb_title_key[0]:
+        return None
+    try:
+        from pigeon.media_cache import (
+            ASSET_LOGO,
+            ASSET_LOGO_EN,
+            find_cached_reformatted_asset,
+            title_key as tmdb_title_key,
+        )
+        from pigeon.image_ui_protocol import load_image_bgra
+        from pigeon.tmdb_poster import split_query_and_year
+    except Exception:
+        return None
+    keys: list[str] = []
+    tk0 = str(active_tmdb_title_key[0]).strip()
+    if tk0:
+        keys.append(tk0)
+    disp = str(active_tmdb_display_title[0] or "").strip()
+    if disp:
+        try:
+            tk_disp = (tmdb_title_key(disp) or "").strip()
+        except Exception:
+            tk_disp = ""
+        if tk_disp and tk_disp not in keys:
+            keys.append(tk_disp)
+    try:
+        cleaned, _year = split_query_and_year(tk0)
+        cleaned = (cleaned or "").strip()
+        if cleaned and cleaned not in keys:
+            keys.append(cleaned)
+    except Exception:
+        pass
+    logo_path = None
+    for tk in keys:
+        for asset in (ASSET_LOGO_EN, ASSET_LOGO):
+            logo_path = find_cached_reformatted_asset(tk, asset)
+            if logo_path is not None and logo_path.is_file():
+                break
+            logo_path = None
+        if logo_path is not None:
+            break
+    if logo_path is None:
+        return None
+    try:
+        mtime = logo_path.stat().st_mtime
+    except OSError:
+        return None
+    key = (str(logo_path), float(mtime))
+    if _tmdb_tt_src_cache.get("key") == key:
+        hit = _tmdb_tt_src_cache.get("bgra")
+        return hit if isinstance(hit, np.ndarray) else None
+    raw = load_image_bgra(logo_path)
+    if raw is None or raw.size == 0:
+        _tmdb_tt_src_cache["key"] = key
+        _tmdb_tt_src_cache["bgra"] = None
+        return None
+    _tmdb_tt_src_cache["key"] = key
+    _tmdb_tt_src_cache["bgra"] = raw
+    return raw
+
+
+def _vv_has_tmdb_tt(*, active_tmdb_title_key) -> bool:
+    return bool(active_tmdb_title_key[0])
+
+
+def _perform_tmdb_artwork_retry(*, _PIGEON_EXT, _alternate_tmdb_query_from_metadata, _append_tmdb_retry_log_ui, _tmdb_retry_log_append, active_tmdb_display_title, active_tmdb_title_key, apple_tv_auto_state, apple_tv_playback_clock, spawn_tmdb_poster_fetch, tmdb_retry_rule_idx) -> None:
+    if not _PIGEON_EXT:
+        return
+    rules = [
+        ("movie", "primary", "movie+primary"),
+        ("tv", "primary", "tv+primary"),
+        ("auto", "alternate", "auto+alternate_query"),
+        ("auto", "primary", "auto+primary"),
+    ]
+    idx = tmdb_retry_rule_idx[0] % len(rules)
+    prefer, qsource, rule_id = rules[idx]
+    primary = str(apple_tv_auto_state.get("query") or "").strip()
+    md_raw = apple_tv_auto_state.get("last_metadata")
+    md = md_raw if isinstance(md_raw, dict) else {}
+    alt = _alternate_tmdb_query_from_metadata(md if md else None, primary)
+    if qsource == "primary":
+        q = primary
+    else:
+        q = (alt or primary).strip()
+    if not q:
+        messagebox.showwarning(
+            "TMDb retry",
+            "No playback search query yet. Play something on the device and wait for metadata, "
+            "or type a query in the command bar (tmdb …).",
+        )
+        return
+    tmdb_retry_rule_idx[0] = idx + 1
+    entry = {
+        "event": "tmdb_retry_hotkey",
+        "rule_index": idx,
+        "rule_id": rule_id,
+        "prefer": prefer,
+        "query_source": qsource,
+        "query_sent": q,
+        "primary_query": primary,
+        "alternate_available": bool(alt),
+        "alternate_query": alt,
+        "active_tmdb_title_key_before": active_tmdb_title_key[0],
+        "active_tmdb_display_title_before": active_tmdb_display_title[0],
+        "apple_tv_auto_prefer": apple_tv_auto_state.get("prefer"),
+        "content_key": apple_tv_auto_state.get("content_key"),
+        "live_mode": apple_tv_playback_clock.get("live_mode"),
+        "metadata_excerpt": {
+            k: md.get(k)
+            for k in ("title", "artist", "series_name", "media_type", "inferred_prefer", "device_state")
+            if md.get(k)
+        },
+    }
+    _tmdb_retry_log_append(entry)
+    ts = time.strftime("%Y-%m-%d %H:%M:%SZ", time.gmtime())
+    was = active_tmdb_display_title[0] or "—"
+    _append_tmdb_retry_log_ui(f"{ts}  {rule_id}  prefer={prefer}  q={q!r}  was={was!r}")
+    # Manual "?" / retry hotkey clears give-up so this attempt can run.
+    apple_tv_auto_state["tmdb_missing_art"] = False
+    apple_tv_auto_state["tmdb_exhausted_identity"] = None
+    spawn_tmdb_poster_fetch(q, prefer=prefer, force=True)
+    sys.stderr.write(f"pigeon: tmdb retry ({rule_id}) prefer={prefer} q={q!r}\n")
+    sys.stderr.flush()
+
+
+def submit_command_entry(_event=None, *, DevPhase, DisplayView, _PIGEON_EXT, _bump_pigeon_user_activity, _last_command_submit_mono, command_entry, dev_phase, display_view_holder, hide_command_entry, parse_tmdb_command_phrase, spawn_tmdb_poster_fetch) -> str:
+    if dev_phase[0] != DevPhase.GRID and display_view_holder[0] != DisplayView.FIVE:
+        return "break"
+    _bump_pigeon_user_activity()
+    now_sub = time.monotonic()
+    if now_sub - _last_command_submit_mono[0] < 0.2:
+        return "break"
+    _last_command_submit_mono[0] = now_sub
+    text = command_entry.get().strip()
+    key = text.lower()
+    if text and _PIGEON_EXT:
+        m_tmdb = re.match(r"(?i)tmdb\s+(?P<q>.+)$", text)
+        if m_tmdb:
+            qrest = m_tmdb.group("q").strip()
+            if qrest:
+                q2, pref = parse_tmdb_command_phrase(qrest)
+                if q2:
+                    spawn_tmdb_poster_fetch(q2, prefer=pref, force=True)
+            else:
+                sys.stderr.write("pigeon: tmdb: empty query (use: tmdb Movie Title)\n")
+                sys.stderr.flush()
+        else:
+            # Plain title or tv/movie hint — TMDb (auto picks movie vs TV by popularity)
+            q2, pref = parse_tmdb_command_phrase(text)
+            if q2:
+                spawn_tmdb_poster_fetch(q2, prefer=pref, force=True)
+    elif text:
+        sys.stderr.write(f"pigeon: command: {text}\n")
+        sys.stderr.flush()
+    command_entry.delete(0, tk.END)
+    hide_command_entry()
+    return "break"

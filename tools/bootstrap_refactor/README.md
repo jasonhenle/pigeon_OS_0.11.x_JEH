@@ -51,3 +51,27 @@ HOME=$(mktemp -d) python3 $T/smoke_bootstrap.py   # runs main() + bootstrap() to
 
 `smoke_bootstrap.py` needs the desktop requirements (no display or real Tk). It should
 end with `SMOKE: bootstrap returned` / `SMOKE: main returned 0`.
+
+## Pass 4: holders for rebound state
+
+Most remaining helpers were blocked because they share variables that
+`bootstrap()` reassigns (via `nonlocal` or a second top-level binding).
+`holderize.py` converts such a variable into a one-element holder list — the
+same `x_holder[0]` pattern the codebase already uses — so the name is bound
+once and helpers can take it as a dependency:
+
+```bash
+python3 $T/holderize.py pigeon_0_9.py skip_cache dev_phase active_tmdb_title_key active_tmdb_display_title
+```
+
+It rewrites `x` → `x[0]` only where the name resolves to `bootstrap()`'s
+binding (scope-aware; shadowing locals are left alone), wraps the first
+top-level binding in `[...]`, and drops `x` from `nonlocal` declarations.
+Variables that were only bound twice by `x = None` / `if ...: x = Widget()`
+were instead collapsed to a single conditional expression by hand
+(`status_bar_widget`, `view_circles_widget`, `main_settings_widget`).
+Then re-run pass 2 / pass 3 and `transform.py` with `plan4.json` / `plan4b.json`.
+
+Known pre-existing quirk preserved on purpose: `_prefetch_pigeon_update_badge`,
+`_remove_streaming_device_at` and `_remove_receiver_device_at` assign
+`skip_cache = None` without `nonlocal`, so they never cleared the render cache.

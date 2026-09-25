@@ -176,3 +176,10 @@ def _acquire_view1_canvas(*, DESIGN_H, DESIGN_W, _view1_canvas_bgr) -> np.ndarra
         c = np.zeros((h, w, 3), dtype=np.uint8)
         _view1_canvas_bgr[0] = c
     return c
+
+
+def _view_one_uses_now_playing_screen(*, DisplayView, _effective_display_view, view_circles_widget) -> bool:
+    return (
+        _effective_display_view() == DisplayView.ONE
+        and view_circles_widget is not None
+    )
