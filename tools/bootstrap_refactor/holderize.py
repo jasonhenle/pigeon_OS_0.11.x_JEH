@@ -3,8 +3,10 @@
 Usage (from ``pigeonSystem``)::
 
     python3 holderize.py pigeon_0_9.py NAME [NAME ...]
+    python3 holderize.py --main pigeon_0_9.py NAME [NAME ...]
 
-For each NAME bound in ``bootstrap()`` this rewrites, in place:
+For each NAME bound in ``bootstrap()`` (or, with ``--main``, in ``main()``
+itself) this rewrites, in place:
 
 - the first top-level binding ``NAME = expr`` / ``NAME: T = expr`` into
   ``NAME = [expr]`` / ``NAME: list[T] = [expr]`` (it must be unconditional,
@@ -101,7 +103,11 @@ def shadows(scope, name):
 
 
 def main() -> None:
-    path, names = sys.argv[1], sys.argv[2:]
+    args = sys.argv[1:]
+    in_main = args[0] == "--main"
+    if in_main:
+        args = args[1:]
+    path, names = args[0], args[1:]
     src = open(path, encoding="utf-8").read()
     lines = src.splitlines(keepends=True)
     starts = [0]
@@ -117,15 +123,17 @@ def main() -> None:
     main_fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "main")
     boot = next(n for n in main_fn.body if isinstance(n, ast.FunctionDef) and n.name == "bootstrap")
 
+    owner = main_fn if in_main else boot
     edits: list[tuple[int, int, str]] = []
     for name in names:
-        # main() itself must not own the name.
-        for n in own_nodes(main_fn):
-            if isinstance(n, ast.Name) and n.id == name:
-                die(f"{name} is referenced in main() outside bootstrap()")
+        # main() itself must not own the name (unless it is the owner).
+        if not in_main:
+            for n in own_nodes(main_fn):
+                if isinstance(n, ast.Name) and n.id == name:
+                    die(f"{name} is referenced in main() outside bootstrap()")
 
         init = None
-        for i, stmt in enumerate(boot.body):
+        for i, stmt in enumerate(owner.body):
             hit = [n for n in own_nodes_stmt(stmt) if isinstance(n, ast.Name) and n.id == name
                    and isinstance(n.ctx, ast.Store)]
             if not hit:
@@ -163,9 +171,9 @@ def main() -> None:
             for c in child_scopes(scope):
                 walk(c, live and not shadows(c, name))
 
-        if shadows(boot, name) is False:
-            die(f"{name} is not local to bootstrap()")
-        walk(boot, True)
+        if shadows(owner, name) is False:
+            die(f"{name} is not local to {owner.name}()")
+        walk(owner, True)
 
         init_target = init.targets[0] if isinstance(init, ast.Assign) else init.target
         for r in refs:

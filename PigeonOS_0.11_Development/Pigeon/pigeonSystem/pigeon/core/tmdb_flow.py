@@ -17,6 +17,7 @@ from pigeon.runtime_paths import pigeon_state_dir
 import sys
 from pigeon.app_state import write_app_state
 import tkinter.messagebox as messagebox
+from pigeon.tmdb_tt_contrast import pick_gradient_bgr
 
 
 def _trigger_tmdb_quality_toggle_overlay(mode: str, *, tmdb_quality_overlay_mode, tmdb_quality_overlay_t0) -> None:
@@ -777,3 +778,22 @@ def _clear_tmdb_quality_flag(*, undo: bool, show_overlay: bool, _adjust_tmdb_qua
     if show_overlay:
         _trigger_tmdb_quality_toggle_overlay("undo")
     skip_cache[0] = None
+
+
+def _refresh_tmdb_tt_gradient_tint(*, active_tmdb_display_title, active_tmdb_title_key, tmdb_logo_patch_bgra, tmdb_tt_gradient_bgr_holder) -> None:
+    """Evaluate TT brightness and pick the bottom-gradient tint (black vs white).
+
+    Runs every time ``_warm_tmdb_logo_patch`` refreshes the cached TT patch. Falls
+    back to the legacy dark gradient when no TT is available.
+    """
+    prev = tmdb_tt_gradient_bgr_holder[0]
+    chosen, lum = pick_gradient_bgr(tmdb_logo_patch_bgra[0])
+    tmdb_tt_gradient_bgr_holder[0] = chosen
+    if chosen != prev:
+        label = "white" if chosen == (255, 255, 255) else "black"
+        title = active_tmdb_display_title[0] or active_tmdb_title_key[0] or "(no-title)"
+        lum_s = f"{lum:.3f}" if lum is not None else "n/a"
+        print(
+            f"pigeon: TT contrast → {label} gradient (luminance={lum_s}, title={title!r})",
+            file=sys.stderr,
+        )

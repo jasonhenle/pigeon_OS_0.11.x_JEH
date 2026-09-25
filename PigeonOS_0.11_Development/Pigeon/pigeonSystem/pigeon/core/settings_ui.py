@@ -27,6 +27,7 @@ from pigeon.app_state import write_saved_streaming_device
 from pigeon.app_state import clear_last_receiver
 from pigeon.app_state import read_saved_av_receiver
 from pigeon.app_state import write_saved_av_receiver
+import threading
 
 
 def _settings_update_scrollregion(event: tk.Event | None = None, *, _settings_inner_scroll_size, settings_canvas, settings_inner) -> None:
@@ -1165,3 +1166,32 @@ def _remove_saved_receiver_device(for_location_id: str | None = None, *, _rebuil
     describe_current_apple_tv()
     _rebuild_paired_devices_panel()
     _schedule_refresh_pairing_leds()
+
+
+def _check_for_updates(*, force: bool = False, _UPDATE_CHECK_INTERVAL_S, _finish_update_check, root, update_check_state) -> None:
+    if update_check_state.get("checking"):
+        return
+    now = time.monotonic()
+    last = float(update_check_state.get("last_check_mono") or 0.0)
+    if not force and (now - last) < _UPDATE_CHECK_INTERVAL_S:
+        return
+    update_check_state["checking"] = True
+
+    def worker() -> None:
+        try:
+            from pigeon.update_check import check_for_update
+
+            result = check_for_update()
+        except Exception as e:
+            from pigeon.update_check import UpdateCheckResult
+
+            result = UpdateCheckResult(
+                local_version=version_string(),
+                remote_version=None,
+                update_available=False,
+                error=str(e),
+            )
+
+        root.after(0, lambda r=result: _finish_update_check(r))
+
+    threading.Thread(target=worker, daemon=True).start()

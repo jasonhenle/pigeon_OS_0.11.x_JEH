@@ -13,6 +13,11 @@ from pigeon.app_state import read_last_receiver
 from pigeon.app_state import read_saved_av_receiver
 from pigeon.app_state import write_last_apple_tv
 from pigeon.app_state import write_last_receiver
+from pigeon.app_state import row_is_playback_apple_tv
+from pigeon.runtime_paths import PIGEON_STATE_DIR_TILDE
+import sys
+import threading
+import tkinter.messagebox as messagebox
 
 
 def _seed_current_apple_tv_from_streaming_slot(*, current_apple_tv, streaming_slot_holder) -> None:
@@ -289,3 +294,367 @@ def set_current_receiver_only(row: dict[str, str], *, persist: bool = True, _reb
     describe_current_apple_tv()
     _rebuild_paired_devices_panel()
     _schedule_refresh_pairing_leds()
+
+
+def on_apple_tv_selected_then_tmdb(*, _PIGEON_EXT, _open_find_device_dialog, _pyatv_install_hint, apple_tv_busy, begin_apple_tv_operation, describe_current_apple_tv, end_apple_tv_operation, last_atv_interaction_mono, root, set_current_apple_tv, spawn_tmdb_poster_fetch, streaming_slot_holder) -> None:
+    """Use the saved streaming slot: pyatv (Apple TV) or Roku ECP, then TMDb + backdrop."""
+    if not _PIGEON_EXT:
+        messagebox.showinfo("Devices", "Pigeon extensions not loaded.")
+        return
+    if apple_tv_busy["active"]:
+        describe_current_apple_tv(suffix="busy")
+        return
+    row = streaming_slot_holder[0]
+    if row is None:
+        _open_find_device_dialog()
+        return
+    if not begin_apple_tv_operation("detecting content"):
+        return
+
+    def worker() -> None:
+        ok_w, msg_w, title_w = False, "", None
+        if row_is_playback_apple_tv(row):
+            try:
+                from pigeon.apple_tv_now_playing import fetch_now_playing_title_for_device
+
+                ok_w, msg_w, title_w = fetch_now_playing_title_for_device(
+                    device_identifier=row["identifier"],
+                    device_address=row["address"],
+                )
+            except ImportError:
+                ok_w, msg_w, title_w = (
+                    False,
+                    _pyatv_install_hint(),
+                    None,
+                )
+            except Exception as e:
+                ok_w, msg_w, title_w = False, str(e), None
+        else:
+            try:
+                from pigeon.roku_ecp import (
+                    fetch_roku_title_for_metadata,
+                    resolve_roku_ecp_base_url_for_row,
+                )
+
+                rbase = resolve_roku_ecp_base_url_for_row(row)
+                if not rbase:
+                    ok_w, msg_w, title_w = (
+                        False,
+                        "",
+                        None,
+                    )
+                else:
+                    ok_w, msg_w, title_w = fetch_roku_title_for_metadata(
+                        rbase, timeout=10.0
+                    )
+            except Exception as e:
+                ok_w, msg_w, title_w = False, str(e), None
+
+        def finish() -> None:
+            if not row_is_playback_apple_tv(row) and not ok_w and not msg_w:
+                end_apple_tv_operation()
+                messagebox.showinfo(
+                    "Devices",
+                    "This Player is not an Apple TV (pyatv) row, and Pigeon could not use "
+                    "Roku ECP on its IP (port 8060).\n\n"
+                    "• If this is a Roku / Roku TV (e.g. Onn), ensure the TV’s IP is in the "
+                    "Player slot and try again, or set \"roku_ecp_base_url\" in "
+                    f"{PIGEON_STATE_DIR_TILDE}/state.json to http://TV_IP:8060\n"
+                    "• For an actual Apple TV, re-add it from Find devices so the label "
+                    "shows “Apple TV / tvOS”.\n"
+                    "• For a receiver only, choose Receiver in Find device for the overlay.",
+                )
+                return
+            if not ok_w:
+                end_apple_tv_operation()
+                messagebox.showerror("Devices", msg_w or "Could not read now playing.")
+                return
+            if not title_w:
+                end_apple_tv_operation()
+                messagebox.showinfo(
+                    "Devices",
+                    msg_w or "No title reported by the selected device.",
+                )
+                return
+            from pigeon.tmdb_poster import is_degenerate_tmdb_query
+
+            if is_degenerate_tmdb_query(title_w):
+                end_apple_tv_operation()
+                messagebox.showinfo(
+                    "Devices",
+                    "The device only reported app or channel branding, not the show or movie "
+                    "title, so Pigeon did not search TMDb.\n\n"
+                    "On Disney+ via Roku, wait until playback has started and try Manual fetch again.",
+                )
+                return
+            set_current_apple_tv(row, persist=True)
+            last_atv_interaction_mono[0] = time.monotonic()
+            end_apple_tv_operation(suffix="title detected")
+            sys.stderr.write(f"pigeon: {msg_w}\n")
+            sys.stderr.flush()
+            spawn_tmdb_poster_fetch(title_w, prefer="auto", force=True)
+
+        root.after(0, finish)
+
+    threading.Thread(target=worker, daemon=True).start()
+
+
+def on_debug_streaming_slot_apple_tv(*, _PIGEON_EXT, _open_find_device_dialog, _pyatv_install_hint, apple_tv_busy, begin_apple_tv_operation, describe_current_apple_tv, end_apple_tv_operation, root, streaming_slot_holder) -> None:
+    if not _PIGEON_EXT:
+        messagebox.showinfo("Devices", "Pigeon extensions not loaded.")
+        return
+    if apple_tv_busy["active"]:
+        describe_current_apple_tv(suffix="busy")
+        return
+    row = streaming_slot_holder[0]
+    if row is None:
+        _open_find_device_dialog()
+        return
+    if not row_is_playback_apple_tv(row):
+        messagebox.showinfo(
+            "Devices",
+            "Metadata debug applies to Apple TV rows (label shows “Apple TV / tvOS”), not receivers.",
+        )
+        return
+    if not begin_apple_tv_operation("debugging metadata"):
+        return
+
+    def worker() -> None:
+        try:
+            from pigeon.apple_tv_now_playing import debug_metadata_for_device
+
+            ok_w, dump_w = debug_metadata_for_device(
+                device_identifier=row["identifier"],
+                device_address=row["address"],
+            )
+        except ImportError:
+            ok_w, dump_w = (
+                False,
+                _pyatv_install_hint(),
+            )
+        except Exception as e:
+            ok_w, dump_w = False, str(e)
+
+        def finish() -> None:
+            title = "Apple TV Metadata Debug"
+            end_apple_tv_operation()
+            if ok_w:
+                messagebox.showinfo(title, dump_w)
+            else:
+                messagebox.showerror(title, dump_w)
+
+        root.after(0, finish)
+
+    threading.Thread(target=worker, daemon=True).start()
+
+
+def _send_player_play_pause_hotkey(*, _PIGEON_EXT, apple_tv_busy, current_apple_tv, streaming_slot_holder) -> bool:
+    """
+    If a **Player** slot is set, send play/pause on a worker thread (Apple TV: pyatv;
+    Roku: ECP). Returns True when a send was queued (so Space should not fall through).
+    """
+    if not _PIGEON_EXT:
+        return False
+    if apple_tv_busy["active"]:
+        return False
+    row = streaming_slot_holder[0]
+    if not row:
+        return False
+    if row_is_playback_apple_tv(row):
+        ident = str(current_apple_tv.get("identifier") or "").strip() or str(
+            row.get("identifier") or ""
+        ).strip()
+        addr = str(current_apple_tv.get("address") or "").strip() or str(
+            row.get("address") or ""
+        ).strip()
+        if not ident:
+            return False
+        if not addr:
+            addr = ident
+
+        try:
+            from pigeon.apple_tv_now_playing import enqueue_apple_tv_remote_command
+
+            if enqueue_apple_tv_remote_command(
+                device_identifier=ident,
+                device_address=addr,
+                method_name="play_pause",
+                scan_timeout_s=3,
+            ):
+                return True
+        except Exception:
+            pass
+        return False
+    try:
+        from pigeon.roku_ecp import resolve_roku_ecp_base_url_for_row, roku_send_play_pause
+
+        rbase = str(resolve_roku_ecp_base_url_for_row(row) or "").strip()
+        if not rbase:
+            return False
+    except Exception:
+        return False
+
+    def _work_roku() -> None:
+        try:
+            from pigeon.roku_ecp import roku_send_play_pause
+
+            roku_send_play_pause(base_url=rbase, timeout=3.0)
+        except Exception:
+            pass
+
+    threading.Thread(target=_work_roku, daemon=True).start()
+    return True
+
+
+def _commit_receiver_volume(vol: str, *, _clock_saver_volume, _note_volume_graphics, _remember_clock_saver_volume, denon_vol_cache, receiver_overlay_state) -> bool:
+    """Write the box-3 AVR level into the widgets. True if it changed."""
+    line = str(vol or "").strip()
+    if not line:
+        return False
+    try:
+        from pigeon.widgets.playback_overlay import _receiver_volume_display_line
+
+        norm = _receiver_volume_display_line(line)
+        if norm:
+            line = norm
+    except Exception:
+        pass
+    try:
+        if _clock_saver_volume.is_stale_poll(line):
+            return False
+    except Exception:
+        pass
+    prev = ""
+    try:
+        prev = str(denon_vol_cache.get("effective") or "")
+    except NameError:
+        prev = ""
+    try:
+        denon_vol_cache["effective"] = line
+        denon_vol_cache["np_hold"] = line
+    except NameError:
+        pass
+    try:
+        receiver_overlay_state["volume"] = line
+    except NameError:
+        pass
+    _remember_clock_saver_volume(line, source="poll")
+    _note_volume_graphics(line)
+    return prev != line
+
+
+def _on_denon_telnet_volume(fields: dict[str, object], *, _clock_saver_for_compose, _commit_receiver_volume, _idle_audio_meter_active, _note_volume_source_lines, _sync_now_playing_screen_state, _view_one_uses_now_playing_screen, _volume_lines, clock_saver_force_on, render_once, root, skip_cache) -> None:
+    """Unsolicited telnet ``MV`` (IR / knob / HEOS) — paint immediately."""
+    from pigeon.receiver_denon import _volume_fields_line
+
+    line = _volume_fields_line({str(k): str(v) for k, v in fields.items()})
+    if not line:
+        return
+
+    def apply() -> None:
+        _note_volume_source_lines(telnet_line=line)
+        changed = _commit_receiver_volume(line)
+        if not changed and not _volume_lines.fading():
+            return
+        if _idle_audio_meter_active():
+            return
+        skip_cache[0] = None
+        try:
+            if _view_one_uses_now_playing_screen() and not (
+                _clock_saver_for_compose(time.monotonic())
+                or clock_saver_force_on[0]
+            ):
+                _sync_now_playing_screen_state()
+        except Exception:
+            pass
+        try:
+            render_once()
+        except Exception:
+            pass
+
+    try:
+        root.after(0, apply)
+    except Exception:
+        pass
+
+
+def _quick_receiver_volume_poll(*, _clock_saver_for_compose, _commit_receiver_volume, _idle_audio_meter_active, _note_volume_source_lines, _sync_now_playing_screen_state, _view_one_uses_now_playing_screen, _volume_lines, _volume_quick_busy, clock_saver_force_on, denon_vol_cache, receiver_http_host, render_once, root, skip_cache) -> None:
+    """Telnet hub + AppCommand — a moving source updates the disc."""
+    if _volume_quick_busy[0]:
+        return
+    host = str(receiver_http_host.get("host") or "").strip()
+    if not host:
+        try:
+            row = read_saved_av_receiver()
+            host = str((row or {}).get("address") or "").strip()
+        except Exception:
+            host = ""
+    if not host:
+        return
+    _volume_quick_busy[0] = True
+
+    def work() -> None:
+        vol = ""
+        src = ""
+        try:
+            from pigeon.receiver_denon import (
+                coalesce_receiver_volume_read,
+                observe_receiver_volume,
+            )
+
+            tn_line, ac_line = observe_receiver_volume(
+                host,
+                timeout=1.0,
+                telnet_blocking=True,
+                allow_appcommand=True,
+            )
+            vol, src = coalesce_receiver_volume_read(
+                telnet_line=tn_line,
+                http_line=ac_line,
+                last_http=str(denon_vol_cache.get("last_appcommand") or ""),
+                last_telnet=str(denon_vol_cache.get("last_telnet") or ""),
+                held=str(
+                    denon_vol_cache.get("effective")
+                    or denon_vol_cache.get("np_hold")
+                    or ""
+                ),
+                last_http_mono=float(
+                    denon_vol_cache.get("last_appcommand_mono") or 0.0
+                ),
+                last_telnet_mono=float(
+                    denon_vol_cache.get("last_telnet_mono") or 0.0
+                ),
+            )
+            _note_volume_source_lines(telnet_line=tn_line, http_line=ac_line)
+        except Exception:
+            vol, src = "", ""
+
+        def apply() -> None:
+            _volume_quick_busy[0] = False
+            if not vol:
+                return
+            changed = _commit_receiver_volume(vol)
+            if not changed and not _volume_lines.fading():
+                return
+            if _idle_audio_meter_active():
+                return
+            skip_cache[0] = None
+            try:
+                if _view_one_uses_now_playing_screen() and not (
+                    _clock_saver_for_compose(time.monotonic())
+                    or clock_saver_force_on[0]
+                ):
+                    _sync_now_playing_screen_state()
+            except Exception:
+                pass
+            try:
+                render_once()
+            except Exception:
+                pass
+
+        try:
+            root.after(0, apply)
+        except Exception:
+            _volume_quick_busy[0] = False
+
+    threading.Thread(target=work, daemon=True).start()

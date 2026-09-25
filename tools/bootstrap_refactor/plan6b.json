@@ -1,0 +1,5 @@
+{
+ "stage_render": ["_backdrop_active_for_view"],
+ "saver_state": ["_app_logo_clock_saver_style_now", "_clock_saver_backdrop_brightness"],
+ "pairing": ["_finish_remote_then_start_airplay"]
+}

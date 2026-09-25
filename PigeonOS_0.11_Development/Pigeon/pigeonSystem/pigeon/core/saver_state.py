@@ -543,3 +543,37 @@ def _clock_saver_active(now: float, *, CLOCK_SAVER_METADATA_IDLE_AFTER_S, DevPha
     ui_idle = (now - float(last_pigeon_user_activity_mono[0])) >= _clock_saver_idle_need()
     dev_idle = (now - float(last_clock_saver_significant_device_mono[0])) >= _clock_saver_idle_need()
     return ui_idle and dev_idle
+
+
+def _atv_idle_monochrome_active(*, THEATER_IDLE_DIM_AFTER_S, apple_tv_playback_clock, current_apple_tv, last_atv_interaction_mono, last_pigeon_user_activity_mono) -> bool:
+    """True when theater idle-dim should be fully on (both ATV and Pigeon quiet long enough)."""
+    if not current_apple_tv.get("identifier"):
+        return False
+    # Live TV and some streams never advance ``position``; metadata stays stable for minutes.
+    # Without this guard, we never bump ``last_atv_interaction_mono`` and the red idle overlay
+    # kicks in after THEATER_IDLE_DIM_AFTER_S even though pyatv still reports Playing.
+    if bool(apple_tv_playback_clock.get("playing")):
+        return False
+    now = time.monotonic()
+    pigeon_quiet = (now - last_pigeon_user_activity_mono[0]) >= THEATER_IDLE_DIM_AFTER_S
+    if not pigeon_quiet:
+        return False
+    if last_atv_interaction_mono[0] <= 0.0:
+        return True
+    return (now - last_atv_interaction_mono[0]) >= THEATER_IDLE_DIM_AFTER_S
+
+
+def _app_logo_clock_saver_style_now(*, _clock_saver_for_compose, backdrop_app_logo_letterbox_fit) -> bool:
+    """Dim, row-2–top app logo layout when there is no TMDb still (letterbox master) in saver contexts."""
+    if not backdrop_app_logo_letterbox_fit[0]:
+        return False
+    return _clock_saver_for_compose(time.monotonic())
+
+
+def _clock_saver_backdrop_brightness(now: float, *, CLOCK_SAVER_BACKDROP_DIM, _backdrop_active_for_view, _clock_saver_for_compose, backdrop_master_bgr) -> float:
+    """1 = full brightness; idle clock-saver on backdrop uses ``CLOCK_SAVER_BACKDROP_DIM``."""
+    if not _backdrop_active_for_view() or backdrop_master_bgr[0] is None:
+        return 1.0
+    if not _clock_saver_for_compose(now):
+        return 1.0
+    return float(CLOCK_SAVER_BACKDROP_DIM)

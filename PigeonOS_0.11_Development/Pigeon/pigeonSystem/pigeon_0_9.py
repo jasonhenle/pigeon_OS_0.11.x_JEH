@@ -2,7 +2,6 @@ import argparse
 import json
 import os
 import queue
-import re
 import sys
 import threading
 import time
@@ -62,9 +61,7 @@ if not os.path.isdir(os.path.join(_PROJECT_DIR, "pigeonAssets")):
         _PROJECT_DIR = _parent
 
 from pigeon.app_state import (
-    LOCATION_PRESET_ROOM_NAMES,
     add_empty_location_v2,
-    append_device_to_location_slot,
     clear_all_persisted_devices_and_targets,
     clear_last_apple_tv,
     clear_last_receiver,
@@ -102,9 +99,9 @@ from pigeon.media_folders import (
     purge_directory_contents,
 )
 from pigeon.compositing import cv_resize_interp
-from pigeon.stage_background import bgr_to_tk_hex, get_stage_bgr, set_stage_bgr
-from pigeon.tmdb_tt_contrast import GRADIENT_BGR_DARK, pick_gradient_bgr
-from pigeon.runtime_paths import PIGEON_STATE_DIR_TILDE, pigeon_state_dir
+from pigeon.stage_background import bgr_to_tk_hex, get_stage_bgr
+from pigeon.tmdb_tt_contrast import GRADIENT_BGR_DARK
+from pigeon.runtime_paths import pigeon_state_dir
 from pigeon.version import version_string
 from pigeon.core.binding import bind_deps as _bind_deps
 from pigeon.core import settings_ui as _core_settings_ui
@@ -115,6 +112,7 @@ from pigeon.core import view_four as _core_view_four
 from pigeon.core import tmdb_flow as _core_tmdb_flow
 from pigeon.core import input_keys as _core_input_keys
 from pigeon.core import device_control as _core_device_control
+from pigeon.core import pairing as _core_pairing
 from pigeon.core import startup as _core_startup
 from pigeon.core import view_one as _core_view_one
 
@@ -951,7 +949,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(prog=f"Pigeon {version_string()}", add_help=True)
     parser.parse_args()
 
-    cap: cv2.VideoCapture | None = None
+    cap: list[cv2.VideoCapture | None] = [None]
 
     root = tk.Tk()
     _app_startup_mono = time.monotonic()
@@ -1099,54 +1097,52 @@ def main() -> int:
     post_splash_mono: list[float | None] = [None]
     _post_splash_startup_hook: list[object] = [None]
 
-    _clock_saver_volume = (
-        ClockSaverVolumeHold() if ClockSaverVolumeHold is not None else None
-    )
-    if _clock_saver_volume is None:
-        class _NullClockSaverVolumeHold:
-            hold = ""
-            pre_mute = ""
+    class _NullClockSaverVolumeHold:
+        hold = ""
+        pre_mute = ""
 
-            def remember(self, raw, *, source="poll", hold_s=None, now=None):
-                return str(raw or "")
+        def remember(self, raw, *, source="poll", hold_s=None, now=None):
+            return str(raw or "")
 
-            def pick(self, candidates, *, now=None, receiver_off=False):
-                if receiver_off:
-                    self.hold = ""
-                    return ""
-                for raw in candidates:
-                    s = str(raw or "").strip()
-                    if s:
-                        return s
-                return ""
-
-            def is_stale_poll(self, raw, *, now=None):
-                return False
-
-            def in_nudge_grace(self, now=None):
-                return False
-
-            def display_line(self):
-                return str(self.hold or "").strip()
-
-            def clear(self):
+        def pick(self, candidates, *, now=None, receiver_off=False):
+            if receiver_off:
                 self.hold = ""
+                return ""
+            for raw in candidates:
+                s = str(raw or "").strip()
+                if s:
+                    return s
+            return ""
 
-        _clock_saver_volume = _NullClockSaverVolumeHold()
+        def is_stale_poll(self, raw, *, now=None):
+            return False
 
-    _volume_lines = VolumeLineReveal() if VolumeLineReveal is not None else None
-    if _volume_lines is None:
-        class _NullVolumeLineReveal:
-            def note(self, raw, *, now=None):
-                return None
+        def in_nudge_grace(self, now=None):
+            return False
 
-            def opacity(self, now=None):
-                return 0.0
+        def display_line(self):
+            return str(self.hold or "").strip()
 
-            def fading(self, now=None):
-                return False
+        def clear(self):
+            self.hold = ""
 
-        _volume_lines = _NullVolumeLineReveal()
+    _clock_saver_volume = (
+        ClockSaverVolumeHold() if ClockSaverVolumeHold is not None else _NullClockSaverVolumeHold()
+    )
+
+    class _NullVolumeLineReveal:
+        def note(self, raw, *, now=None):
+            return None
+
+        def opacity(self, now=None):
+            return 0.0
+
+        def fading(self, now=None):
+            return False
+
+    _volume_lines = (
+        VolumeLineReveal() if VolumeLineReveal is not None else _NullVolumeLineReveal()
+    )
 
     def _note_zone3_volume_takeover() -> None:
         """Hold the NP volume widget in zone 3 for 7s after an adjustment."""
@@ -1479,8 +1475,6 @@ def main() -> int:
                 time.sleep(0.25)
 
         try:
-            import threading
-
             threading.Thread(
                 target=_prewarm_splash_clock_worker,
                 name="pigeon-splash-clock-prewarm",
@@ -1708,8 +1702,6 @@ def main() -> int:
         # Kick off the prebake thread immediately so frames are warm before ``splash_tick``
         # starts pulling from the cache post-``after_idle``.
         try:
-            import threading
-
             _worker = _splash_prebake_worker_video if splash_video_path is not None else _splash_prebake_worker_pngs
             _splash_prebake_thread = threading.Thread(
                 target=_worker, name="pigeon-splash-prebake", daemon=True
@@ -1950,9 +1942,8 @@ def main() -> int:
     paused_interval_ms = max(67, PAUSED_COMPOSITE_MS)
 
     def bootstrap() -> None:
-        nonlocal cap
 
-        cap = None
+        cap[0] = None
 
         if not _PIGEON_EXT:
             _w0 = startup_ph[0]
@@ -2800,33 +2791,13 @@ def main() -> int:
             update_check_state=update_check_state,
         )
 
-        def _check_for_updates(*, force: bool = False) -> None:
-            if update_check_state.get("checking"):
-                return
-            now = time.monotonic()
-            last = float(update_check_state.get("last_check_mono") or 0.0)
-            if not force and (now - last) < _UPDATE_CHECK_INTERVAL_S:
-                return
-            update_check_state["checking"] = True
-
-            def worker() -> None:
-                try:
-                    from pigeon.update_check import check_for_update
-
-                    result = check_for_update()
-                except Exception as e:
-                    from pigeon.update_check import UpdateCheckResult
-
-                    result = UpdateCheckResult(
-                        local_version=version_string(),
-                        remote_version=None,
-                        update_available=False,
-                        error=str(e),
-                    )
-
-                root.after(0, lambda r=result: _finish_update_check(r))
-
-            threading.Thread(target=worker, daemon=True).start()
+        _check_for_updates = _bind_deps(
+            _core_settings_ui._check_for_updates,
+            _UPDATE_CHECK_INTERVAL_S=_UPDATE_CHECK_INTERVAL_S,
+            _finish_update_check=_finish_update_check,
+            root=root,
+            update_check_state=update_check_state,
+        )
 
         def _schedule_periodic_update_check() -> None:
             _check_for_updates(force=False)
@@ -2927,7 +2898,7 @@ def main() -> int:
             display_dims=display_dims,
         )
 
-        frame_interval_ms = max(1, int(round(1000.0 / fps_sched)))
+        frame_interval_ms = [max(1, int(round(1000.0 / fps_sched)))]
 
         playing = False
         display_view_holder: list[DisplayView] = [DisplayView.ONE]
@@ -2991,7 +2962,7 @@ def main() -> int:
         brightness_duration_up_s = 1.0
         brightness_duration_down_s = 1.0
 
-        last_atv_interaction_mono = 0.0
+        last_atv_interaction_mono = [0.0]
         last_device_interaction_mono = 0.0
         last_timecode_motion_mono = [0.0]
         # ``last_metadata_activity_mono`` is initialized with pigeon user-activity state above.
@@ -3011,22 +2982,14 @@ def main() -> int:
         _atv_ix_extrap_playing = False
         _atv_ix_prev_idle = True
 
-        def _atv_idle_monochrome_active() -> bool:
-            """True when theater idle-dim should be fully on (both ATV and Pigeon quiet long enough)."""
-            if not current_apple_tv.get("identifier"):
-                return False
-            # Live TV and some streams never advance ``position``; metadata stays stable for minutes.
-            # Without this guard, we never bump ``last_atv_interaction_mono`` and the red idle overlay
-            # kicks in after THEATER_IDLE_DIM_AFTER_S even though pyatv still reports Playing.
-            if bool(apple_tv_playback_clock.get("playing")):
-                return False
-            now = time.monotonic()
-            pigeon_quiet = (now - last_pigeon_user_activity_mono[0]) >= THEATER_IDLE_DIM_AFTER_S
-            if not pigeon_quiet:
-                return False
-            if last_atv_interaction_mono <= 0.0:
-                return True
-            return (now - last_atv_interaction_mono) >= THEATER_IDLE_DIM_AFTER_S
+        _atv_idle_monochrome_active = _bind_deps(
+            _core_saver_state._atv_idle_monochrome_active,
+            THEATER_IDLE_DIM_AFTER_S=THEATER_IDLE_DIM_AFTER_S,
+            apple_tv_playback_clock=apple_tv_playback_clock,
+            current_apple_tv=current_apple_tv,
+            last_atv_interaction_mono=last_atv_interaction_mono,
+            last_pigeon_user_activity_mono=last_pigeon_user_activity_mono,
+        )
 
         _vol_norm_for_clock_saver = _core_saver_state._vol_norm_for_clock_saver
 
@@ -3254,10 +3217,6 @@ def main() -> int:
             post_splash_mono=post_splash_mono,
             startup_ph=startup_ph,
         )
-
-        def _backdrop_active_for_view() -> bool:
-            """True when backdrop scene should be used by the current effective view."""
-            return bool(use_backdrop_scene and _effective_display_view() != DisplayView.SIX)
 
         _stage_grid_overlay_mode = _bind_deps(
             _core_stage_render._stage_grid_overlay_mode,
@@ -3557,20 +3516,6 @@ def main() -> int:
                 pass
             return "break"
 
-        def _app_logo_clock_saver_style_now() -> bool:
-            """Dim, row-2–top app logo layout when there is no TMDb still (letterbox master) in saver contexts."""
-            if not backdrop_app_logo_letterbox_fit:
-                return False
-            return _clock_saver_for_compose(time.monotonic())
-
-        def _clock_saver_backdrop_brightness(now: float) -> float:
-            """1 = full brightness; idle clock-saver on backdrop uses ``CLOCK_SAVER_BACKDROP_DIM``."""
-            if not _backdrop_active_for_view() or backdrop_master_bgr is None:
-                return 1.0
-            if not _clock_saver_for_compose(now):
-                return 1.0
-            return float(CLOCK_SAVER_BACKDROP_DIM)
-
         _clock_saver_dim_pre_digit_canvas = _core_saver_state._clock_saver_dim_pre_digit_canvas
 
         _clock_saver_dim_overlay_bgra = _core_saver_state._clock_saver_dim_overlay_bgra
@@ -3664,16 +3609,39 @@ def main() -> int:
 
         # Manual [2] force: True = show saver until toggled off (ignores idle timers).
         clock_saver_force_on: list[bool] = [False]
-        black_photo: ImageTk.PhotoImage | None = None
+        black_photo: list[ImageTk.PhotoImage | None] = [None]
         label_live_photo: list[ImageTk.PhotoImage | None] = [None]
         _render_after_id: list[str | None] = [None]
-        use_backdrop_scene = False
-        backdrop_master_bgr: np.ndarray | None = None
+        use_backdrop_scene = [False]
+
+        _backdrop_active_for_view = _bind_deps(
+            _core_stage_render._backdrop_active_for_view,
+            DisplayView=DisplayView,
+            _effective_display_view=_effective_display_view,
+            use_backdrop_scene=use_backdrop_scene,
+        )
+
+        backdrop_master_bgr: list[np.ndarray | None] = [None]
+
+        _clock_saver_backdrop_brightness = _bind_deps(
+            _core_saver_state._clock_saver_backdrop_brightness,
+            CLOCK_SAVER_BACKDROP_DIM=CLOCK_SAVER_BACKDROP_DIM,
+            _backdrop_active_for_view=_backdrop_active_for_view,
+            _clock_saver_for_compose=_clock_saver_for_compose,
+            backdrop_master_bgr=backdrop_master_bgr,
+        )
+
         # Last TMDb backdrop (copy); survives display off so developer-grid F10 can return to backdrop.
         saved_backdrop_master_bgr: np.ndarray | None = None
         # True when the saved/current master came from the streaming app logo (not TMDb stills).
         saved_backdrop_app_logo_letterbox_fit: bool = False
-        backdrop_app_logo_letterbox_fit: bool = False
+        backdrop_app_logo_letterbox_fit: list[bool] = [False]
+
+        _app_logo_clock_saver_style_now = _bind_deps(
+            _core_saver_state._app_logo_clock_saver_style_now,
+            _clock_saver_for_compose=_clock_saver_for_compose,
+            backdrop_app_logo_letterbox_fit=backdrop_app_logo_letterbox_fit,
+        )
 
         if _PIGEON_EXT and prepare_default_poster_at_startup is not None:
             try:
@@ -4324,21 +4292,20 @@ def main() -> int:
             logo_bd = _backdrop_master_from_streaming_app_logo()
             if logo_bd is None:
                 return False
-            nonlocal cap, playing, use_backdrop_scene, backdrop_master_bgr
-            nonlocal saved_backdrop_master_bgr, backdrop_app_logo_letterbox_fit, saved_backdrop_app_logo_letterbox_fit
+            nonlocal playing
+            nonlocal saved_backdrop_master_bgr, saved_backdrop_app_logo_letterbox_fit
             nonlocal last_frame, scaled_display, scaled_version
-            nonlocal tmdb_logo_patch_bgra
             nonlocal tmdb_logo_app_fallback_active
             nonlocal brightness_current, brightness_from, brightness_target, brightness_t0
 
             fn_sb = str(streaming_badge_state.get("filename") or "").lower()
-            if use_backdrop_scene and backdrop_master_bgr is not None:
-                if backdrop_app_logo_letterbox_fit and "netflix" in fn_sb:
+            if use_backdrop_scene[0] and backdrop_master_bgr[0] is not None:
+                if backdrop_app_logo_letterbox_fit[0] and "netflix" in fn_sb:
                     return False
-                backdrop_master_bgr = logo_bd
+                backdrop_master_bgr[0] = logo_bd
                 saved_backdrop_master_bgr = np.asarray(logo_bd, dtype=np.uint8).copy()
                 saved_backdrop_app_logo_letterbox_fit = True
-                backdrop_app_logo_letterbox_fit = True
+                backdrop_app_logo_letterbox_fit[0] = True
                 scaled_display = None
                 scaled_version += 1
                 skip_cache[0] = None
@@ -4362,18 +4329,18 @@ def main() -> int:
             if tmdb_logo_widget_view_six is not None:
                 tmdb_logo_widget_view_six.clear_cache()
             _warm_tmdb_logo_patch()
-            tmdb_logo_patch_bgra = None
-            if cap is not None:
+            tmdb_logo_patch_bgra[0] = None
+            if cap[0] is not None:
                 try:
-                    cap.release()
+                    cap[0].release()
                 except Exception:
                     pass
-                cap = None
-            backdrop_master_bgr = logo_bd
+                cap[0] = None
+            backdrop_master_bgr[0] = logo_bd
             saved_backdrop_master_bgr = np.asarray(logo_bd, dtype=np.uint8).copy()
             saved_backdrop_app_logo_letterbox_fit = True
-            backdrop_app_logo_letterbox_fit = True
-            use_backdrop_scene = True
+            backdrop_app_logo_letterbox_fit[0] = True
+            use_backdrop_scene[0] = True
             scene_enabled[0] = True
             playing = False
             last_frame = None
@@ -4394,8 +4361,8 @@ def main() -> int:
         _startup_splash_complete: list[bool] = [False]
 
         clock_patch_bgra: np.ndarray | None = None
-        tmdb_logo_patch_bgra: np.ndarray | None = None
-        status_bar_blits: list = []
+        tmdb_logo_patch_bgra: list[np.ndarray | None] = [None]
+        status_bar_blits: list[list] = [[]]
         playback_overlay_blits: list = []
         info_cluster_blits: list[list] = [[]]
         _info_cluster_blits_sig: list[object | None] = [None]
@@ -4411,17 +4378,13 @@ def main() -> int:
             video_area=video_area,
         )
 
-        def _refresh_stage_from_poster() -> None:
-            nonlocal black_photo
-            if not _PIGEON_EXT:
-                set_stage_bgr(0, 0, 0)
-            else:
-                from pigeon.widgets.poster_art import sync_stage_background_from_active_poster
-
-                sync_stage_background_from_active_poster()
-            _apply_stage_chrome_colors()
-            black_photo = None
-            skip_cache[0] = None
+        _refresh_stage_from_poster = _bind_deps(
+            _core_stage_render._refresh_stage_from_poster,
+            _PIGEON_EXT=_PIGEON_EXT,
+            _apply_stage_chrome_colors=_apply_stage_chrome_colors,
+            black_photo=black_photo,
+            skip_cache=skip_cache,
+        )
 
         _refresh_stage_from_poster()
 
@@ -4453,12 +4416,11 @@ def main() -> int:
             alpha_blend_bgra_over_bgr=alpha_blend_bgra_over_bgr,
         )
 
-        def _warm_status_bar_blits() -> None:
-            nonlocal status_bar_blits
-            if status_bar_widget is None:
-                status_bar_blits = []
-                return
-            status_bar_blits = list(status_bar_widget.design_blits())
+        _warm_status_bar_blits = _bind_deps(
+            _core_now_playing._warm_status_bar_blits,
+            status_bar_blits=status_bar_blits,
+            status_bar_widget=status_bar_widget,
+        )
 
         _warm_view_one_under_splash = _bind_deps(
             _core_startup._warm_view_one_under_splash,
@@ -4710,34 +4672,23 @@ def main() -> int:
             streaming_badge_state=streaming_badge_state,
         )
 
-        def _refresh_tmdb_tt_gradient_tint() -> None:
-            """Evaluate TT brightness and pick the bottom-gradient tint (black vs white).
-
-            Runs every time ``_warm_tmdb_logo_patch`` refreshes the cached TT patch. Falls
-            back to the legacy dark gradient when no TT is available.
-            """
-            prev = tmdb_tt_gradient_bgr_holder[0]
-            chosen, lum = pick_gradient_bgr(tmdb_logo_patch_bgra)
-            tmdb_tt_gradient_bgr_holder[0] = chosen
-            if chosen != prev:
-                label = "white" if chosen == (255, 255, 255) else "black"
-                title = active_tmdb_display_title[0] or active_tmdb_title_key[0] or "(no-title)"
-                lum_s = f"{lum:.3f}" if lum is not None else "n/a"
-                print(
-                    f"pigeon: TT contrast → {label} gradient (luminance={lum_s}, title={title!r})",
-                    file=sys.stderr,
-                )
+        _refresh_tmdb_tt_gradient_tint = _bind_deps(
+            _core_tmdb_flow._refresh_tmdb_tt_gradient_tint,
+            active_tmdb_display_title=active_tmdb_display_title,
+            active_tmdb_title_key=active_tmdb_title_key,
+            tmdb_logo_patch_bgra=tmdb_logo_patch_bgra,
+            tmdb_tt_gradient_bgr_holder=tmdb_tt_gradient_bgr_holder,
+        )
 
         def _warm_tmdb_logo_patch() -> None:
-            nonlocal tmdb_logo_patch_bgra
             logo_w = _active_tmdb_logo_widget()
             if logo_w is None:
-                tmdb_logo_patch_bgra = None
+                tmdb_logo_patch_bgra[0] = None
                 _refresh_tmdb_tt_gradient_tint()
                 return
             patch_wh = None
             if active_tmdb_title_key[0]:
-                tmdb_logo_patch_bgra = logo_w.bgra_patch_for_title(
+                tmdb_logo_patch_bgra[0] = logo_w.bgra_patch_for_title(
                     active_tmdb_title_key[0],
                     display_title=active_tmdb_display_title[0],
                     patch_wh=patch_wh,
@@ -4747,13 +4698,13 @@ def main() -> int:
             if tmdb_logo_app_fallback_active:
                 src = _resolve_streaming_app_logo_bgra()
                 if src is not None:
-                    tmdb_logo_patch_bgra = logo_w.bgra_patch_from_source_bgra(
+                    tmdb_logo_patch_bgra[0] = logo_w.bgra_patch_from_source_bgra(
                         src,
                         patch_wh=patch_wh,
                     ).copy()
                     _refresh_tmdb_tt_gradient_tint()
                     return
-            tmdb_logo_patch_bgra = None
+            tmdb_logo_patch_bgra[0] = None
             _refresh_tmdb_tt_gradient_tint()
 
         # ---- View 1 fallback-variant detection (viewOne.01 .. .09) --------
@@ -4780,7 +4731,7 @@ def main() -> int:
         def _vv_has_tmdb_bd() -> bool:
             # A real TMDb backdrop — NOT the app-logo letterbox fallback that
             # reuses ``backdrop_master_bgr`` as a black-canvas app-logo strip.
-            if backdrop_master_bgr is not None and not backdrop_app_logo_letterbox_fit:
+            if backdrop_master_bgr[0] is not None and not backdrop_app_logo_letterbox_fit[0]:
                 return True
             if (
                 saved_backdrop_master_bgr is not None
@@ -4908,8 +4859,8 @@ def main() -> int:
                 art = _paused_screen_artwork_bgr()
                 if art is not None:
                     return art
-            if backdrop_master_bgr is not None and not backdrop_app_logo_letterbox_fit:
-                return backdrop_master_bgr
+            if backdrop_master_bgr[0] is not None and not backdrop_app_logo_letterbox_fit[0]:
+                return backdrop_master_bgr[0]
             if (
                 saved_backdrop_master_bgr is not None
                 and not saved_backdrop_app_logo_letterbox_fit
@@ -5241,8 +5192,8 @@ def main() -> int:
                                 )
                                 sub = base[y : y + rh, x : x + rw]
                                 sub[:] = alpha_blend_bgra_over_bgr(sub, patch)
-                if status_bar_blits and alpha_blend_bgra_over_bgr is not None:
-                    for sb in status_bar_blits:
+                if status_bar_blits[0] and alpha_blend_bgra_over_bgr is not None:
+                    for sb in status_bar_blits[0]:
                         x0, y0, ww, wh = int(sb.x), int(sb.y), int(sb.w), int(sb.h)
                         x, y, rw, rh = _design_rect_to_target(x0, y0, ww, wh, cap_w, cap_h)
                         _bh, _bw = sb.bgra.shape[:2]
@@ -5907,93 +5858,16 @@ def main() -> int:
             receiver_overlay_state=receiver_overlay_state,
         )
 
-        def _collect_view_four_playback_lines() -> list[tuple[str, bool]]:
-            rows: list[tuple[str, bool]] = []
-
-            def _ln(s: str, bold: bool = False) -> None:
-                if _view_four_text_is_placeholder(s):
-                    return
-                rows.append((s, bold))
-
-            md_raw = _view_four_display_metadata()
-            md = md_raw if isinstance(md_raw, dict) else None
-            inc = str(receiver_overlay_state.get("incoming") or "").strip()
-            cfg = str(receiver_overlay_state.get("config") or "").strip()
-            vol_line = str(receiver_overlay_state.get("volume") or "").strip()
-            blob = f"{inc} {cfg}".lower()
-
-            def _channels_guess(s: str) -> str:
-                if "7.1" in s or "7_1" in s:
-                    return "7.1 (hint)"
-                if "5.1" in s or "5_1" in s:
-                    return "5.1 (hint)"
-                if "2.0" in s or "stereo" in s or "2ch" in s:
-                    return "2.0 / stereo (hint)"
-                if "atmos" in s:
-                    return "Atmos (hint)"
-                return "—"
-
-            fmt_parts: list[str] = []
-            if md:
-                mt = str(md.get("media_type") or "").strip()
-                if mt:
-                    fmt_parts.append(mt)
-            if inc or cfg:
-                fmt_parts.append(f"receiver: {(inc + ' ' + cfg).strip()[:120]}")
-            if fmt_parts:
-                _ln(f"Audio playback format: {' | '.join(fmt_parts)}", False)
-
-            if md and md.get("audio_playback_bit_rate") is not None:
-                _ln(f"Audio playback bit rate: {str(md.get('audio_playback_bit_rate')).strip()}", False)
-            if md and md.get("audio_playback_bit_depth") is not None:
-                _ln(f"Audio playback bit depth: {str(md.get('audio_playback_bit_depth')).strip()}", False)
-            ch = _channels_guess(blob)
-            if _view_four_has_value(ch):
-                _ln(f"Audio playback available channels: {ch}", False)
-                _ln(f"Audio playback active channels: {ch}", False)
-
-            if vol_line:
-                scale = "dB scale" if ("db" in vol_line.lower() or re.search(r"-?\d+\.\d+\s*d", vol_line.lower())) else (
-                    "0–100" if re.search(r"\b\d{1,3}\b", vol_line) and "%" not in vol_line and "db" not in vol_line.lower() else "receiver raw"
-                )
-                _ln(f"Audio playback volume: {vol_line}", False)
-                _ln(f"Audio playback volume scale: {scale}", False)
-            elif md and md.get("volume_percent") is not None:
-                try:
-                    vp = int(max(0, min(100, round(float(md["volume_percent"])))))
-                    _ln(f"Audio playback volume: {vp}", False)
-                    _ln("Audio playback volume scale: Apple TV 0–100", False)
-                except (TypeError, ValueError):
-                    pass
-
-            dw, dh = int(display_dims[0]), int(display_dims[1])
-            if dw > 0 and dh > 0:
-                _ln(f"Video playback resolution (window): {dw}×{dh}", False)
-
-            cap_fps = None
-            try:
-                if cap is not None and cap.isOpened():
-                    cf = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
-                    if cf > 1.0:
-                        cap_fps = cf
-            except Exception:
-                cap_fps = None
-            if cap_fps is not None:
-                _ln(f"Video capture nominal FPS: {cap_fps:.3g}", False)
-
-            ui_hz = 1000.0 / float(frame_interval_ms) if frame_interval_ms else 0.0
-            if ui_hz > 0:
-                _ln(f"UI composite cadence: ~{ui_hz:.2f} Hz (frame_interval_ms={frame_interval_ms})", False)
-
-            if md:
-                ds = str(md.get("device_state") or "").strip()
-                pos = md.get("position")
-                tot = md.get("total_time")
-                if ds:
-                    _ln(f"Device state: {ds}", False)
-                if _view_four_has_value(pos) or _view_four_has_value(tot):
-                    _ln(f"Position / duration: {pos!r} / {tot!r}", False)
-            return rows
+        _collect_view_four_playback_lines = _bind_deps(
+            _core_view_four._collect_view_four_playback_lines,
+            _view_four_display_metadata=_view_four_display_metadata,
+            _view_four_has_value=_view_four_has_value,
+            _view_four_text_is_placeholder=_view_four_text_is_placeholder,
+            cap=cap,
+            display_dims=display_dims,
+            frame_interval_ms=frame_interval_ms,
+            receiver_overlay_state=receiver_overlay_state,
+        )
 
         def _blend_view_four_debug(bgr: np.ndarray) -> np.ndarray:
             if _effective_display_view() != DisplayView.FOUR:
@@ -6101,213 +5975,48 @@ def main() -> int:
                         y += line_step
             return out
 
-        def _compose_shown_frame(frame_bgr: np.ndarray | None, brightness: float) -> np.ndarray:
-            if (
-                _PIGEON_EXT
-                and view_circles_widget is not None
-                and _effective_display_view() == DisplayView.ONE
-            ):
-                return compose_display_fast_no_grid(
-                    frame_bgr,
-                    brightness,
-                    frame_is_display_sized=bool(
-                        frame_bgr is not None
-                        and frame_bgr.size > 0
-                        and int(frame_bgr.shape[0]) == int(DESIGN_H)
-                        and int(frame_bgr.shape[1]) == int(DESIGN_W)
-                    ),
-                )
-
-            def _view_one_dark_accent_bg_bgr() -> tuple[int, int, int]:
-                """Darker variant of the current accent color for viewOne video a/c backgrounds.
-
-                Stays black until ``pigeonTMDB_BD`` is ready (so the accent is actually
-                sampled from a real backdrop, not the orange fallback).
-                """
-                if not _vv_has_tmdb_bd():
-                    return (0, 0, 0)
-                if status_bar_widget is None:
-                    return (0, 0, 0)
-                base = tuple(int(v) & 255 for v in status_bar_widget.accent_bgr)
-                # Keep the hue but darken enough to sit behind TT/poster overlays.
-                darken = 0.42
-                return (
-                    int(round(base[0] * darken)),
-                    int(round(base[1] * darken)),
-                    int(round(base[2] * darken)),
-                )
-
-            if _PIGEON_EXT and _effective_display_view() == DisplayView.FOUR:
-                return _black_screen_bgr()
-            if (
-                _PIGEON_EXT
-                and _effective_display_view() != DisplayView.ONE
-                and _view_one_is_pigeon_poster()
-                and not _vv_is_music()
-                and _vv_has_content_title()
-            ):
-                # viewOne.videoContent_c: black base + active TMDb poster only
-                # (no pigeonTMDB_TT / no pigeonTMDB_BD), with the same chrome stack
-                # as the other View One layouts. Poster occupies y=[0, top(row 7)].
-                sb, sg, sr = _view_one_dark_accent_bg_bgr()
-                black = np.empty((DESIGN_H, DESIGN_W, 3), dtype=np.uint8)
-                black[:] = (sb, sg, sr)
-                return compose_display_from_source(
-                    black,
-                    brightness,
-                    show_grid=_design_grid_overlay_active(),
-                    frame_is_design_sized=True,
-                )
-            if (
-                _PIGEON_EXT
-                and _effective_display_view() != DisplayView.ONE
-                and _view_one_variant_uses_simple_path()
-                and not _backdrop_active_for_view()
-            ):
-                sb, sg, sr = _view_one_dark_accent_bg_bgr()
-                black = np.empty((DESIGN_H, DESIGN_W, 3), dtype=np.uint8)
-                black[:] = (sb, sg, sr)
-                sub2_logo_rect = _view_one_video_content_a_tt_contain_rect_design()
-                # MediaType.Music override (viewOne.01): TMDb doesn't index music
-                # tracks, so no pigeonTMDB_TT is available. Substitute a two-line
-                # text patch (track title large; "Artist - Album" smaller beneath)
-                # inside the same rect pigeonTMDB_TT would occupy. Short-circuits
-                # the V# resolver dispatch below so Music content consistently
-                # renders text regardless of which fallback variant would otherwise
-                # apply. The single-small-line case in ``render_ui_music_text_patch_bgra``
-                # gives the title ~76% of the box height and the subtitle the rest.
-                if _vv_is_music() and render_ui_music_text_patch_bgra is not None:
-                    _m_title, _m_subtitle = _vv_music_text_lines()
-                    if _m_title or _m_subtitle:
-                        _music_bgra = render_ui_music_text_patch_bgra(
-                            _m_title,
-                            _m_subtitle,
-                            "",
-                            int(sub2_logo_rect[2]),
-                            int(sub2_logo_rect[3]),
-                        )
-                        if _music_bgra is not None:
-                            _paste_bgra_contain_on_design(
-                                black, _music_bgra, sub2_logo_rect
-                            )
-                            return compose_display_from_source(
-                                black,
-                                brightness,
-                                show_grid=_design_grid_overlay_active(),
-                                frame_is_design_sized=True,
-                            )
-                # Variant-aware TT-slot content. V01/V04 draw the real pigeonTMDB_TT via
-                # compose_display_from_source (post–v0.6.14 swap: V01 is the TT-only default,
-                # V04 is the BD-missing alternate); V06/.07/.08/.09 substitute a generated
-                # patch (title text / appLogo / app name / pigeonTempLogo).
-                _vv_simple = _current_view_one_variant()
-                _vv_use_default_tt = ViewOneVariant is None or _vv_simple in (
-                    ViewOneVariant.V01,
-                    ViewOneVariant.V04,
-                )
-                if not _vv_use_default_tt:
-                    _override_bgra = None
-                    if _vv_simple == ViewOneVariant.V06 and render_ui_text_patch_bgra is not None:
-                        _override_bgra = render_ui_text_patch_bgra(
-                            _playback_display_title(),
-                            int(sub2_logo_rect[2]),
-                            int(sub2_logo_rect[3]),
-                        )
-                    elif _vv_simple == ViewOneVariant.V07:
-                        _override_bgra = _resolve_streaming_app_logo_bgra()
-                    elif _vv_simple == ViewOneVariant.V08 and render_ui_text_patch_bgra is not None:
-                        _override_bgra = render_ui_text_patch_bgra(
-                            _current_app_display_name(),
-                            int(sub2_logo_rect[2]),
-                            int(sub2_logo_rect[3]),
-                        )
-                    elif _vv_simple == ViewOneVariant.V09 and load_pigeon_temp_logo_bgra is not None:
-                        # Keep startup/no-content logo treatment centered, matching other app-logo
-                        # presentations, while preserving the same max slot size.
-                        _rw = max(1, int(sub2_logo_rect[2]))
-                        _rh = max(1, int(sub2_logo_rect[3]))
-                        _rx = max(0, (int(DESIGN_W) - _rw) // 2)
-                        _ry = max(0, (int(DESIGN_H) - _rh) // 2)
-                        sub2_logo_rect = (_rx, _ry, _rw, _rh)
-                        _override_bgra = load_pigeon_temp_logo_bgra(
-                            Path(_PROJECT_DIR) / "pigeonAssets"
-                        )
-                        if _override_bgra is None:
-                            print(
-                                "pigeon: pigeonAssets/App logos/AppLogo_Pigeon.png not found — "
-                                "viewOne.noContent will render black only.",
-                                file=sys.stderr,
-                            )
-                        else:
-                            # viewOne.noContent: Pigeon logo at 30% opacity.
-                            _override_bgra = _override_bgra.copy()
-                            _override_bgra[..., 3] = (
-                                _override_bgra[..., 3].astype(np.float32) * 0.30
-                            ).clip(0, 255).astype(np.uint8)
-                    _v07_skip_tt_for_clock_saver = (
-                        _vv_simple == ViewOneVariant.V07
-                        and _clock_saver_for_compose(time.monotonic())
-                    )
-                    if not _v07_skip_tt_for_clock_saver:
-                        _paste_bgra_contain_on_design(
-                            black, _override_bgra, sub2_logo_rect
-                        )
-                    return compose_display_from_source(
-                        black,
-                        brightness,
-                        show_grid=_design_grid_overlay_active(),
-                        frame_is_design_sized=True,
-                    )
-                return compose_display_from_source(
-                    black,
-                    brightness,
-                    show_grid=_design_grid_overlay_active(),
-                    frame_is_design_sized=True,
-                    tmdb_logo_cover_design_xywh=sub2_logo_rect,
-                )
-            # View 2 backdrop + visualizer-only is handled in ``compose_display_fast_no_grid``.
-            # View 1 pigeonFull also uses that backdrop fast path.
-            if (
-                _backdrop_active_for_view()
-                and backdrop_master_bgr is not None
-                and _effective_display_view() != DisplayView.TWO
-                and not _view_one_variant_uses_full_path()
-            ):
-                from pigeon.image_ui_protocol import build_backdrop_design_layer_bgr
-
-                if not _PIGEON_EXT:
-                    # Legacy path: use backdrop-only display if extension isn't available.
-                    bd = build_backdrop_design_layer_bgr(
-                        backdrop_master_bgr,
-                        app_logo_letterbox_fit=backdrop_app_logo_letterbox_fit,
-                        app_logo_clock_saver_style=_app_logo_clock_saver_style_now(),
-                    )
-                    return compose_display_from_source(bd, brightness, show_grid=False, frame_is_design_sized=True)
-                bd = build_backdrop_design_layer_bgr(
-                    backdrop_master_bgr,
-                    app_logo_letterbox_fit=backdrop_app_logo_letterbox_fit,
-                    app_logo_clock_saver_style=_app_logo_clock_saver_style_now(),
-                )
-                return compose_display_from_source(
-                    bd,
-                    brightness,
-                    show_grid=_design_grid_overlay_active(),
-                    frame_is_design_sized=True,
-                )
-
-            if not _PIGEON_EXT:
-                if frame_bgr is None or frame_bgr.size == 0:
-                    return _black_screen_bgr()
-                lit = _apply_brightness(frame_bgr, brightness)
-                dw, dh = display_dims[0], display_dims[1]
-                cw, ch, cap_down = _composite_cap_dims(dw, dh)
-                small = SceneFit(target_w=cw, target_h=ch).scale_and_crop(lit)
-                if cap_down:
-                    return _present_frame_to_display(small, dw, dh)
-                return small
-            if _PIGEON_EXT and _design_grid_overlay_active():
-                return compose_display_from_source(frame_bgr, brightness, show_grid=True)
-            return compose_display_fast_no_grid(frame_bgr, brightness)
+        _compose_shown_frame = _bind_deps(
+            _core_stage_render._compose_shown_frame,
+            DESIGN_H=DESIGN_H,
+            DESIGN_W=DESIGN_W,
+            DisplayView=DisplayView,
+            SceneFit=SceneFit,
+            ViewOneVariant=ViewOneVariant,
+            _PIGEON_EXT=_PIGEON_EXT,
+            _PROJECT_DIR=_PROJECT_DIR,
+            _app_logo_clock_saver_style_now=_app_logo_clock_saver_style_now,
+            _apply_brightness=_apply_brightness,
+            _backdrop_active_for_view=_backdrop_active_for_view,
+            _black_screen_bgr=_black_screen_bgr,
+            _clock_saver_for_compose=_clock_saver_for_compose,
+            _composite_cap_dims=_composite_cap_dims,
+            _current_app_display_name=_current_app_display_name,
+            _current_view_one_variant=_current_view_one_variant,
+            _design_grid_overlay_active=_design_grid_overlay_active,
+            _effective_display_view=_effective_display_view,
+            _paste_bgra_contain_on_design=_paste_bgra_contain_on_design,
+            _playback_display_title=_playback_display_title,
+            _present_frame_to_display=_present_frame_to_display,
+            _resolve_streaming_app_logo_bgra=_resolve_streaming_app_logo_bgra,
+            _view_one_is_pigeon_poster=_view_one_is_pigeon_poster,
+            _view_one_variant_uses_full_path=_view_one_variant_uses_full_path,
+            _view_one_variant_uses_simple_path=_view_one_variant_uses_simple_path,
+            _view_one_video_content_a_tt_contain_rect_design=_view_one_video_content_a_tt_contain_rect_design,
+            _vv_has_content_title=_vv_has_content_title,
+            _vv_has_tmdb_bd=_vv_has_tmdb_bd,
+            _vv_is_music=_vv_is_music,
+            _vv_music_text_lines=_vv_music_text_lines,
+            backdrop_app_logo_letterbox_fit=backdrop_app_logo_letterbox_fit,
+            backdrop_master_bgr=backdrop_master_bgr,
+            compose_display_fast_no_grid=compose_display_fast_no_grid,
+            compose_display_from_source=compose_display_from_source,
+            display_dims=display_dims,
+            load_pigeon_temp_logo_bgra=load_pigeon_temp_logo_bgra,
+            render_ui_music_text_patch_bgra=render_ui_music_text_patch_bgra,
+            render_ui_text_patch_bgra=render_ui_text_patch_bgra,
+            status_bar_widget=status_bar_widget,
+            view_circles_widget=view_circles_widget,
+        )
 
         if _PIGEON_EXT:
             _warm_status_bar_blits()
@@ -6405,7 +6114,7 @@ def main() -> int:
         def toggle_play(_event=None) -> None:
             nonlocal playing, brightness_from, brightness_target, brightness_t0, brightness_duration_s
             _bump_pigeon_user_activity()
-            if not scene_enabled[0] or use_backdrop_scene or last_frame is None:
+            if not scene_enabled[0] or use_backdrop_scene[0] or last_frame is None:
                 return
             playing = not playing
             brightness_from = brightness_current
@@ -6476,11 +6185,11 @@ def main() -> int:
 
         def _open_landing_scene() -> bool:
             """Black landing page + centered logo; clears TMDb backdrop display flags."""
-            nonlocal last_frame, scaled_display, scaled_version, frame_interval_ms, use_backdrop_scene, backdrop_master_bgr
-            use_backdrop_scene = False
-            backdrop_master_bgr = None
+            nonlocal last_frame, scaled_display, scaled_version
+            use_backdrop_scene[0] = False
+            backdrop_master_bgr[0] = None
             last_frame = landing_scene_design_bgr
-            frame_interval_ms = max(1, int(round(1000.0 / _default_render_fps())))
+            frame_interval_ms[0] = max(1, int(round(1000.0 / _default_render_fps())))
             if not _PIGEON_EXT:
                 scaled_display = _disp_fit().scale_and_crop(last_frame)
             else:
@@ -6489,7 +6198,7 @@ def main() -> int:
             return True
 
         def toggle_scene(_event=None, *, require_overlay: bool = True) -> None:
-            nonlocal cap, last_frame, scaled_display, scaled_version, black_photo, playing, frame_interval_ms, use_backdrop_scene, backdrop_master_bgr
+            nonlocal last_frame, scaled_display, scaled_version, playing
             _bump_pigeon_user_activity()
             if require_overlay and not _design_grid_overlay_active():
                 return
@@ -6497,8 +6206,8 @@ def main() -> int:
             if scene_enabled[0]:
                 playing = False
                 scene_enabled[0] = False
-                use_backdrop_scene = False
-                backdrop_master_bgr = None
+                use_backdrop_scene[0] = False
+                backdrop_master_bgr[0] = None
             else:
                 if not _open_landing_scene():
                     return
@@ -6512,10 +6221,10 @@ def main() -> int:
                     out_bgr = _compose_shown_frame(None, 1.0)
                     _update_label_photo_from_bgr(label, out_bgr, label_live_photo)
                 else:
-                    if black_photo is None:
-                        black_photo = _bgr_to_tk_image(_black_screen_bgr())
-                    label.configure(image=black_photo)
-                    label.image = black_photo
+                    if black_photo[0] is None:
+                        black_photo[0] = _bgr_to_tk_image(_black_screen_bgr())
+                    label.configure(image=black_photo[0])
+                    label.image = black_photo[0]
             elif scaled_display is not None:
                 if _PIGEON_EXT:
                     shown = _compose_shown_frame(last_frame, brightness_current)
@@ -6596,14 +6305,14 @@ def main() -> int:
 
         def apply_saved_tmdb_backdrop_to_display() -> None:
             """Apply last TMDb backdrop + title logo (same as F10’s backdrop step)."""
-            nonlocal playing, backdrop_master_bgr, backdrop_app_logo_letterbox_fit, use_backdrop_scene, last_frame, scaled_display, scaled_version, brightness_current, brightness_from, brightness_target, brightness_t0
+            nonlocal playing, last_frame, scaled_display, scaled_version, brightness_current, brightness_from, brightness_target, brightness_t0
             if saved_backdrop_master_bgr is None:
                 return
             playing = False
-            backdrop_master_bgr = saved_backdrop_master_bgr.copy()
-            backdrop_app_logo_letterbox_fit = saved_backdrop_app_logo_letterbox_fit
+            backdrop_master_bgr[0] = saved_backdrop_master_bgr.copy()
+            backdrop_app_logo_letterbox_fit[0] = saved_backdrop_app_logo_letterbox_fit
             if _view_one_uses_now_playing_screen():
-                use_backdrop_scene = False
+                use_backdrop_scene[0] = False
                 scaled_version += 1
                 _warm_tmdb_logo_patch()
                 if view_circles_widget is not None:
@@ -6612,21 +6321,21 @@ def main() -> int:
                 skip_cache[0] = None
                 render_once()
                 return
-            use_backdrop_scene = True
+            use_backdrop_scene[0] = True
             scene_enabled[0] = True
             last_frame = None
             if status_bar_widget is not None and status_bar_widget.set_accent_from_backdrop_bgr(
-                backdrop_master_bgr
+                backdrop_master_bgr[0]
             ):
                 _warm_status_bar_blits()
             if not _PIGEON_EXT:
                 from pigeon.image_ui_protocol import backdrop_scene_bgr_for_display
 
                 scaled_display = backdrop_scene_bgr_for_display(
-                    backdrop_master_bgr,
+                    backdrop_master_bgr[0],
                     display_dims[0],
                     display_dims[1],
-                    app_logo_letterbox_fit=backdrop_app_logo_letterbox_fit,
+                    app_logo_letterbox_fit=backdrop_app_logo_letterbox_fit[0],
                     app_logo_clock_saver_style=_app_logo_clock_saver_style_now(),
                 )
             else:
@@ -6644,12 +6353,12 @@ def main() -> int:
             """
             Developer grid only: F10 cycles display on (landing) → off → backdrop (if saved) → landing.
             """
-            nonlocal cap, last_frame, scaled_display, scaled_version, playing, frame_interval_ms, use_backdrop_scene, backdrop_master_bgr, brightness_current, brightness_from, brightness_target, brightness_t0
+            nonlocal last_frame, scaled_display, scaled_version, playing, brightness_current, brightness_from, brightness_target, brightness_t0
 
             _bump_pigeon_user_activity()
-            landing_on = scene_enabled[0] and (not use_backdrop_scene) and last_frame is not None
+            landing_on = scene_enabled[0] and (not use_backdrop_scene[0]) and last_frame is not None
 
-            if use_backdrop_scene and backdrop_master_bgr is not None:
+            if use_backdrop_scene[0] and backdrop_master_bgr[0] is not None:
                 if not _open_landing_scene():
                     scene_enabled[0] = False
                     _save_persisted_scene_enabled(False)
@@ -6668,8 +6377,8 @@ def main() -> int:
             if landing_on:
                 playing = False
                 scene_enabled[0] = False
-                use_backdrop_scene = False
-                backdrop_master_bgr = None
+                use_backdrop_scene[0] = False
+                backdrop_master_bgr[0] = None
                 last_frame = None
                 scaled_display = None
                 _save_persisted_scene_enabled(False)
@@ -6746,12 +6455,11 @@ def main() -> int:
             for classic scene restore after a full idle. Resets ``tmdb_key`` so the
             next spawn is not suppressed as “same identity”.
             """
-            nonlocal tmdb_logo_patch_bgra
-            nonlocal tmdb_logo_app_fallback_active, backdrop_master_bgr
+            nonlocal tmdb_logo_app_fallback_active
             active_tmdb_title_key[0] = None
             active_tmdb_display_title[0] = None
             tmdb_logo_app_fallback_active = False
-            backdrop_master_bgr = None
+            backdrop_master_bgr[0] = None
             try:
                 from pigeon.paused_screen import set_pausesaver_backdrop
 
@@ -6771,7 +6479,7 @@ def main() -> int:
                 tmdb_logo_widget.clear_cache()
             if tmdb_logo_widget_view_six is not None:
                 tmdb_logo_widget_view_six.clear_cache()
-            tmdb_logo_patch_bgra = None
+            tmdb_logo_patch_bgra[0] = None
             _warm_tmdb_logo_patch()
             if _view_one_uses_now_playing_screen():
                 _clear_now_playing_view_caches()
@@ -6929,7 +6637,7 @@ def main() -> int:
                 match_tier: int = 0,
                 search_query: str = "",
             ) -> None:
-                nonlocal cap, last_frame, scaled_display, scaled_version, playing, use_backdrop_scene, backdrop_master_bgr, saved_backdrop_master_bgr, saved_backdrop_app_logo_letterbox_fit, backdrop_app_logo_letterbox_fit, brightness_current, brightness_from, brightness_target, brightness_t0, tmdb_logo_patch_bgra, tmdb_logo_app_fallback_active
+                nonlocal last_frame, scaled_display, scaled_version, playing, saved_backdrop_master_bgr, saved_backdrop_app_logo_letterbox_fit, brightness_current, brightness_from, brightness_target, brightness_t0, tmdb_logo_app_fallback_active
                 apple_tv_auto_state["tmdb_fetch_in_flight"] = False
                 sys.stderr.write(f"pigeon: tmdb → {msg_m}\n")
                 sys.stderr.flush()
@@ -7060,29 +6768,29 @@ def main() -> int:
                     bd_use = _backdrop_master_from_streaming_app_logo()
                     from_app_logo = bd_use is not None
                 if bd_use is not None:
-                    backdrop_master_bgr = bd_use
+                    backdrop_master_bgr[0] = bd_use
                     saved_backdrop_master_bgr = np.asarray(bd_use, dtype=np.uint8).copy()
                     saved_backdrop_app_logo_letterbox_fit = from_app_logo
-                    backdrop_app_logo_letterbox_fit = from_app_logo
+                    backdrop_app_logo_letterbox_fit[0] = from_app_logo
                     scaled_version += 1
                     if _view_one_uses_now_playing_screen():
                         # View 1 paints TMDB in the now-playing bar only. Keep scene off so
                         # render_once always takes the chrome compose path (skip-cache there
                         # omits TMDB bar state and would freeze the bar empty).
-                        use_backdrop_scene = False
+                        use_backdrop_scene[0] = False
                         if status_bar_widget is not None:
-                            bd_arr = np.asarray(backdrop_master_bgr, dtype=np.uint8)
+                            bd_arr = np.asarray(backdrop_master_bgr[0], dtype=np.uint8)
                             if status_bar_widget.set_accent_from_backdrop_bgr(bd_arr):
                                 _warm_status_bar_blits()
                                 skip_cache[0] = None
                     else:
-                        if cap is not None:
+                        if cap[0] is not None:
                             try:
-                                cap.release()
+                                cap[0].release()
                             except Exception:
                                 pass
-                            cap = None
-                        use_backdrop_scene = True
+                            cap[0] = None
+                        use_backdrop_scene[0] = True
                         scene_enabled[0] = True
                         playing = False
                         last_frame = None
@@ -7096,7 +6804,7 @@ def main() -> int:
                         brightness_t0 = time.monotonic()
                         if not _apply_netflix_backdrop_when_running():
                             if status_bar_widget is not None:
-                                bd_arr = np.asarray(backdrop_master_bgr, dtype=np.uint8)
+                                bd_arr = np.asarray(backdrop_master_bgr[0], dtype=np.uint8)
                                 if status_bar_widget.set_accent_from_backdrop_bgr(bd_arr):
                                     _warm_status_bar_blits()
                                     skip_cache[0] = None
@@ -7526,7 +7234,7 @@ def main() -> int:
         )
 
         def set_current_apple_tv(row: dict[str, str], *, persist: bool) -> None:
-            nonlocal last_atv_interaction_mono, _atv_ix_sig_ds, _atv_ix_sig_ck
+            nonlocal _atv_ix_sig_ds, _atv_ix_sig_ck
             nonlocal _atv_ix_pos, _atv_ix_pos_mono, _atv_ix_extrap_playing, _atv_ix_prev_idle
             current_apple_tv.clear()
             current_apple_tv.update(
@@ -7569,7 +7277,7 @@ def main() -> int:
             _clear_reported_position_stall_stamp()
             apple_tv_dashboard_track["last_poll_ok"] = None
             apple_tv_dashboard_track["consecutive_fail"] = 0
-            last_atv_interaction_mono = 0.0
+            last_atv_interaction_mono[0] = 0.0
             _atv_ix_sig_ds = ""
             _atv_ix_sig_ck = None
             _atv_ix_pos = None
@@ -7584,7 +7292,7 @@ def main() -> int:
 
         def _apply_persisted_location_to_runtime() -> None:
             """Reload holders and runtime targets from the persisted current location."""
-            nonlocal last_atv_interaction_mono, _atv_ix_sig_ds, _atv_ix_sig_ck
+            nonlocal _atv_ix_sig_ds, _atv_ix_sig_ck
             nonlocal _atv_ix_pos, _atv_ix_pos_mono, _atv_ix_extrap_playing, _atv_ix_prev_idle
             streaming_slot_holder[0] = read_saved_streaming_device()
             avr_slot_holder[0] = read_saved_av_receiver()
@@ -7635,7 +7343,7 @@ def main() -> int:
             _clear_reported_position_stall_stamp()
             apple_tv_dashboard_track["last_poll_ok"] = None
             apple_tv_dashboard_track["consecutive_fail"] = 0
-            last_atv_interaction_mono = 0.0
+            last_atv_interaction_mono[0] = 0.0
             _atv_ix_sig_ds = ""
             _atv_ix_sig_ck = None
             _atv_ix_pos = None
@@ -7893,39 +7601,10 @@ def main() -> int:
             _device_addr_key=_device_addr_key,
         )
 
-        def _verify_added_devices_after_save(added: list[dict[str, str]]) -> None:
-            if not added:
-                return
-
-            def work() -> None:
-                bad: list[str] = []
-                for row in added:
-                    addr = str(row.get("address") or "").strip()
-                    if not addr:
-                        continue
-                    try:
-                        from pigeon.apple_tv_now_playing import probe_pyatv_host
-
-                        ok_w, msg_w, _, _ = probe_pyatv_host(addr, scan_timeout_s=6)
-                    except Exception as e:
-                        ok_w, msg_w = False, str(e)
-                    if not ok_w:
-                        label = str(row.get("label") or row.get("name") or addr)
-                        tail = (msg_w or "no response")[:160]
-                        bad.append(f"• {label} ({addr}): {tail}")
-
-                def done() -> None:
-                    if bad:
-                        messagebox.showwarning(
-                            "Device check",
-                            "After saving, a quick follow-up scan could not reach some new entries "
-                            "(sleeping, offline, or firewalled):\n\n" + "\n".join(bad),
-                            parent=root,
-                        )
-
-                root.after(0, done)
-
-            threading.Thread(target=work, daemon=True).start()
+        _verify_added_devices_after_save = _bind_deps(
+            _core_pairing._verify_added_devices_after_save,
+            root=root,
+        )
 
         describe_current_apple_tv()
         _refresh_location_selector()
@@ -7938,168 +7617,37 @@ def main() -> int:
             root=root,
         )
 
-        def _finish_remote_then_start_airplay(row: dict[str, str], dn: str, session_key_w: str, pin: str) -> None:
-            # Caller still holds apple_tv_busy from "starting AppleTV Remote" — do not poll until Remote is fully done.
+        _start_airplay_pairing_sequence = _bind_deps(
+            _core_pairing._start_airplay_pairing_sequence,
+            _ask_pairing_pin_modal=_ask_pairing_pin_modal,
+            _pyatv_install_hint=_pyatv_install_hint,
+            _schedule_refresh_pairing_leds=_schedule_refresh_pairing_leds,
+            begin_apple_tv_operation=begin_apple_tv_operation,
+            describe_current_apple_tv=describe_current_apple_tv,
+            end_apple_tv_operation=end_apple_tv_operation,
+            root=root,
+        )
 
-            def worker_remote_finish() -> None:
-                try:
-                    from pigeon.apple_tv_now_playing import finish_companion_pairing_for_device
+        _finish_remote_then_start_airplay = _bind_deps(
+            _core_pairing._finish_remote_then_start_airplay,
+            _pyatv_install_hint=_pyatv_install_hint,
+            _schedule_refresh_pairing_leds=_schedule_refresh_pairing_leds,
+            _start_airplay_pairing_sequence=_start_airplay_pairing_sequence,
+            end_apple_tv_operation=end_apple_tv_operation,
+            root=root,
+        )
 
-                    ok_f, msg_f = finish_companion_pairing_for_device(
-                        session_key=session_key_w, pin_code=pin
-                    )
-                except ImportError:
-                    ok_f, msg_f = False, _pyatv_install_hint()
-                except Exception as e:
-                    ok_f, msg_f = False, str(e)
-                if ok_f:
-                    time.sleep(1.5)
-
-                def done_rf() -> None:
-                    end_apple_tv_operation()
-                    if not ok_f:
-                        messagebox.showerror("AppleTV Remote", msg_f)
-                        _schedule_refresh_pairing_leds()
-                        return
-                    messagebox.showinfo(
-                        "AppleTV Remote",
-                        f"{msg_f}\n\n"
-                        "Wait until the Apple TV leaves the Remote pairing screen before continuing.",
-                    )
-                    _schedule_refresh_pairing_leds()
-                    _start_airplay_pairing_sequence(row, dn)
-
-                root.after(0, done_rf)
-
-            threading.Thread(target=worker_remote_finish, daemon=True).start()
-
-        def _start_airplay_pairing_sequence(row: dict[str, str], dn: str) -> None:
-            if not messagebox.askokcancel(
-                "AppleTV AirPlay",
-                "Next: AppleTV AirPlay pairing will show a new code on the Apple TV.\n\n"
-                "Continue only after the first (Remote) pairing has fully finished on the TV.\n\n"
-                "Then open AirPlay / on-screen pairing on the Apple TV so it can show the next code.",
-                parent=root,
-            ):
-                return
-            if not begin_apple_tv_operation("starting AppleTV AirPlay"):
-                return
-
-            def worker_air_begin() -> None:
-                try:
-                    from pigeon.apple_tv_now_playing import begin_airplay_pairing_for_device
-
-                    ok_a, msg_a, sk_a, _r2 = begin_airplay_pairing_for_device(
-                        device_identifier=row["identifier"],
-                        device_address=row["address"],
-                        tv_displays_pin=True,
-                    )
-                except ImportError:
-                    ok_a, msg_a, sk_a, _r2 = False, _pyatv_install_hint(), None, None
-                except Exception as e:
-                    ok_a, msg_a, sk_a, _r2 = False, str(e), None, None
-
-                def ui_air_b() -> None:
-                    if not ok_a or not sk_a:
-                        end_apple_tv_operation()
-                        messagebox.showerror("AppleTV AirPlay", msg_a or "Pairing failed to start.")
-                        return
-                    # Keep apple_tv_busy True until PIN is submitted so auto-poll cannot start a second connection.
-                    describe_current_apple_tv(suffix="enter AirPlay PIN")
-                    pin2 = _ask_pairing_pin_modal(
-                        root,
-                        title="AppleTV AirPlay",
-                        device_name=dn,
-                        pair_kind="AppleTV AirPlay pairing",
-                        session_key=sk_a,
-                    )
-                    if pin2 is None:
-                        end_apple_tv_operation()
-                        messagebox.showinfo("AppleTV AirPlay", "Pairing cancelled.")
-                        _schedule_refresh_pairing_leds()
-                        return
-
-                    def worker_air_finish() -> None:
-                        try:
-                            from pigeon.apple_tv_now_playing import finish_companion_pairing_for_device
-
-                            ok_af, msg_af = finish_companion_pairing_for_device(
-                                session_key=sk_a, pin_code=pin2
-                            )
-                        except ImportError:
-                            ok_af, msg_af = False, _pyatv_install_hint()
-                        except Exception as e:
-                            ok_af, msg_af = False, str(e)
-
-                        def done_af() -> None:
-                            end_apple_tv_operation()
-                            if ok_af:
-                                messagebox.showinfo("AppleTV AirPlay", msg_af)
-                            else:
-                                messagebox.showerror("AppleTV AirPlay", msg_af)
-                            _schedule_refresh_pairing_leds()
-
-                        root.after(0, done_af)
-
-                    threading.Thread(target=worker_air_finish, daemon=True).start()
-
-                root.after(0, ui_air_b)
-
-            threading.Thread(target=worker_air_begin, daemon=True).start()
-
-        def _run_sequential_player_pairing_wizard(row: dict[str, str]) -> None:
-            if not row_is_playback_apple_tv(row):
-                return
-            dn = str(row.get("name") or row.get("label") or "Apple TV")
-            if not messagebox.askokcancel(
-                "AppleTV Remote",
-                "Pair AppleTV Remote first, then AppleTV AirPlay. Codes appear on the Apple TV.\n\n"
-                "On the Apple TV: Settings → Remotes and Devices → Remote App and Devices — keep it open until a code appears.\n\n"
-                "Continue?",
-                parent=root,
-            ):
-                return
-            if not begin_apple_tv_operation("starting AppleTV Remote"):
-                return
-
-            def worker_remote_begin() -> None:
-                try:
-                    from pigeon.apple_tv_now_playing import begin_companion_pairing_for_device
-
-                    ok_w, msg_w, session_key_w, _rev = begin_companion_pairing_for_device(
-                        device_identifier=row["identifier"],
-                        device_address=row["address"],
-                        tv_displays_pin=True,
-                    )
-                except ImportError:
-                    ok_w, msg_w, session_key_w, _rev = False, _pyatv_install_hint(), None, None
-                except Exception as e:
-                    ok_w, msg_w, session_key_w, _rev = False, str(e), None, None
-
-                def finish_rb() -> None:
-                    if not ok_w or not session_key_w:
-                        end_apple_tv_operation()
-                        messagebox.showerror("AppleTV Remote", msg_w or "Pairing failed to start.")
-                        return
-                    # Stay busy through PIN entry so background Apple TV polling cannot connect yet.
-                    describe_current_apple_tv(suffix="enter Remote PIN")
-                    pin = _ask_pairing_pin_modal(
-                        root,
-                        title="AppleTV Remote",
-                        device_name=dn,
-                        pair_kind="AppleTV Remote pairing",
-                        session_key=session_key_w,
-                    )
-                    if pin is None:
-                        end_apple_tv_operation()
-                        messagebox.showinfo("AppleTV Remote", "Pairing cancelled.")
-                        _schedule_refresh_pairing_leds()
-                        return
-                    _finish_remote_then_start_airplay(row, dn, session_key_w, pin)
-
-                root.after(0, finish_rb)
-
-            threading.Thread(target=worker_remote_begin, daemon=True).start()
+        _run_sequential_player_pairing_wizard = _bind_deps(
+            _core_pairing._run_sequential_player_pairing_wizard,
+            _ask_pairing_pin_modal=_ask_pairing_pin_modal,
+            _finish_remote_then_start_airplay=_finish_remote_then_start_airplay,
+            _pyatv_install_hint=_pyatv_install_hint,
+            _schedule_refresh_pairing_leds=_schedule_refresh_pairing_leds,
+            begin_apple_tv_operation=begin_apple_tv_operation,
+            describe_current_apple_tv=describe_current_apple_tv,
+            end_apple_tv_operation=end_apple_tv_operation,
+            root=root,
+        )
 
         _save_box_pair_device_row = _bind_deps(
             _core_settings_ui._save_box_pair_device_row,
@@ -8869,529 +8417,27 @@ def main() -> int:
                 )
             open_advanced_capability_matrix(root, **adv_kw)
 
-        def _open_find_device_dialog() -> None:
-            if not _PIGEON_EXT:
-                messagebox.showinfo("Devices", "Pigeon extensions not loaded.")
-                return
-            top = tk.Toplevel(root)
-            top.title("Find device")
-            top.configure(bg="#1a1a1e")
-            try:
-                top.transient(root)
-                top.grab_set()
-            except tk.TclError:
-                pass
-
-            scan_rows: list[list[dict[str, str]]] = [[]]
-            busy = {"v": False}
-            confirm_holder: list[tk.Button | None] = [None]
-
-            hdr = tk.Frame(top, bg="#1a1a1e")
-            hdr.pack(fill=tk.X, padx=12, pady=(12, 8))
-            find_btn = tk.Button(hdr, text="Find devices", font=S_FONT_BTN, padx=12, pady=4)
-            refresh_btn = tk.Button(hdr, text="Refresh (network scan)", font=S_FONT_BTN, padx=10, pady=4)
-            find_btn.pack(side=tk.LEFT, padx=(0, 8))
-            refresh_btn.pack(side=tk.LEFT, padx=(0, 0))
-
-            tk.Label(
-                top,
-                text="Use Find devices (cached scan when available) or Refresh for a live network scan. "
-                "The list shows every device the scan returns (nothing is hidden). "
-                "Pick a row or enter Host/IP, then Confirm — you will choose the device type and optional nickname. "
-                "The same device can be saved more than once for different roles.",
-                fg="#888",
-                bg="#1a1a1e",
-                font=S_FONT_MICRO,
-                wraplength=560,
-                justify=tk.LEFT,
-            ).pack(anchor=tk.W, padx=12, pady=(0, 6))
-
-            search_banner_var = tk.StringVar(value="")
-            tk.Label(
-                top,
-                textvariable=search_banner_var,
-                fg="#ffb020",
-                bg="#1a1a1e",
-                font=("Helvetica", 22, "bold"),
-            ).pack(anchor=tk.W, padx=12, pady=(0, 4))
-
-            status_var = tk.StringVar(value="")
-
-            loc_pick_var = tk.StringVar(value="")
-            loc_pick_holder: list[list[tuple[str, str | None, str | None]]] = [[]]
-
-            def build_location_pick_choices() -> list[tuple[str, str | None, str | None]]:
-                ch: list[tuple[str, str | None, str | None]] = []
-                counts: dict[str, int] = {}
-                for L in read_all_locations_v2():
-                    base = str(L.get("name") or "Room").strip() or "Room"
-                    counts[base] = counts.get(base, 0) + 1
-                    c = counts[base]
-                    lab = base if c == 1 else f"{base} ({c})"
-                    lid_g = str(L.get("id") or "").strip() or None
-                    ch.append((lab, lid_g, None))
-                for p in LOCATION_PRESET_ROOM_NAMES:
-                    ch.append((f"+ New: {p}", None, p))
-                ch.append(("+ New: Custom…", None, "__custom__"))
-                return ch
-
-            loc_pick_row = tk.Frame(top, bg="#1a1a1e")
-            loc_pick_frame = tk.Frame(loc_pick_row, bg="#1a1a1e")
-            btn_row = tk.Frame(loc_pick_row, bg="#1a1a1e")
-
-            def refresh_location_pick_menu() -> None:
-                for w in loc_pick_frame.winfo_children():
-                    try:
-                        w.destroy()
-                    except tk.TclError:
-                        pass
-                chs = build_location_pick_choices()
-                loc_pick_holder[0] = chs
-                labels = [t[0] for t in chs]
-                cur = read_current_location_id()
-                pick_default = labels[0] if labels else ""
-                for disp, lid_g, _nn in chs:
-                    if lid_g and lid_g == cur:
-                        pick_default = disp
-                        break
-                if pick_default:
-                    loc_pick_var.set(pick_default)
-                if labels:
-                    tk.OptionMenu(loc_pick_frame, loc_pick_var, *labels).pack(side=tk.LEFT)
-
-            tk.Label(
-                loc_pick_row,
-                text="Save to location:",
-                fg="#aaa",
-                bg="#1a1a1e",
-                font=S_FONT_SMALL,
-            ).pack(side=tk.LEFT)
-            loc_pick_frame.pack(side=tk.LEFT, padx=(8, 0))
-            loc_pick_row.pack(anchor=tk.W, padx=12, pady=(0, 6))
-            refresh_location_pick_menu()
-
-            def resolve_save_location() -> tuple[str | None, str | None]:
-                pick = str(loc_pick_var.get() or "")
-                for disp, lid_g, nn in loc_pick_holder[0]:
-                    if disp != pick:
-                        continue
-                    if nn == "__custom__":
-                        name = simpledialog.askstring(
-                            "Location name",
-                            "Custom room name:",
-                            parent=top,
-                        )
-                        return (None, (name or "").strip() or "Room")
-                    if lid_g:
-                        return (lid_g, None)
-                    if nn:
-                        return (None, nn)
-                cur = read_current_location_id()
-                return (cur or None, None)
-
-            list_rows_holder: list[list[dict[str, str]]] = [[]]
-            lb_frame = tk.Frame(top, bg="#1a1a1e")
-            lb_frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 6))
-            sb = tk.Scrollbar(lb_frame, orient=tk.VERTICAL)
-            lb = tk.Listbox(
-                lb_frame,
-                height=12,
-                bg=_LISTBOX_BG,
-                fg=_LISTBOX_FG,
-                font=S_FONT_STATUS,
-                selectmode=tk.SINGLE,
-                highlightthickness=1,
-                highlightbackground="#333",
-            )
-            sb.config(command=lb.yview)
-            lb.configure(yscrollcommand=sb.set)
-            sb.pack(side=tk.RIGHT, fill=tk.Y)
-            lb.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-            host_var = tk.StringVar(value="")
-
-            def apply_listbox_rows(rows: list[dict[str, str]], *, empty_message: str | None = None) -> None:
-                lb.delete(0, tk.END)
-                list_rows_holder[0] = [dict(r) for r in rows]
-                if not list_rows_holder[0]:
-                    lb.insert(tk.END, empty_message or "No devices in list — try Refresh or Host / IP.")
-                else:
-                    for r in list_rows_holder[0]:
-                        lb.insert(tk.END, str(r.get("label") or r.get("name") or r.get("address")))
-
-            def repopulate_from_scan() -> None:
-                rows_full = [dict(r) for r in scan_rows[0]]
-                apply_listbox_rows(rows_full)
-
-            def list_selection_row() -> dict[str, str] | None:
-                sel = lb.curselection()
-                if not sel:
-                    return None
-                idx = int(sel[0])
-                rows_now = list_rows_holder[0]
-                if idx < 0 or idx >= len(rows_now):
-                    return None
-                return dict(rows_now[idx])
-
-            def set_scan(rows_in: list[dict[str, str]], msg: str) -> None:
-                scan_rows[0] = [dict(r) for r in rows_in]
-                status_var.set(msg)
-                repopulate_from_scan()
-
-            def run_scan(*, force_network: bool) -> None:
-                if busy["v"]:
-                    return
-                busy["v"] = True
-                now_chk = time.monotonic()
-                cached_chk = discovery_scan_cache.get("rows")
-                cache_mono_chk = float(discovery_scan_cache.get("mono_s") or 0.0)
-                has_cache = (
-                    not force_network
-                    and isinstance(cached_chk, list)
-                    and len(cached_chk) > 0
-                    and (now_chk - cache_mono_chk) <= DISCOVERY_CACHE_TTL_S
-                )
-                search_banner_var.set("" if has_cache else "SEARCHING")
-                status_var.set("Scanning\u2026" if force_network else "Loading\u2026")
-                apply_listbox_rows(
-                    [],
-                    empty_message=(
-                        "SEARCHING \u2014 scanning the network\u2026"
-                        if not has_cache
-                        else "Loading cached devices\u2026"
-                    ),
-                )
-                for w in (find_btn, refresh_btn):
-                    w.configure(state=tk.DISABLED)
-                c = confirm_holder[0]
-                if c is not None:
-                    c.configure(state=tk.DISABLED)
-                result: dict[str, object] = {}
-
-                def worker() -> None:
-                    now_m = time.monotonic()
-                    rows_w: list[dict[str, str]] = []
-                    ok_w = True
-                    msg_w = ""
-                    used_cache = False
-                    cached = discovery_scan_cache.get("rows")
-                    cache_mono = float(discovery_scan_cache.get("mono_s") or 0.0)
-                    if (
-                        not force_network
-                        and isinstance(cached, list)
-                        and len(cached) > 0
-                        and (now_m - cache_mono) <= DISCOVERY_CACHE_TTL_S
-                    ):
-                        rows_w = [dict(r) for r in cached]
-                        used_cache = True
-                    else:
-                        try:
-                            from pigeon.apple_tv_now_playing import scan_apple_tv_devices
-
-                            ok_w, msg_w, rows_w = scan_apple_tv_devices(scan_timeout_s=15)
-                        except ImportError:
-                            ok_w, msg_w, rows_w = False, _pyatv_install_hint(), []
-                        except Exception as e:
-                            ok_w, msg_w, rows_w = False, str(e), []
-                        if ok_w and rows_w:
-                            discovery_scan_cache["rows"] = [dict(r) for r in rows_w]
-                            discovery_scan_cache["mono_s"] = time.monotonic()
-                    result["ok"] = ok_w
-                    result["rows"] = rows_w
-                    result["msg"] = msg_w
-                    result["used"] = used_cache
-
-                def finish_scan() -> None:
-                    busy["v"] = False
-                    search_banner_var.set("")
-                    for w in (find_btn, refresh_btn):
-                        w.configure(state=tk.NORMAL)
-                    c2 = confirm_holder[0]
-                    if c2 is not None:
-                        c2.configure(state=tk.NORMAL)
-                    ok_w = bool(result.get("ok", True))
-                    rows_w = result.get("rows") or []
-                    msg_w = str(result.get("msg") or "")
-                    used_cache = bool(result.get("used"))
-                    if not isinstance(rows_w, list):
-                        rows_w = []
-                    if not ok_w:
-                        messagebox.showerror("Find device", msg_w)
-                        status_var.set("Scan failed.")
-                        apply_listbox_rows([], empty_message="Search failed — try Refresh.")
-                        return
-                    if not rows_w:
-                        messagebox.showinfo("Find device", msg_w or "No devices found.")
-                        status_var.set("No devices.")
-                        scan_rows[0] = []
-                        apply_listbox_rows([], empty_message="No devices found — try Refresh or Host / IP.")
-                        return
-                    suffix = f"{len(rows_w)} found" + (" (cached)" if used_cache else "")
-                    set_scan(rows_w, suffix)
-
-                threading.Thread(target=lambda: (worker(), root.after(0, finish_scan)), daemon=True).start()
-
-            def on_find_devices_click() -> None:
-                run_scan(force_network=False)
-
-            def on_refresh_click() -> None:
-                run_scan(force_network=True)
-
-            find_btn.configure(command=on_find_devices_click)
-            refresh_btn.configure(command=on_refresh_click)
-
-            tk.Label(
-                top,
-                text="Host / IP (optional, instead of list):",
-                fg="#aaa",
-                bg="#1a1a1e",
-                font=S_FONT_SMALL,
-            ).pack(anchor=tk.W, padx=12)
-            tk.Entry(
-                top,
-                textvariable=host_var,
-                width=36,
-                bg="#252528",
-                fg="#e8e8e8",
-                insertbackground="#e8e8e8",
-                highlightthickness=1,
-                highlightbackground="#333",
-                font=S_FONT_BODY,
-            ).pack(anchor=tk.W, padx=12, pady=(2, 8))
-
-            tk.Label(
-                top,
-                textvariable=status_var,
-                fg="#777",
-                bg="#1a1a1e",
-                font=S_FONT_MICRO,
-                wraplength=500,
-                justify=tk.LEFT,
-            ).pack(anchor=tk.W, padx=12, pady=(0, 6))
-
-            def close_top() -> None:
-                try:
-                    top.grab_release()
-                except tk.TclError:
-                    pass
-                top.destroy()
-
-            def on_cancel() -> None:
-                close_top()
-
-            def _after_find_device_save(lid_written: str, verify_rows: list[dict[str, str]]) -> None:
-                if lid_written:
-                    set_current_location_id(lid_written)
-                _apply_persisted_location_to_runtime()
-                _refresh_location_selector()
-                _verify_added_devices_after_save(verify_rows)
-
-            def _ask_save_device_role() -> str | None:
-                choice: list[str | None] = [None]
-                dlg = tk.Toplevel(top)
-                dlg.title("Device type")
-                dlg.configure(bg="#1a1a1e")
-                try:
-                    dlg.transient(top)
-                    dlg.grab_set()
-                except tk.TclError:
-                    pass
-                tk.Label(
-                    dlg,
-                    text="What kind of device is this?",
-                    fg="#eee",
-                    bg="#1a1a1e",
-                    font=S_FONT_SMALL,
-                ).pack(anchor=tk.W, padx=12, pady=(12, 8))
-                row_f = tk.Frame(dlg, bg="#1a1a1e")
-                row_f.pack(fill=tk.X, padx=12, pady=(0, 8))
-                var = tk.StringVar(value="player")
-                for lab, val in (
-                    ("Player (playback / metadata)", "player"),
-                    ("Receiver (Denon/Marantz-style IP)", "receiver"),
-                    ("TV", "tv"),
-                    ("Projector", "projector"),
-                    ("Game console", "game"),
-                    ("Other", "other"),
-                ):
-                    tk.Radiobutton(
-                        row_f,
-                        text=lab,
-                        variable=var,
-                        value=val,
-                        bg="#1a1a1e",
-                        fg="#eee",
-                        selectcolor="#333",
-                        activebackground="#1a1a1e",
-                        highlightthickness=0,
-                        font=S_FONT_SMALL,
-                    ).pack(anchor=tk.W)
-
-                def ok() -> None:
-                    choice[0] = str(var.get() or "").strip() or None
-                    dlg.destroy()
-
-                def cancel() -> None:
-                    choice[0] = None
-                    dlg.destroy()
-
-                br = tk.Frame(dlg, bg="#1a1a1e")
-                br.pack(pady=(0, 12))
-                tk.Button(br, text="OK", command=ok, font=S_FONT_BTN, padx=14, pady=4).pack(
-                    side=tk.LEFT, padx=6
-                )
-                tk.Button(br, text="Cancel", command=cancel, font=S_FONT_BTN, padx=14, pady=4).pack(
-                    side=tk.LEFT, padx=6
-                )
-                dlg.wait_window(dlg)
-                return choice[0]
-
-            def on_confirm() -> None:
-                host = str(host_var.get() or "").strip()
-
-                def _tag_row_device_role(row: dict[str, str], dr: str) -> None:
-                    row["device_role"] = dr
-
-                base_row: dict[str, str] | None = None
-                if not host:
-                    base_row = list_selection_row()
-                    if base_row is None:
-                        messagebox.showwarning(
-                            "Find device",
-                            "Select a device from the list (wait until search finishes), or enter Host / IP.",
-                            parent=top,
-                        )
-                        return
-
-                r0 = _ask_save_device_role()
-                if not r0:
-                    return
-
-                nick_raw = simpledialog.askstring(
-                    "Nickname",
-                    "Optional nickname for this entry (shown in lists and Advanced):",
-                    parent=top,
-                )
-                nick = (nick_raw or "").strip()
-
-                def _merge_nick(row: dict[str, str]) -> dict[str, str]:
-                    m = dict(row)
-                    if nick:
-                        m["nickname"] = nick
-                    return m
-
-                to_id, new_nm = resolve_save_location()
-
-                if r0 in ("tv", "projector", "game", "other"):
-                    if host:
-                        ident = f"{r0}:{host.split('%')[0].strip()}"
-                        nm = r0.capitalize() if r0 != "other" else "Other"
-                        row_any = {
-                            "identifier": ident,
-                            "address": host.strip(),
-                            "name": nm,
-                            "label": f"{nm} — {host.strip()}",
-                            "looks_like_apple_tv": "false",
-                        }
-                        _tag_row_device_role(row_any, r0)
-                    else:
-                        row_any = _merge_nick(dict(base_row or {}))
-                        _tag_row_device_role(row_any, r0)
-                    row_any = _merge_nick(row_any)
-                    slot_key = {"tv": "tv", "projector": "projector", "game": "game", "other": "other"}[r0]
-                    lid = append_device_to_location_slot(
-                        slot_key,
-                        row_any,
-                        for_location_id=to_id,
-                        new_location_name=new_nm,
-                    )
-                    _after_find_device_save(lid, [row_any])
-                    close_top()
-                    return
-
-                if r0 == "receiver":
-                    if host:
-                        row_r = {
-                            "identifier": f"denon:{host.split('%')[0].strip()}",
-                            "address": host.strip(),
-                            "name": "Receiver",
-                            "label": f"Receiver \u2014 {host.strip()}",
-                            "looks_like_apple_tv": "false",
-                        }
-                        _tag_row_device_role(row_r, "receiver")
-                    else:
-                        row_r = _merge_nick(dict(base_row or {}))
-                        _tag_row_device_role(row_r, "receiver")
-                    row_r = _merge_nick(row_r)
-                    lid = append_device_to_location_slot(
-                        "av_receiver",
-                        row_r,
-                        for_location_id=to_id,
-                        new_location_name=new_nm,
-                    )
-                    _after_find_device_save(lid, [row_r])
-                    close_top()
-                    return
-
-                # Player
-                if host:
-                    close_top()
-                    if not begin_apple_tv_operation("probing address"):
-                        return
-
-                    def w_probe() -> None:
-                        try:
-                            from pigeon.apple_tv_now_playing import probe_pyatv_host
-
-                            ok_w, msg_w, row_w, looks_w = probe_pyatv_host(host, scan_timeout_s=8)
-                        except ImportError:
-                            ok_w, msg_w, row_w, looks_w = False, _pyatv_install_hint(), None, False
-                        except Exception as e:
-                            ok_w, msg_w, row_w, looks_w = False, str(e), None, False
-
-                        def d_probe() -> None:
-                            end_apple_tv_operation()
-                            if not ok_w or row_w is None:
-                                messagebox.showerror("Find device", msg_w)
-                                return
-                            row_d = _merge_nick(dict(row_w))
-                            _tag_row_device_role(row_d, "player")
-                            lid = append_device_to_location_slot(
-                                "streaming",
-                                row_d,
-                                for_location_id=to_id,
-                                new_location_name=new_nm,
-                            )
-                            _after_find_device_save(lid, [row_d])
-                            if row_is_playback_apple_tv(row_d):
-                                _run_sequential_player_pairing_wizard(row_d)
-
-                        root.after(0, d_probe)
-
-                    threading.Thread(target=w_probe, daemon=True).start()
-                    return
-
-                row_p = _merge_nick(dict(base_row or {}))
-                _tag_row_device_role(row_p, "player")
-                lid = append_device_to_location_slot(
-                    "streaming",
-                    row_p,
-                    for_location_id=to_id,
-                    new_location_name=new_nm,
-                )
-                _after_find_device_save(lid, [row_p])
-                close_top()
-                if row_is_playback_apple_tv(row_p):
-                    _run_sequential_player_pairing_wizard(row_p)
-
-            confirm_btn = tk.Button(btn_row, text="Confirm", command=on_confirm, font=S_FONT_BTN, padx=12, pady=4)
-            confirm_holder[0] = confirm_btn
-            cancel_btn = tk.Button(btn_row, text="Cancel", command=on_cancel, font=S_FONT_BTN, padx=12, pady=4)
-            confirm_btn.pack(side=tk.LEFT, padx=(0, 8))
-            cancel_btn.pack(side=tk.LEFT)
-            btn_row.pack(side=tk.LEFT, padx=(16, 0))
-            top.protocol("WM_DELETE_WINDOW", on_cancel)
-            run_scan(force_network=False)
+        _open_find_device_dialog = _bind_deps(
+            _core_pairing._open_find_device_dialog,
+            DISCOVERY_CACHE_TTL_S=DISCOVERY_CACHE_TTL_S,
+            S_FONT_BODY=S_FONT_BODY,
+            S_FONT_BTN=S_FONT_BTN,
+            S_FONT_MICRO=S_FONT_MICRO,
+            S_FONT_SMALL=S_FONT_SMALL,
+            S_FONT_STATUS=S_FONT_STATUS,
+            _LISTBOX_BG=_LISTBOX_BG,
+            _LISTBOX_FG=_LISTBOX_FG,
+            _PIGEON_EXT=_PIGEON_EXT,
+            _apply_persisted_location_to_runtime=_apply_persisted_location_to_runtime,
+            _pyatv_install_hint=_pyatv_install_hint,
+            _refresh_location_selector=_refresh_location_selector,
+            _run_sequential_player_pairing_wizard=_run_sequential_player_pairing_wizard,
+            _verify_added_devices_after_save=_verify_added_devices_after_save,
+            begin_apple_tv_operation=begin_apple_tv_operation,
+            discovery_scan_cache=discovery_scan_cache,
+            end_apple_tv_operation=end_apple_tv_operation,
+            root=root,
+        )
 
         def on_reset_pigeon_devices_and_media() -> None:
             if not messagebox.askokcancel(
@@ -9458,108 +8504,21 @@ def main() -> int:
             else:
                 messagebox.showwarning("Reset", tail)
 
-        def on_apple_tv_selected_then_tmdb() -> None:
-            """Use the saved streaming slot: pyatv (Apple TV) or Roku ECP, then TMDb + backdrop."""
-            if not _PIGEON_EXT:
-                messagebox.showinfo("Devices", "Pigeon extensions not loaded.")
-                return
-            if apple_tv_busy["active"]:
-                describe_current_apple_tv(suffix="busy")
-                return
-            row = streaming_slot_holder[0]
-            if row is None:
-                _open_find_device_dialog()
-                return
-            if not begin_apple_tv_operation("detecting content"):
-                return
-
-            def worker() -> None:
-                ok_w, msg_w, title_w = False, "", None
-                if row_is_playback_apple_tv(row):
-                    try:
-                        from pigeon.apple_tv_now_playing import fetch_now_playing_title_for_device
-
-                        ok_w, msg_w, title_w = fetch_now_playing_title_for_device(
-                            device_identifier=row["identifier"],
-                            device_address=row["address"],
-                        )
-                    except ImportError:
-                        ok_w, msg_w, title_w = (
-                            False,
-                            _pyatv_install_hint(),
-                            None,
-                        )
-                    except Exception as e:
-                        ok_w, msg_w, title_w = False, str(e), None
-                else:
-                    try:
-                        from pigeon.roku_ecp import (
-                            fetch_roku_title_for_metadata,
-                            resolve_roku_ecp_base_url_for_row,
-                        )
-
-                        rbase = resolve_roku_ecp_base_url_for_row(row)
-                        if not rbase:
-                            ok_w, msg_w, title_w = (
-                                False,
-                                "",
-                                None,
-                            )
-                        else:
-                            ok_w, msg_w, title_w = fetch_roku_title_for_metadata(
-                                rbase, timeout=10.0
-                            )
-                    except Exception as e:
-                        ok_w, msg_w, title_w = False, str(e), None
-
-                def finish() -> None:
-                    nonlocal last_atv_interaction_mono
-                    if not row_is_playback_apple_tv(row) and not ok_w and not msg_w:
-                        end_apple_tv_operation()
-                        messagebox.showinfo(
-                            "Devices",
-                            "This Player is not an Apple TV (pyatv) row, and Pigeon could not use "
-                            "Roku ECP on its IP (port 8060).\n\n"
-                            "• If this is a Roku / Roku TV (e.g. Onn), ensure the TV’s IP is in the "
-                            "Player slot and try again, or set \"roku_ecp_base_url\" in "
-                            f"{PIGEON_STATE_DIR_TILDE}/state.json to http://TV_IP:8060\n"
-                            "• For an actual Apple TV, re-add it from Find devices so the label "
-                            "shows “Apple TV / tvOS”.\n"
-                            "• For a receiver only, choose Receiver in Find device for the overlay.",
-                        )
-                        return
-                    if not ok_w:
-                        end_apple_tv_operation()
-                        messagebox.showerror("Devices", msg_w or "Could not read now playing.")
-                        return
-                    if not title_w:
-                        end_apple_tv_operation()
-                        messagebox.showinfo(
-                            "Devices",
-                            msg_w or "No title reported by the selected device.",
-                        )
-                        return
-                    from pigeon.tmdb_poster import is_degenerate_tmdb_query
-
-                    if is_degenerate_tmdb_query(title_w):
-                        end_apple_tv_operation()
-                        messagebox.showinfo(
-                            "Devices",
-                            "The device only reported app or channel branding, not the show or movie "
-                            "title, so Pigeon did not search TMDb.\n\n"
-                            "On Disney+ via Roku, wait until playback has started and try Manual fetch again.",
-                        )
-                        return
-                    set_current_apple_tv(row, persist=True)
-                    last_atv_interaction_mono = time.monotonic()
-                    end_apple_tv_operation(suffix="title detected")
-                    sys.stderr.write(f"pigeon: {msg_w}\n")
-                    sys.stderr.flush()
-                    spawn_tmdb_poster_fetch(title_w, prefer="auto", force=True)
-
-                root.after(0, finish)
-
-            threading.Thread(target=worker, daemon=True).start()
+        on_apple_tv_selected_then_tmdb = _bind_deps(
+            _core_device_control.on_apple_tv_selected_then_tmdb,
+            _PIGEON_EXT=_PIGEON_EXT,
+            _open_find_device_dialog=_open_find_device_dialog,
+            _pyatv_install_hint=_pyatv_install_hint,
+            apple_tv_busy=apple_tv_busy,
+            begin_apple_tv_operation=begin_apple_tv_operation,
+            describe_current_apple_tv=describe_current_apple_tv,
+            end_apple_tv_operation=end_apple_tv_operation,
+            last_atv_interaction_mono=last_atv_interaction_mono,
+            root=root,
+            set_current_apple_tv=set_current_apple_tv,
+            spawn_tmdb_poster_fetch=spawn_tmdb_poster_fetch,
+            streaming_slot_holder=streaming_slot_holder,
+        )
 
         def _content_key_from_metadata(metadata: dict[str, object]) -> str | None:
             pyatv_q = str(metadata.get("query") or "").strip()
@@ -9732,7 +8691,7 @@ def main() -> int:
 
         def _update_atv_interaction_from_poll_metadata(metadata: dict[str, object]) -> None:
             """Approximate Siri Remote / UI use from pyatv poll deltas (not plain playback time)."""
-            nonlocal last_atv_interaction_mono, _atv_ix_sig_ds, _atv_ix_sig_ck
+            nonlocal _atv_ix_sig_ds, _atv_ix_sig_ck
             nonlocal _atv_ix_pos, _atv_ix_pos_mono, _atv_ix_extrap_playing, _atv_ix_prev_idle
             if not current_apple_tv.get("identifier"):
                 return
@@ -9764,7 +8723,7 @@ def main() -> int:
                     bump = True
 
             if bump:
-                last_atv_interaction_mono = now
+                last_atv_interaction_mono[0] = now
                 last_device_interaction_mono = now
 
             _atv_ix_sig_ds = ds
@@ -9922,8 +8881,8 @@ def main() -> int:
 
         def _return_to_landing_if_atv_idle(metadata: dict[str, object]) -> None:
             """When Apple TV reports no playback, drop TMDb backdrop and show the static landing page."""
-            nonlocal use_backdrop_scene, backdrop_master_bgr, backdrop_app_logo_letterbox_fit, last_frame, scaled_display, scaled_version
-            nonlocal tmdb_logo_patch_bgra, playing
+            nonlocal last_frame, scaled_display, scaled_version
+            nonlocal playing
             nonlocal tmdb_logo_app_fallback_active
             if not _atv_metadata_is_content_idle(metadata):
                 return
@@ -9995,17 +8954,17 @@ def main() -> int:
                 lm["query"] = ""
                 lm["content_key"] = None
 
-            had_art = bool(use_backdrop_scene or backdrop_master_bgr is not None or active_tmdb_title_key[0])
+            had_art = bool(use_backdrop_scene[0] or backdrop_master_bgr[0] is not None or active_tmdb_title_key[0])
 
-            use_backdrop_scene = False
-            backdrop_master_bgr = None
+            use_backdrop_scene[0] = False
+            backdrop_master_bgr[0] = None
             try:
                 from pigeon.paused_screen import set_pausesaver_backdrop
 
                 set_pausesaver_backdrop(None, clear=True)
             except Exception:
                 pass
-            backdrop_app_logo_letterbox_fit = False
+            backdrop_app_logo_letterbox_fit[0] = False
             playing = False
             active_tmdb_title_key[0] = None
             active_tmdb_display_title[0] = None
@@ -10014,7 +8973,7 @@ def main() -> int:
                 tmdb_logo_widget.clear_cache()
             if tmdb_logo_widget_view_six is not None:
                 tmdb_logo_widget_view_six.clear_cache()
-            tmdb_logo_patch_bgra = None
+            tmdb_logo_patch_bgra[0] = None
             _warm_tmdb_logo_patch()
 
             clk = apple_tv_playback_clock
@@ -10566,53 +9525,18 @@ def main() -> int:
 
             threading.Thread(target=worker, daemon=True).start()
 
-        def on_debug_streaming_slot_apple_tv() -> None:
-            if not _PIGEON_EXT:
-                messagebox.showinfo("Devices", "Pigeon extensions not loaded.")
-                return
-            if apple_tv_busy["active"]:
-                describe_current_apple_tv(suffix="busy")
-                return
-            row = streaming_slot_holder[0]
-            if row is None:
-                _open_find_device_dialog()
-                return
-            if not row_is_playback_apple_tv(row):
-                messagebox.showinfo(
-                    "Devices",
-                    "Metadata debug applies to Apple TV rows (label shows “Apple TV / tvOS”), not receivers.",
-                )
-                return
-            if not begin_apple_tv_operation("debugging metadata"):
-                return
-
-            def worker() -> None:
-                try:
-                    from pigeon.apple_tv_now_playing import debug_metadata_for_device
-
-                    ok_w, dump_w = debug_metadata_for_device(
-                        device_identifier=row["identifier"],
-                        device_address=row["address"],
-                    )
-                except ImportError:
-                    ok_w, dump_w = (
-                        False,
-                        _pyatv_install_hint(),
-                    )
-                except Exception as e:
-                    ok_w, dump_w = False, str(e)
-
-                def finish() -> None:
-                    title = "Apple TV Metadata Debug"
-                    end_apple_tv_operation()
-                    if ok_w:
-                        messagebox.showinfo(title, dump_w)
-                    else:
-                        messagebox.showerror(title, dump_w)
-
-                root.after(0, finish)
-
-            threading.Thread(target=worker, daemon=True).start()
+        on_debug_streaming_slot_apple_tv = _bind_deps(
+            _core_device_control.on_debug_streaming_slot_apple_tv,
+            _PIGEON_EXT=_PIGEON_EXT,
+            _open_find_device_dialog=_open_find_device_dialog,
+            _pyatv_install_hint=_pyatv_install_hint,
+            apple_tv_busy=apple_tv_busy,
+            begin_apple_tv_operation=begin_apple_tv_operation,
+            describe_current_apple_tv=describe_current_apple_tv,
+            end_apple_tv_operation=end_apple_tv_operation,
+            root=root,
+            streaming_slot_holder=streaming_slot_holder,
+        )
 
         _attach_hover_tooltip = _bind_deps(
             _core_settings_ui._attach_hover_tooltip,
@@ -10963,62 +9887,13 @@ def main() -> int:
         for _rseq in ("<Return>", "<KeyPress-Return>", "<KP_Enter>", "<KeyPress-KP_Enter>"):
             root.bind_class(HOTKEY_BINDTAG, _rseq, on_return_overlay_command)
 
-        def _send_player_play_pause_hotkey() -> bool:
-            """
-            If a **Player** slot is set, send play/pause on a worker thread (Apple TV: pyatv;
-            Roku: ECP). Returns True when a send was queued (so Space should not fall through).
-            """
-            if not _PIGEON_EXT:
-                return False
-            if apple_tv_busy["active"]:
-                return False
-            row = streaming_slot_holder[0]
-            if not row:
-                return False
-            if row_is_playback_apple_tv(row):
-                ident = str(current_apple_tv.get("identifier") or "").strip() or str(
-                    row.get("identifier") or ""
-                ).strip()
-                addr = str(current_apple_tv.get("address") or "").strip() or str(
-                    row.get("address") or ""
-                ).strip()
-                if not ident:
-                    return False
-                if not addr:
-                    addr = ident
-
-                try:
-                    from pigeon.apple_tv_now_playing import enqueue_apple_tv_remote_command
-
-                    if enqueue_apple_tv_remote_command(
-                        device_identifier=ident,
-                        device_address=addr,
-                        method_name="play_pause",
-                        scan_timeout_s=3,
-                    ):
-                        return True
-                except Exception:
-                    pass
-                return False
-            try:
-                from pigeon.roku_ecp import resolve_roku_ecp_base_url_for_row, roku_send_play_pause
-
-                rbase = str(resolve_roku_ecp_base_url_for_row(row) or "").strip()
-                if not rbase:
-                    return False
-            except Exception:
-                return False
-
-            def _work_roku() -> None:
-                try:
-                    from pigeon.roku_ecp import roku_send_play_pause
-
-                    roku_send_play_pause(base_url=rbase, timeout=3.0)
-                except Exception:
-                    pass
-
-            threading.Thread(target=_work_roku, daemon=True).start()
-            return True
+        _send_player_play_pause_hotkey = _bind_deps(
+            _core_device_control._send_player_play_pause_hotkey,
+            _PIGEON_EXT=_PIGEON_EXT,
+            apple_tv_busy=apple_tv_busy,
+            current_apple_tv=current_apple_tv,
+            streaming_slot_holder=streaming_slot_holder,
+        )
 
         def on_space_play(event: tk.Event) -> str | None:
             if _widget_accepts_typing(event.widget):
@@ -11049,7 +9924,7 @@ def main() -> int:
             if _send_player_play_pause_hotkey():
                 return "break"
             # After a TMDb fetch, bring backdrop + title logo to the screen (toggle_play often no-ops here).
-            if saved_backdrop_master_bgr is not None and not use_backdrop_scene:
+            if saved_backdrop_master_bgr is not None and not use_backdrop_scene[0]:
                 apply_saved_tmdb_backdrop_to_display()
                 return "break"
             toggle_play()
@@ -11716,7 +10591,7 @@ def main() -> int:
             sys.stderr.flush()
 
         def _apply_shell_size(w: int, h: int) -> None:
-            nonlocal black_photo, scaled_display, scaled_version
+            nonlocal scaled_display, scaled_version
             if w < 32 or h < 32:
                 return
             if display_dims[0] == w and display_dims[1] == h:
@@ -11731,16 +10606,16 @@ def main() -> int:
             except Exception:
                 pass
             fit_holder[0] = SceneFit(target_w=w, target_h=h)
-            black_photo = None
+            black_photo[0] = None
             skip_cache[0] = None
-            if use_backdrop_scene and backdrop_master_bgr is not None and not _PIGEON_EXT:
+            if use_backdrop_scene[0] and backdrop_master_bgr[0] is not None and not _PIGEON_EXT:
                 from pigeon.image_ui_protocol import backdrop_scene_bgr_for_display
 
                 scaled_display = backdrop_scene_bgr_for_display(
-                    backdrop_master_bgr,
+                    backdrop_master_bgr[0],
                     w,
                     h,
-                    app_logo_letterbox_fit=backdrop_app_logo_letterbox_fit,
+                    app_logo_letterbox_fit=backdrop_app_logo_letterbox_fit[0],
                     app_logo_clock_saver_style=_app_logo_clock_saver_style_now(),
                 )
                 scaled_version += 1
@@ -11755,8 +10630,8 @@ def main() -> int:
         sync_developer_chrome()
 
         def render_once() -> None:
-            nonlocal last_frame, brightness_current, scaled_display, scaled_version, black_photo
-            nonlocal playing, use_backdrop_scene, backdrop_master_bgr
+            nonlocal last_frame, brightness_current, scaled_display, scaled_version
+            nonlocal playing
 
             if _render_after_id[0] is not None:
                 try:
@@ -11815,7 +10690,7 @@ def main() -> int:
                 if _PIGEON_EXT and _idle_audio_listen():
                     return 100
                 if playing:
-                    return frame_interval_ms
+                    return frame_interval_ms[0]
                 # Post-splash clock fade-up needs a smooth cadence.
                 if _PIGEON_EXT and _clock_startup_intro_opacity(time.monotonic()) is not None:
                     return 33
@@ -11874,7 +10749,7 @@ def main() -> int:
                     STARTUP_AUTO_RESTORE_SAVED_BACKDROP
                     and saved_backdrop_master_bgr is not None
                     and scene_enabled[0]
-                    and not use_backdrop_scene
+                    and not use_backdrop_scene[0]
                 ):
                     apply_saved_tmdb_backdrop_to_display()
                     # Inner ``render_once`` schedules the loop, but guarantee a timer if that path returns early.
@@ -12037,10 +10912,10 @@ def main() -> int:
                         _record_live_audio_timing(t_compose0, t_compose1, t_compose2)
                     skip_cache[0] = scene_off_key
                 else:
-                    if black_photo is None:
-                        black_photo = _bgr_to_tk_image(_black_screen_bgr())
-                    label.configure(image=black_photo)
-                    label.image = black_photo
+                    if black_photo[0] is None:
+                        black_photo[0] = _bgr_to_tk_image(_black_screen_bgr())
+                    label.configure(image=black_photo[0])
+                    label.image = black_photo[0]
                 if _PIGEON_EXT and not meter_active_off:
                     try:
                         _capture_splash_underlay(out_bgr)
@@ -12052,8 +10927,8 @@ def main() -> int:
                 return
 
             if _backdrop_active_for_view():
-                if backdrop_master_bgr is None:
-                    use_backdrop_scene = False
+                if backdrop_master_bgr[0] is None:
+                    use_backdrop_scene[0] = False
             if not _backdrop_active_for_view():
                 _static_compose_without_video = (
                     _PIGEON_EXT
@@ -12374,161 +11249,52 @@ def main() -> int:
             denon_vol_cache=denon_vol_cache,
         )
 
-        def _commit_receiver_volume(vol: str) -> bool:
-            """Write the box-3 AVR level into the widgets. True if it changed."""
-            line = str(vol or "").strip()
-            if not line:
-                return False
-            try:
-                from pigeon.widgets.playback_overlay import _receiver_volume_display_line
+        _commit_receiver_volume = _bind_deps(
+            _core_device_control._commit_receiver_volume,
+            _clock_saver_volume=_clock_saver_volume,
+            _note_volume_graphics=_note_volume_graphics,
+            _remember_clock_saver_volume=_remember_clock_saver_volume,
+            denon_vol_cache=denon_vol_cache,
+            receiver_overlay_state=receiver_overlay_state,
+        )
 
-                norm = _receiver_volume_display_line(line)
-                if norm:
-                    line = norm
-            except Exception:
-                pass
-            try:
-                if _clock_saver_volume.is_stale_poll(line):
-                    return False
-            except Exception:
-                pass
-            prev = ""
-            try:
-                prev = str(denon_vol_cache.get("effective") or "")
-            except NameError:
-                prev = ""
-            try:
-                denon_vol_cache["effective"] = line
-                denon_vol_cache["np_hold"] = line
-            except NameError:
-                pass
-            try:
-                receiver_overlay_state["volume"] = line
-            except NameError:
-                pass
-            _remember_clock_saver_volume(line, source="poll")
-            _note_volume_graphics(line)
-            return prev != line
-
-        def _on_denon_telnet_volume(fields: dict[str, object]) -> None:
-            """Unsolicited telnet ``MV`` (IR / knob / HEOS) — paint immediately."""
-            from pigeon.receiver_denon import _volume_fields_line
-
-            line = _volume_fields_line({str(k): str(v) for k, v in fields.items()})
-            if not line:
-                return
-
-            def apply() -> None:
-                _note_volume_source_lines(telnet_line=line)
-                changed = _commit_receiver_volume(line)
-                if not changed and not _volume_lines.fading():
-                    return
-                if _idle_audio_meter_active():
-                    return
-                skip_cache[0] = None
-                try:
-                    if _view_one_uses_now_playing_screen() and not (
-                        _clock_saver_for_compose(time.monotonic())
-                        or clock_saver_force_on[0]
-                    ):
-                        _sync_now_playing_screen_state()
-                except Exception:
-                    pass
-                try:
-                    render_once()
-                except Exception:
-                    pass
-
-            try:
-                root.after(0, apply)
-            except Exception:
-                pass
+        _on_denon_telnet_volume = _bind_deps(
+            _core_device_control._on_denon_telnet_volume,
+            _clock_saver_for_compose=_clock_saver_for_compose,
+            _commit_receiver_volume=_commit_receiver_volume,
+            _idle_audio_meter_active=_idle_audio_meter_active,
+            _note_volume_source_lines=_note_volume_source_lines,
+            _sync_now_playing_screen_state=_sync_now_playing_screen_state,
+            _view_one_uses_now_playing_screen=_view_one_uses_now_playing_screen,
+            _volume_lines=_volume_lines,
+            clock_saver_force_on=clock_saver_force_on,
+            render_once=render_once,
+            root=root,
+            skip_cache=skip_cache,
+        )
 
         _bind_receiver_volume_hub = _bind_deps(
             _core_device_control._bind_receiver_volume_hub,
             _on_denon_telnet_volume=_on_denon_telnet_volume,
         )
 
-        def _quick_receiver_volume_poll() -> None:
-            """Telnet hub + AppCommand — a moving source updates the disc."""
-            if _volume_quick_busy[0]:
-                return
-            host = str(receiver_http_host.get("host") or "").strip()
-            if not host:
-                try:
-                    row = read_saved_av_receiver()
-                    host = str((row or {}).get("address") or "").strip()
-                except Exception:
-                    host = ""
-            if not host:
-                return
-            _volume_quick_busy[0] = True
-
-            def work() -> None:
-                vol = ""
-                src = ""
-                try:
-                    from pigeon.receiver_denon import (
-                        coalesce_receiver_volume_read,
-                        observe_receiver_volume,
-                    )
-
-                    tn_line, ac_line = observe_receiver_volume(
-                        host,
-                        timeout=1.0,
-                        telnet_blocking=True,
-                        allow_appcommand=True,
-                    )
-                    vol, src = coalesce_receiver_volume_read(
-                        telnet_line=tn_line,
-                        http_line=ac_line,
-                        last_http=str(denon_vol_cache.get("last_appcommand") or ""),
-                        last_telnet=str(denon_vol_cache.get("last_telnet") or ""),
-                        held=str(
-                            denon_vol_cache.get("effective")
-                            or denon_vol_cache.get("np_hold")
-                            or ""
-                        ),
-                        last_http_mono=float(
-                            denon_vol_cache.get("last_appcommand_mono") or 0.0
-                        ),
-                        last_telnet_mono=float(
-                            denon_vol_cache.get("last_telnet_mono") or 0.0
-                        ),
-                    )
-                    _note_volume_source_lines(telnet_line=tn_line, http_line=ac_line)
-                except Exception:
-                    vol, src = "", ""
-
-                def apply() -> None:
-                    _volume_quick_busy[0] = False
-                    if not vol:
-                        return
-                    changed = _commit_receiver_volume(vol)
-                    if not changed and not _volume_lines.fading():
-                        return
-                    if _idle_audio_meter_active():
-                        return
-                    skip_cache[0] = None
-                    try:
-                        if _view_one_uses_now_playing_screen() and not (
-                            _clock_saver_for_compose(time.monotonic())
-                            or clock_saver_force_on[0]
-                        ):
-                            _sync_now_playing_screen_state()
-                    except Exception:
-                        pass
-                    try:
-                        render_once()
-                    except Exception:
-                        pass
-
-                try:
-                    root.after(0, apply)
-                except Exception:
-                    _volume_quick_busy[0] = False
-
-            threading.Thread(target=work, daemon=True).start()
+        _quick_receiver_volume_poll = _bind_deps(
+            _core_device_control._quick_receiver_volume_poll,
+            _clock_saver_for_compose=_clock_saver_for_compose,
+            _commit_receiver_volume=_commit_receiver_volume,
+            _idle_audio_meter_active=_idle_audio_meter_active,
+            _note_volume_source_lines=_note_volume_source_lines,
+            _sync_now_playing_screen_state=_sync_now_playing_screen_state,
+            _view_one_uses_now_playing_screen=_view_one_uses_now_playing_screen,
+            _volume_lines=_volume_lines,
+            _volume_quick_busy=_volume_quick_busy,
+            clock_saver_force_on=clock_saver_force_on,
+            denon_vol_cache=denon_vol_cache,
+            receiver_http_host=receiver_http_host,
+            render_once=render_once,
+            root=root,
+            skip_cache=skip_cache,
+        )
 
         def _receiver_volume_poll_tick() -> None:
             root.after(RECEIVER_VOLUME_POLL_MS, _receiver_volume_poll_tick)
@@ -13033,8 +11799,8 @@ def main() -> int:
         root.mainloop()
     finally:
         _restore_desktop_chrome()
-        if cap is not None:
-            cap.release()
+        if cap[0] is not None:
+            cap[0].release()
     return 0
 
 

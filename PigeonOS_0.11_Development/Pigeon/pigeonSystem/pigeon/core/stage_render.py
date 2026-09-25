@@ -17,6 +17,9 @@ from pigeon.stage_background import get_stage_bgr
 from pigeon.compositing import cv_resize_interp
 import sys
 from pigeon.version import version_string
+from pathlib import Path
+from pigeon.stage_background import set_stage_bgr
+import time
 
 if TYPE_CHECKING:
     from pigeon_0_9 import DisplayView, SceneFit
@@ -365,3 +368,229 @@ def _on_advanced_matrix_closed(*, advanced_matrix_restore_phase, dev_phase, skip
         dev_phase[0] = tgt  # type: ignore[assignment]
         skip_cache[0] = None
         sync_developer_chrome()
+
+
+def _refresh_stage_from_poster(*, _PIGEON_EXT, _apply_stage_chrome_colors, black_photo, skip_cache) -> None:
+    if not _PIGEON_EXT:
+        set_stage_bgr(0, 0, 0)
+    else:
+        from pigeon.widgets.poster_art import sync_stage_background_from_active_poster
+
+        sync_stage_background_from_active_poster()
+    _apply_stage_chrome_colors()
+    black_photo[0] = None
+    skip_cache[0] = None
+
+
+def _compose_shown_frame(frame_bgr: np.ndarray | None, brightness: float, *, DESIGN_H, DESIGN_W, DisplayView, SceneFit, ViewOneVariant, _PIGEON_EXT, _PROJECT_DIR, _app_logo_clock_saver_style_now, _apply_brightness, _backdrop_active_for_view, _black_screen_bgr, _clock_saver_for_compose, _composite_cap_dims, _current_app_display_name, _current_view_one_variant, _design_grid_overlay_active, _effective_display_view, _paste_bgra_contain_on_design, _playback_display_title, _present_frame_to_display, _resolve_streaming_app_logo_bgra, _view_one_is_pigeon_poster, _view_one_variant_uses_full_path, _view_one_variant_uses_simple_path, _view_one_video_content_a_tt_contain_rect_design, _vv_has_content_title, _vv_has_tmdb_bd, _vv_is_music, _vv_music_text_lines, backdrop_app_logo_letterbox_fit, backdrop_master_bgr, compose_display_fast_no_grid, compose_display_from_source, display_dims, load_pigeon_temp_logo_bgra, render_ui_music_text_patch_bgra, render_ui_text_patch_bgra, status_bar_widget, view_circles_widget) -> np.ndarray:
+    if (
+        _PIGEON_EXT
+        and view_circles_widget is not None
+        and _effective_display_view() == DisplayView.ONE
+    ):
+        return compose_display_fast_no_grid(
+            frame_bgr,
+            brightness,
+            frame_is_display_sized=bool(
+                frame_bgr is not None
+                and frame_bgr.size > 0
+                and int(frame_bgr.shape[0]) == int(DESIGN_H)
+                and int(frame_bgr.shape[1]) == int(DESIGN_W)
+            ),
+        )
+
+    def _view_one_dark_accent_bg_bgr() -> tuple[int, int, int]:
+        """Darker variant of the current accent color for viewOne video a/c backgrounds.
+
+        Stays black until ``pigeonTMDB_BD`` is ready (so the accent is actually
+        sampled from a real backdrop, not the orange fallback).
+        """
+        if not _vv_has_tmdb_bd():
+            return (0, 0, 0)
+        if status_bar_widget is None:
+            return (0, 0, 0)
+        base = tuple(int(v) & 255 for v in status_bar_widget.accent_bgr)
+        # Keep the hue but darken enough to sit behind TT/poster overlays.
+        darken = 0.42
+        return (
+            int(round(base[0] * darken)),
+            int(round(base[1] * darken)),
+            int(round(base[2] * darken)),
+        )
+
+    if _PIGEON_EXT and _effective_display_view() == DisplayView.FOUR:
+        return _black_screen_bgr()
+    if (
+        _PIGEON_EXT
+        and _effective_display_view() != DisplayView.ONE
+        and _view_one_is_pigeon_poster()
+        and not _vv_is_music()
+        and _vv_has_content_title()
+    ):
+        # viewOne.videoContent_c: black base + active TMDb poster only
+        # (no pigeonTMDB_TT / no pigeonTMDB_BD), with the same chrome stack
+        # as the other View One layouts. Poster occupies y=[0, top(row 7)].
+        sb, sg, sr = _view_one_dark_accent_bg_bgr()
+        black = np.empty((DESIGN_H, DESIGN_W, 3), dtype=np.uint8)
+        black[:] = (sb, sg, sr)
+        return compose_display_from_source(
+            black,
+            brightness,
+            show_grid=_design_grid_overlay_active(),
+            frame_is_design_sized=True,
+        )
+    if (
+        _PIGEON_EXT
+        and _effective_display_view() != DisplayView.ONE
+        and _view_one_variant_uses_simple_path()
+        and not _backdrop_active_for_view()
+    ):
+        sb, sg, sr = _view_one_dark_accent_bg_bgr()
+        black = np.empty((DESIGN_H, DESIGN_W, 3), dtype=np.uint8)
+        black[:] = (sb, sg, sr)
+        sub2_logo_rect = _view_one_video_content_a_tt_contain_rect_design()
+        # MediaType.Music override (viewOne.01): TMDb doesn't index music
+        # tracks, so no pigeonTMDB_TT is available. Substitute a two-line
+        # text patch (track title large; "Artist - Album" smaller beneath)
+        # inside the same rect pigeonTMDB_TT would occupy. Short-circuits
+        # the V# resolver dispatch below so Music content consistently
+        # renders text regardless of which fallback variant would otherwise
+        # apply. The single-small-line case in ``render_ui_music_text_patch_bgra``
+        # gives the title ~76% of the box height and the subtitle the rest.
+        if _vv_is_music() and render_ui_music_text_patch_bgra is not None:
+            _m_title, _m_subtitle = _vv_music_text_lines()
+            if _m_title or _m_subtitle:
+                _music_bgra = render_ui_music_text_patch_bgra(
+                    _m_title,
+                    _m_subtitle,
+                    "",
+                    int(sub2_logo_rect[2]),
+                    int(sub2_logo_rect[3]),
+                )
+                if _music_bgra is not None:
+                    _paste_bgra_contain_on_design(
+                        black, _music_bgra, sub2_logo_rect
+                    )
+                    return compose_display_from_source(
+                        black,
+                        brightness,
+                        show_grid=_design_grid_overlay_active(),
+                        frame_is_design_sized=True,
+                    )
+        # Variant-aware TT-slot content. V01/V04 draw the real pigeonTMDB_TT via
+        # compose_display_from_source (post–v0.6.14 swap: V01 is the TT-only default,
+        # V04 is the BD-missing alternate); V06/.07/.08/.09 substitute a generated
+        # patch (title text / appLogo / app name / pigeonTempLogo).
+        _vv_simple = _current_view_one_variant()
+        _vv_use_default_tt = ViewOneVariant is None or _vv_simple in (
+            ViewOneVariant.V01,
+            ViewOneVariant.V04,
+        )
+        if not _vv_use_default_tt:
+            _override_bgra = None
+            if _vv_simple == ViewOneVariant.V06 and render_ui_text_patch_bgra is not None:
+                _override_bgra = render_ui_text_patch_bgra(
+                    _playback_display_title(),
+                    int(sub2_logo_rect[2]),
+                    int(sub2_logo_rect[3]),
+                )
+            elif _vv_simple == ViewOneVariant.V07:
+                _override_bgra = _resolve_streaming_app_logo_bgra()
+            elif _vv_simple == ViewOneVariant.V08 and render_ui_text_patch_bgra is not None:
+                _override_bgra = render_ui_text_patch_bgra(
+                    _current_app_display_name(),
+                    int(sub2_logo_rect[2]),
+                    int(sub2_logo_rect[3]),
+                )
+            elif _vv_simple == ViewOneVariant.V09 and load_pigeon_temp_logo_bgra is not None:
+                # Keep startup/no-content logo treatment centered, matching other app-logo
+                # presentations, while preserving the same max slot size.
+                _rw = max(1, int(sub2_logo_rect[2]))
+                _rh = max(1, int(sub2_logo_rect[3]))
+                _rx = max(0, (int(DESIGN_W) - _rw) // 2)
+                _ry = max(0, (int(DESIGN_H) - _rh) // 2)
+                sub2_logo_rect = (_rx, _ry, _rw, _rh)
+                _override_bgra = load_pigeon_temp_logo_bgra(
+                    Path(_PROJECT_DIR) / "pigeonAssets"
+                )
+                if _override_bgra is None:
+                    print(
+                        "pigeon: pigeonAssets/App logos/AppLogo_Pigeon.png not found — "
+                        "viewOne.noContent will render black only.",
+                        file=sys.stderr,
+                    )
+                else:
+                    # viewOne.noContent: Pigeon logo at 30% opacity.
+                    _override_bgra = _override_bgra.copy()
+                    _override_bgra[..., 3] = (
+                        _override_bgra[..., 3].astype(np.float32) * 0.30
+                    ).clip(0, 255).astype(np.uint8)
+            _v07_skip_tt_for_clock_saver = (
+                _vv_simple == ViewOneVariant.V07
+                and _clock_saver_for_compose(time.monotonic())
+            )
+            if not _v07_skip_tt_for_clock_saver:
+                _paste_bgra_contain_on_design(
+                    black, _override_bgra, sub2_logo_rect
+                )
+            return compose_display_from_source(
+                black,
+                brightness,
+                show_grid=_design_grid_overlay_active(),
+                frame_is_design_sized=True,
+            )
+        return compose_display_from_source(
+            black,
+            brightness,
+            show_grid=_design_grid_overlay_active(),
+            frame_is_design_sized=True,
+            tmdb_logo_cover_design_xywh=sub2_logo_rect,
+        )
+    # View 2 backdrop + visualizer-only is handled in ``compose_display_fast_no_grid``.
+    # View 1 pigeonFull also uses that backdrop fast path.
+    if (
+        _backdrop_active_for_view()
+        and backdrop_master_bgr[0] is not None
+        and _effective_display_view() != DisplayView.TWO
+        and not _view_one_variant_uses_full_path()
+    ):
+        from pigeon.image_ui_protocol import build_backdrop_design_layer_bgr
+
+        if not _PIGEON_EXT:
+            # Legacy path: use backdrop-only display if extension isn't available.
+            bd = build_backdrop_design_layer_bgr(
+                backdrop_master_bgr[0],
+                app_logo_letterbox_fit=backdrop_app_logo_letterbox_fit[0],
+                app_logo_clock_saver_style=_app_logo_clock_saver_style_now(),
+            )
+            return compose_display_from_source(bd, brightness, show_grid=False, frame_is_design_sized=True)
+        bd = build_backdrop_design_layer_bgr(
+            backdrop_master_bgr[0],
+            app_logo_letterbox_fit=backdrop_app_logo_letterbox_fit[0],
+            app_logo_clock_saver_style=_app_logo_clock_saver_style_now(),
+        )
+        return compose_display_from_source(
+            bd,
+            brightness,
+            show_grid=_design_grid_overlay_active(),
+            frame_is_design_sized=True,
+        )
+
+    if not _PIGEON_EXT:
+        if frame_bgr is None or frame_bgr.size == 0:
+            return _black_screen_bgr()
+        lit = _apply_brightness(frame_bgr, brightness)
+        dw, dh = display_dims[0], display_dims[1]
+        cw, ch, cap_down = _composite_cap_dims(dw, dh)
+        small = SceneFit(target_w=cw, target_h=ch).scale_and_crop(lit)
+        if cap_down:
+            return _present_frame_to_display(small, dw, dh)
+        return small
+    if _PIGEON_EXT and _design_grid_overlay_active():
+        return compose_display_from_source(frame_bgr, brightness, show_grid=True)
+    return compose_display_fast_no_grid(frame_bgr, brightness)
+
+
+def _backdrop_active_for_view(*, DisplayView, _effective_display_view, use_backdrop_scene) -> bool:
+    """True when backdrop scene should be used by the current effective view."""
+    return bool(use_backdrop_scene[0] and _effective_display_view() != DisplayView.SIX)

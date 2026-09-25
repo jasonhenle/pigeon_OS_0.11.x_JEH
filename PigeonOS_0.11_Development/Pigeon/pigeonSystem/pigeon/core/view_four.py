@@ -6,6 +6,8 @@ takes the app state it used to close over as keyword-only arguments;
 """
 
 from __future__ import annotations
+import cv2
+import re
 
 
 def _view_four_text_is_placeholder(s: str) -> bool:
@@ -366,4 +368,93 @@ def _collect_view_four_source_lines(*, _view_four_display_metadata, _view_four_h
             _ln(f"  {k}={rep}", False)
         if len(extra_keys) > 36:
             _ln(f"  … ({len(extra_keys) - 36} more keys)", False)
+    return rows
+
+
+def _collect_view_four_playback_lines(*, _view_four_display_metadata, _view_four_has_value, _view_four_text_is_placeholder, cap, display_dims, frame_interval_ms, receiver_overlay_state) -> list[tuple[str, bool]]:
+    rows: list[tuple[str, bool]] = []
+
+    def _ln(s: str, bold: bool = False) -> None:
+        if _view_four_text_is_placeholder(s):
+            return
+        rows.append((s, bold))
+
+    md_raw = _view_four_display_metadata()
+    md = md_raw if isinstance(md_raw, dict) else None
+    inc = str(receiver_overlay_state.get("incoming") or "").strip()
+    cfg = str(receiver_overlay_state.get("config") or "").strip()
+    vol_line = str(receiver_overlay_state.get("volume") or "").strip()
+    blob = f"{inc} {cfg}".lower()
+
+    def _channels_guess(s: str) -> str:
+        if "7.1" in s or "7_1" in s:
+            return "7.1 (hint)"
+        if "5.1" in s or "5_1" in s:
+            return "5.1 (hint)"
+        if "2.0" in s or "stereo" in s or "2ch" in s:
+            return "2.0 / stereo (hint)"
+        if "atmos" in s:
+            return "Atmos (hint)"
+        return "—"
+
+    fmt_parts: list[str] = []
+    if md:
+        mt = str(md.get("media_type") or "").strip()
+        if mt:
+            fmt_parts.append(mt)
+    if inc or cfg:
+        fmt_parts.append(f"receiver: {(inc + ' ' + cfg).strip()[:120]}")
+    if fmt_parts:
+        _ln(f"Audio playback format: {' | '.join(fmt_parts)}", False)
+
+    if md and md.get("audio_playback_bit_rate") is not None:
+        _ln(f"Audio playback bit rate: {str(md.get('audio_playback_bit_rate')).strip()}", False)
+    if md and md.get("audio_playback_bit_depth") is not None:
+        _ln(f"Audio playback bit depth: {str(md.get('audio_playback_bit_depth')).strip()}", False)
+    ch = _channels_guess(blob)
+    if _view_four_has_value(ch):
+        _ln(f"Audio playback available channels: {ch}", False)
+        _ln(f"Audio playback active channels: {ch}", False)
+
+    if vol_line:
+        scale = "dB scale" if ("db" in vol_line.lower() or re.search(r"-?\d+\.\d+\s*d", vol_line.lower())) else (
+            "0–100" if re.search(r"\b\d{1,3}\b", vol_line) and "%" not in vol_line and "db" not in vol_line.lower() else "receiver raw"
+        )
+        _ln(f"Audio playback volume: {vol_line}", False)
+        _ln(f"Audio playback volume scale: {scale}", False)
+    elif md and md.get("volume_percent") is not None:
+        try:
+            vp = int(max(0, min(100, round(float(md["volume_percent"])))))
+            _ln(f"Audio playback volume: {vp}", False)
+            _ln("Audio playback volume scale: Apple TV 0–100", False)
+        except (TypeError, ValueError):
+            pass
+
+    dw, dh = int(display_dims[0]), int(display_dims[1])
+    if dw > 0 and dh > 0:
+        _ln(f"Video playback resolution (window): {dw}×{dh}", False)
+
+    cap_fps = None
+    try:
+        if cap[0] is not None and cap[0].isOpened():
+            cf = float(cap[0].get(cv2.CAP_PROP_FPS) or 0.0)
+            if cf > 1.0:
+                cap_fps = cf
+    except Exception:
+        cap_fps = None
+    if cap_fps is not None:
+        _ln(f"Video capture nominal FPS: {cap_fps:.3g}", False)
+
+    ui_hz = 1000.0 / float(frame_interval_ms[0]) if frame_interval_ms[0] else 0.0
+    if ui_hz > 0:
+        _ln(f"UI composite cadence: ~{ui_hz:.2f} Hz (frame_interval_ms={frame_interval_ms[0]})", False)
+
+    if md:
+        ds = str(md.get("device_state") or "").strip()
+        pos = md.get("position")
+        tot = md.get("total_time")
+        if ds:
+            _ln(f"Device state: {ds}", False)
+        if _view_four_has_value(pos) or _view_four_has_value(tot):
+            _ln(f"Position / duration: {pos!r} / {tot!r}", False)
     return rows

@@ -822,3 +822,10 @@ def _refresh_extrapolated_timecodes(*, tick_steps: int = 1, _format_hmmss, _idle
             skip_cache[0] = None
     finally:
         _sync_status_bar_trt_substantive()
+
+
+def _warm_status_bar_blits(*, status_bar_blits, status_bar_widget) -> None:
+    if status_bar_widget is None:
+        status_bar_blits[0] = []
+        return
+    status_bar_blits[0] = list(status_bar_widget.design_blits())

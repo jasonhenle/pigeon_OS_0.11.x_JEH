@@ -65,8 +65,11 @@ def add_kwonly(text, fn, deps):
 
 def norm(fn):
     fn = copy.deepcopy(fn)
-    if fn.body and isinstance(fn.body[0], ast.Expr) and isinstance(getattr(fn.body[0], "value", None), ast.Constant) and isinstance(fn.body[0].value.value, str):
-        fn.body[0].value.value = inspect.cleandoc(fn.body[0].value.value)
+    # Docstrings (of the helper and of anything nested in it) are compared after
+    # cleandoc: dedenting the moved text legitimately changes their indentation.
+    for d in ast.walk(fn):
+        if isinstance(d, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and d.body and isinstance(d.body[0], ast.Expr) and isinstance(getattr(d.body[0], "value", None), ast.Constant) and isinstance(d.body[0].value.value, str):
+            d.body[0].value.value = inspect.cleandoc(d.body[0].value.value)
     for n in ast.walk(fn):
         for k in ("lineno", "col_offset", "end_lineno", "end_col_offset"):
             if hasattr(n, k): setattr(n, k, 0)

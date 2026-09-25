@@ -95,3 +95,22 @@ python3 $T/holder_equiv.py /tmp/before.py pigeon_0_9.py NAME ...   # AST: IDENTI
 
 Dead code noticed (never called, kept verbatim): `_remove_saved_receiver_device`,
 `set_current_receiver_only`.
+
+## Pass 6
+
+- `main()`-owned blockers: two redundant `import threading` statements inside
+  `main()` made `threading` a `main()` local (the module already imports it);
+  they are removed. `_clock_saver_volume` / `_volume_lines` are bound once
+  (null-object classes defined unconditionally). `cap` is holderized with
+  `holderize.py --main`.
+- Holderized in `bootstrap()`: `last_atv_interaction_mono`, `black_photo`,
+  `status_bar_blits`, `frame_interval_ms`, `use_backdrop_scene`,
+  `backdrop_master_bgr`, `backdrop_app_logo_letterbox_fit`, `tmdb_logo_patch_bgra`.
+- `transform.py` now also compares nested docstrings after `cleandoc`
+  (dedenting a helper legitimately re-indents docstrings of functions inside it).
+- `plan6.json` / `plan6b.json` lift 21 helpers; new module `pigeon/core/pairing.py`.
+
+Still blocked: the remaining helpers are mostly forward-reference cases that
+`pass3.py` rejects (they can run before a name they use is bound), plus 9
+recursive helpers. `_handle_main_settings_action` is blocked by the
+`_stale_skip_cache` nonlocal until the skip_cache quirk is fixed for real.
