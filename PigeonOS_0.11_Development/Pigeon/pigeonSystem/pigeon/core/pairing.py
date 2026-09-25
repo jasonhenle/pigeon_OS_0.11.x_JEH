@@ -18,6 +18,13 @@ import time
 import tkinter as tk
 import tkinter.messagebox as messagebox
 import tkinter.simpledialog as simpledialog
+from pigeon.app_state import clear_last_apple_tv
+from pigeon.app_state import clear_last_receiver
+from pigeon.app_state import read_saved_av_receiver
+from pigeon.app_state import read_saved_streaming_device
+from pigeon.app_state import read_saved_streaming_devices_all
+from pigeon.app_state import remove_device_at_slot_index
+from pigeon.app_state import write_last_receiver
 
 
 def _verify_added_devices_after_save(added: list[dict[str, str]], *, root) -> None:
@@ -744,3 +751,227 @@ def _finish_remote_then_start_airplay(row: dict[str, str], dn: str, session_key_
         root.after(0, done_rf)
 
     threading.Thread(target=worker_remote_finish, daemon=True).start()
+
+
+def _remove_streaming_device_at(for_location_id: str, index: int, *, _clear_reported_position_stall_stamp, _rebuild_paired_devices_panel, _schedule_refresh_pairing_leds, _sync_status_bar_visibility_for_playback, apple_tv_auto_state, apple_tv_busy, apple_tv_dashboard_track, apple_tv_playback_clock, current_apple_tv, describe_current_apple_tv, playback_overlay_widget, render_once, root, skip_cache, streaming_slot_holder) -> None:
+    if apple_tv_busy["active"]:
+        describe_current_apple_tv(suffix="busy")
+        return
+    if not messagebox.askyesno(
+        "Remove Player",
+        "Remove this Player entry from this location?",
+        parent=root,
+    ):
+        return
+    lid = str(for_location_id or "").strip()
+    remove_device_at_slot_index("streaming", int(index), for_location_id=lid or None)
+    cur = read_current_location_id()
+    remaining = read_saved_streaming_devices_all()
+    if lid and cur and lid == cur:
+        streaming_slot_holder[0] = read_saved_streaming_device()
+        if not remaining:
+            clear_last_apple_tv()
+            current_apple_tv.clear()
+            current_apple_tv.update(
+                {"identifier": "", "address": "", "name": "", "label": ""}
+            )
+            apple_tv_auto_state["content_key"] = None
+            apple_tv_auto_state["tmdb_key"] = None
+            apple_tv_auto_state["query"] = None
+            apple_tv_auto_state["last_metadata"] = None
+            apple_tv_auto_state["last_tmdb_fetch_input"] = None
+            apple_tv_auto_state["last_tmdb_fetch_refined"] = None
+            apple_tv_auto_state["last_tmdb_fetch_prefer"] = None
+            apple_tv_playback_clock.clear()
+            apple_tv_playback_clock.update(
+                {
+                    "has_sync": False,
+                    "sync_mono": 0.0,
+                    "sync_position": 0.0,
+                    "live_mode": False,
+                    "playing": False,
+                    "latched_total": None,
+                    "latched_content_key": None,
+                    "last_reported_total": None,
+                    "display_played_sec": None,
+                    "trt_next_fire_mono": None,
+                }
+            )
+            _clear_reported_position_stall_stamp()
+            apple_tv_dashboard_track["last_poll_ok"] = None
+            apple_tv_dashboard_track["consecutive_fail"] = 0
+            _sync_status_bar_visibility_for_playback(None)
+        if playback_overlay_widget is not None:
+            playback_overlay_widget.clear_cache()
+    skip_cache[0] = None
+    try:
+        render_once()
+    except Exception:
+        pass
+    describe_current_apple_tv()
+    _rebuild_paired_devices_panel()
+    _schedule_refresh_pairing_leds()
+
+
+def _remove_receiver_device_at(for_location_id: str, index: int, *, _rebuild_paired_devices_panel, _schedule_refresh_pairing_leds, apple_tv_busy, avr_slot_holder, describe_current_apple_tv, playback_overlay_widget, receiver_http_host, render_once, root, skip_cache) -> None:
+    if apple_tv_busy["active"]:
+        describe_current_apple_tv(suffix="busy")
+        return
+    if not messagebox.askyesno(
+        "Remove Receiver",
+        "Remove this Receiver entry from this location?",
+        parent=root,
+    ):
+        return
+    lid = str(for_location_id or "").strip()
+    remove_device_at_slot_index("av_receiver", int(index), for_location_id=lid or None)
+    cur = read_current_location_id()
+    if lid and cur and lid == cur:
+        avr_slot_holder[0] = read_saved_av_receiver()
+        if avr_slot_holder[0] is None:
+            clear_last_receiver()
+            receiver_http_host["host"] = ""
+        else:
+            av2 = avr_slot_holder[0]
+            adr = str(av2.get("address") or "").strip()
+            if adr:
+                write_last_receiver(
+                    host=adr,
+                    name=str(av2.get("name") or "").strip() or None,
+                    label=str(av2.get("label") or "").strip() or None,
+                    device_id=str(av2.get("identifier") or "").strip() or None,
+                )
+                receiver_http_host["host"] = adr
+        if playback_overlay_widget is not None:
+            playback_overlay_widget.clear_cache()
+    skip_cache[0] = None
+    try:
+        render_once()
+    except Exception:
+        pass
+    describe_current_apple_tv()
+    _rebuild_paired_devices_panel()
+    _schedule_refresh_pairing_leds()
+
+
+def _remove_aux_slot_device_at(
+    for_location_id: str,
+    slot_key: str,
+    index: int,
+    *,
+    role_title: str,
+    _apply_persisted_location_to_runtime, _rebuild_paired_devices_panel, _schedule_refresh_pairing_leds, apple_tv_busy, describe_current_apple_tv, render_once, root, skip_cache,
+) -> None:
+    if apple_tv_busy["active"]:
+        describe_current_apple_tv(suffix="busy")
+        return
+    if not messagebox.askyesno(
+        f"Remove {role_title}",
+        f"Remove this {role_title} entry from this location?",
+        parent=root,
+    ):
+        return
+    lid = str(for_location_id or "").strip()
+    remove_device_at_slot_index(slot_key, int(index), for_location_id=lid or None)
+    _apply_persisted_location_to_runtime()
+    describe_current_apple_tv()
+    _rebuild_paired_devices_panel()
+    _schedule_refresh_pairing_leds()
+    skip_cache[0] = None
+    try:
+        render_once()
+    except Exception:
+        pass
+
+
+def _schedule_refresh_pairing_leds(*, _PIGEON_EXT, _content_indicator_ok, _paint_boolean_led, _paint_cred_led_canvas, _paint_pair_led, _pair_led_pending_retry, _refresh_observed_pairing_led_rows, _schedule_refresh_pairing_leds, apple_tv_busy, apple_tv_dashboard_track, main_settings_widget, pair_led_busy, paired_ui_leds, root, streaming_row_led_canvas_holder, streaming_slot_holder) -> None:
+
+    stream_led = streaming_row_led_canvas_holder[0]
+    # Extra pyatv scans here during discover/pair overlap the TV; refresh after busy clears instead.
+    if apple_tv_busy["active"]:
+        return
+    if not _PIGEON_EXT:
+        if stream_led is not None:
+            try:
+                _paint_boolean_led(stream_led, False)
+            except tk.TclError:
+                pass
+        _paint_pair_led(0, False)
+        _paint_pair_led(1, False)
+        _refresh_observed_pairing_led_rows()
+        return
+    if pair_led_busy["active"]:
+        if not _pair_led_pending_retry[0]:
+            _pair_led_pending_retry[0] = True
+
+            def _retry_pair_leds() -> None:
+                _pair_led_pending_retry[0] = False
+                _schedule_refresh_pairing_leds()
+
+            root.after(120, _retry_pair_leds)
+        return
+    pair_led_busy["active"] = True
+    row_snap = streaming_slot_holder[0]
+
+    def work() -> None:
+        comp_sel, air_sel = False, False
+        both_ok = False
+        if row_snap:
+            try:
+                from pigeon.apple_tv_now_playing import apple_tv_pairing_credentials_status
+
+                c, a = apple_tv_pairing_credentials_status(
+                    device_identifier=str(row_snap.get("identifier", "")),
+                    device_address=str(row_snap.get("address", "")),
+                )
+                comp_sel, air_sel = bool(c), bool(a)
+                both_ok = comp_sel and air_sel
+            except Exception:
+                comp_sel, air_sel = False, False
+
+        def apply_leds() -> None:
+            pair_led_busy["active"] = False
+            lpo = apple_tv_dashboard_track.get("last_poll_ok")
+            cf = int(apple_tv_dashboard_track.get("consecutive_fail", 0) or 0)
+            poll_unhealthy = lpo is False and cf >= 1
+
+            def _cred_led(has_cred: bool) -> bool | None:
+                if not has_cred:
+                    return False
+                if poll_unhealthy:
+                    return None
+                return True
+
+            stream_tri: bool | None = False
+            if row_snap and comp_sel and air_sel:
+                stream_tri = None if poll_unhealthy else True
+            elif row_snap and (comp_sel or air_sel):
+                stream_tri = False
+            if stream_led is not None:
+                try:
+                    _paint_boolean_led(stream_led, stream_tri)
+                except tk.TclError:
+                    pass
+            _paint_pair_led(0, _cred_led(comp_sel))
+            _paint_pair_led(1, _cred_led(air_sel))
+            pr = paired_ui_leds.get("remote")
+            pa = paired_ui_leds.get("airplay")
+            if pr is not None:
+                _paint_cred_led_canvas(pr, _cred_led(comp_sel))
+            if pa is not None:
+                _paint_cred_led_canvas(pa, _cred_led(air_sel))
+            _refresh_observed_pairing_led_rows()
+            if main_settings_widget is not None:
+                try:
+                    st_led = main_settings_widget.state
+                    if st_led.show_pigeon_settings:
+                        meta_ok = bool(_content_indicator_ok())
+                        if st_led.pigeon_metadata_ok != meta_ok:
+                            st_led.pigeon_metadata_ok = meta_ok
+                            main_settings_widget.invalidate()
+                except Exception:
+                    pass
+
+        root.after(0, apply_leds)
+
+    threading.Thread(target=work, daemon=True).start()

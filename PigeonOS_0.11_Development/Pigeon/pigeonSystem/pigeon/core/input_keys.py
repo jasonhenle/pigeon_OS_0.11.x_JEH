@@ -324,3 +324,352 @@ def on_escape(event: tk.Event, *, _bump_pigeon_user_activity, command_entry_visi
         return "break"
     quit_app()
     return "break"
+
+
+def _on_label_button_release_peek_or_bump(event: tk.Event, *, CLOCK_SAVER_PEEK_S, _PIGEON_EXT, _bump_pigeon_user_activity, _clock_saver_for_compose, clock_saver_composite_bgra, clock_saver_peek_until_mono, render_once, skip_cache) -> None:
+    if _PIGEON_EXT and clock_saver_composite_bgra is not None:
+        now_e = time.monotonic()
+        if _clock_saver_for_compose(now_e):
+            clock_saver_peek_until_mono[0] = now_e + CLOCK_SAVER_PEEK_S
+            _bump_pigeon_user_activity(event)
+            skip_cache[0] = None
+            try:
+                render_once()
+            except Exception:
+                pass
+            return
+    _bump_pigeon_user_activity(event)
+
+
+def on_display_view_digit(event: tk.Event, *, DevPhase, DisplayView, ViewOneLayout, _PIGEON_EXT, _bump_pigeon_user_activity, _capture_last_view_one_layout_from_live_view, _current_view_one_variant, _idle_saver_face_toggle_ok, _sync_now_playing_screen_state, _toggle_clock_saver_force, _vv_is_music, _widget_accepts_typing, dev_phase, display_view_holder, main_settings_widget, render_once, skip_cache, sync_developer_chrome, toggle_audio_meter_face, variant_has_alternate, view_circles_widget, view_five_mode_holder, view_four_subview_holder, view_one_layout_holder) -> str | None:
+    if _widget_accepts_typing(event.widget):
+        return None
+    if not _PIGEON_EXT:
+        return None
+    ch = getattr(event, "char", "") or ""
+    if ch not in "012345678":
+        return None
+    st_md = main_settings_widget.state if main_settings_widget is not None else None
+    md_open = bool(
+        st_md is not None
+        and dev_phase[0] == DevPhase.MAIN_SETTINGS
+        and st_md.show_metadata_debug
+    )
+    if md_open and ch != "0":
+        # Inspector is modal: EXIT (or [0] to close) are the only ways out.
+        _bump_pigeon_user_activity(event)
+        return "break"
+    if ch == "0" and st_md is not None:
+        if dev_phase[0] == DevPhase.MAIN_SETTINGS and st_md.keyboard is not None:
+            return None
+        if md_open:
+            st_md.close_metadata_debug()
+            st_md.exit_pigeon_settings()
+            main_settings_widget.invalidate()
+            dev_phase[0] = DevPhase.OFF
+        else:
+            st_md.open_metadata_debug()
+            main_settings_widget.invalidate()
+            if dev_phase[0] != DevPhase.MAIN_SETTINGS:
+                dev_phase[0] = DevPhase.MAIN_SETTINGS
+                try:
+                    main_settings_widget.prefetch_scans_for_settings()
+                except Exception:
+                    pass
+        skip_cache[0] = None
+        sync_developer_chrome()
+        _bump_pigeon_user_activity(event)
+        _capture_last_view_one_layout_from_live_view()
+        render_once()
+        return "break"
+    if ch == "2":
+        st_key = int(getattr(event, "state", 0))
+        sh_key = bool(st_key & 0x0001)
+        if sh_key:
+            return _toggle_clock_saver_force(event)
+    if dev_phase[0] != DevPhase.OFF:
+        _bump_pigeon_user_activity(event)
+        return "break"
+    if ch == "1":
+        st_key = int(getattr(event, "state", 0))
+        sh_key = bool(st_key & 0x0001)
+        if (
+            not sh_key
+            and toggle_audio_meter_face is not None
+            and _idle_saver_face_toggle_ok()
+        ):
+            # Steal [1] only while the idle saver is up so NP zone-1 still works.
+            on = toggle_audio_meter_face()
+            try:
+                sys.stderr.write(
+                    "pigeon: idle face "
+                    + ("audio meter\n" if on else "clock saver\n")
+                )
+                sys.stderr.flush()
+            except Exception:
+                pass
+            skip_cache[0] = None
+            try:
+                render_once()
+            except Exception:
+                pass
+            return "break"
+    if ch in "12345678" and display_view_holder[0] == DisplayView.ONE:
+        st_key = int(getattr(event, "state", 0))
+        sh_key = bool(st_key & 0x0001)
+        if ch == "1" and sh_key:
+            _vv_now = _current_view_one_variant()
+            if (
+                _vv_now is not None
+                and variant_has_alternate is not None
+                and not variant_has_alternate(_vv_now)
+            ):
+                _bump_pigeon_user_activity(event)
+                return "break"
+            _cur = int(view_one_layout_holder[0])
+            if _cur == int(ViewOneLayout.PIGEON_FULL):
+                view_one_layout_holder[0] = int(ViewOneLayout.PIGEON_SIMPLE)
+            elif _cur == int(ViewOneLayout.PIGEON_SIMPLE):
+                view_one_layout_holder[0] = int(ViewOneLayout.PIGEON_POSTER)
+            else:
+                view_one_layout_holder[0] = int(ViewOneLayout.PIGEON_FULL)
+            skip_cache[0] = None
+            _bump_pigeon_user_activity(event)
+            _capture_last_view_one_layout_from_live_view()
+            return "break"
+        try:
+            from pigeon.np_zone_keys import cycle_now_playing_zone
+            from pigeon.widgets.preferences_settings import (
+                read_np_header_clock,
+                read_now_playing_zone_widgets,
+                write_np_header_clock,
+                write_now_playing_zone_widgets,
+            )
+
+            mode = "music" if _vv_is_music() else "video"
+            cur = read_now_playing_zone_widgets(content_mode=mode)
+            header = read_np_header_clock()
+            nxt, header_on = cycle_now_playing_zone(
+                cur,
+                int(ch),
+                content_mode=mode,
+                header_clock=header,
+            )
+            write_now_playing_zone_widgets(nxt, content_mode=mode)
+            write_np_header_clock(header_on)
+            if view_circles_widget is not None:
+                view_circles_widget.clear_cache()
+            _sync_now_playing_screen_state()
+        except Exception:
+            pass
+        skip_cache[0] = None
+        _bump_pigeon_user_activity(event)
+        _capture_last_view_one_layout_from_live_view()
+        render_once()
+        return "break"
+    if ch == "4" and display_view_holder[0] == DisplayView.FOUR:
+        view_four_subview_holder[0] = (int(view_four_subview_holder[0]) + 1) % 3
+        skip_cache[0] = None
+        _bump_pigeon_user_activity(event)
+        return "break"
+    if ch == "5" and display_view_holder[0] == DisplayView.FIVE:
+        view_five_mode_holder[0] = (int(view_five_mode_holder[0]) + 1) % 3
+        skip_cache[0] = None
+        _bump_pigeon_user_activity(event)
+        return "break"
+    if ch in "145":
+        display_view_holder[0] = DisplayView(int(ch))
+        if ch == "1":
+            view_one_layout_holder[0] = int(ViewOneLayout.PIGEON_FULL)
+        if ch == "4":
+            view_four_subview_holder[0] = 0
+        if ch == "5":
+            view_five_mode_holder[0] = 0
+        skip_cache[0] = None
+        _bump_pigeon_user_activity(event)
+        _capture_last_view_one_layout_from_live_view()
+        return "break"
+    return "break"
+
+
+def on_arrow_remote(event: tk.Event, *, DevPhase, _PIGEON_EXT, _nav_request, _widget_accepts_typing, apple_tv_busy, current_apple_tv, dev_phase, main_settings_widget, render_once, skip_cache, streaming_slot_holder) -> str | None:
+    if _widget_accepts_typing(event.widget):
+        return None
+    if not _PIGEON_EXT:
+        return None
+    ks = getattr(event, "keysym", "") or ""
+    if ks not in ("Up", "Down", "Left", "Right"):
+        return None
+    if dev_phase[0] == DevPhase.MAIN_SETTINGS and main_settings_widget is not None:
+        if ks == "Right":
+            main_settings_widget.navigate(forward=True)
+            skip_cache[0] = None
+            req = _nav_request[0]
+            req() if req is not None else render_once()
+            return "break"
+        if ks == "Left":
+            main_settings_widget.navigate(forward=False)
+            skip_cache[0] = None
+            req = _nav_request[0]
+            req() if req is not None else render_once()
+            return "break"
+        return "break"
+    from pigeon.player_remote import queue_player_remote_action
+
+    st = int(getattr(event, "state", 0))
+    if st & 0x0004:
+        return None
+    sh = bool(st & 0x0001)
+    meta_cmd = (
+        bool(st & 0x100000)
+        or bool(st & 0x080000)
+        or bool(st & 0x0008)
+        or bool(st & 0x20000)
+    )
+    row = streaming_slot_holder[0]
+    if meta_cmd:
+        cmd_map = {
+            "Up": "power_on",
+            "Down": "power_off",
+            "Left": "back",
+            "Right": "home",
+        }
+        act = cmd_map.get(ks)
+        if act:
+            queue_player_remote_action(
+                row,
+                current_apple_tv=current_apple_tv,
+                action=act,
+                apple_tv_busy=apple_tv_busy,
+            )
+        return "break"
+    if sh:
+        if ks == "Up":
+            queue_player_remote_action(
+                row,
+                current_apple_tv=current_apple_tv,
+                action="volume_up",
+                apple_tv_busy=apple_tv_busy,
+            )
+        elif ks == "Down":
+            queue_player_remote_action(
+                row,
+                current_apple_tv=current_apple_tv,
+                action="volume_down",
+                apple_tv_busy=apple_tv_busy,
+            )
+        elif ks == "Left":
+            queue_player_remote_action(
+                row,
+                current_apple_tv=current_apple_tv,
+                action="skip_back",
+                apple_tv_busy=apple_tv_busy,
+            )
+        elif ks == "Right":
+            queue_player_remote_action(
+                row,
+                current_apple_tv=current_apple_tv,
+                action="skip_fwd",
+                apple_tv_busy=apple_tv_busy,
+            )
+        return "break"
+    nav = {
+        "Up": "nav_up",
+        "Down": "nav_down",
+        "Left": "nav_left",
+        "Right": "nav_right",
+    }.get(ks)
+    if nav:
+        queue_player_remote_action(
+            row,
+            current_apple_tv=current_apple_tv,
+            action=nav,
+            apple_tv_busy=apple_tv_busy,
+        )
+    return "break"
+
+
+def _on_par_chord_press(event: tk.Event, *, _par_chord_fired, _par_chord_held, _widget_accepts_typing, render_once, skip_cache) -> str | None:
+    if _widget_accepts_typing(event.widget):
+        return None
+    ks = (getattr(event, "keysym", "") or "").lower()
+    if ks not in ("p", "a", "r"):
+        return None
+    _par_chord_held.add(ks)
+    if not ({"p", "a", "r"} <= _par_chord_held) or _par_chord_fired[0]:
+        return None
+    _par_chord_fired[0] = True
+    try:
+        from pigeon.display_par import cycle_par_mode
+
+        mode, par, reason = cycle_par_mode()
+    except Exception as exc:
+        sys.stderr.write(f"pigeon: PAR chord failed: {exc}\n")
+        sys.stderr.flush()
+        return "break"
+    msg = f"pigeon: display PAR → mode={mode}  effective={par:.4f}  ({reason})"
+    sys.stderr.write(msg + "\n")
+    sys.stderr.flush()
+    try:
+        from pigeon.pi_diagnostics import append_pigeon_log
+
+        append_pigeon_log(msg)
+    except Exception:
+        pass
+    skip_cache[0] = None
+    try:
+        render_once()
+    except Exception:
+        pass
+    return "break"
+
+
+def _on_rotary_action(action: str, *, DevPhase, _bump_pigeon_user_activity, _enter_main_settings_for_rotary, _handle_main_settings_action, _nav_request, dev_phase, main_settings_widget, render_once, root, skip_cache, sync_developer_chrome) -> None:
+    _bump_pigeon_user_activity()
+    was_main = dev_phase[0] == DevPhase.MAIN_SETTINGS
+    if not _enter_main_settings_for_rotary():
+        try:
+            from pigeon.rotary_serial import inject_keysym
+
+            keysym = {
+                "forward": "Right",
+                "backward": "Left",
+                "activate": "space",
+            }.get(action)
+            if keysym:
+                inject_keysym(root, keysym)
+        except Exception:
+            pass
+        return
+    # First click that opens settings should not also activate a control.
+    if action == "activate" and not was_main:
+        return
+    if action == "forward":
+        main_settings_widget.navigate(forward=True)
+        skip_cache[0] = None
+        req = _nav_request[0]
+        req() if req is not None else render_once()
+        return
+    if action == "backward":
+        main_settings_widget.navigate(forward=False)
+        skip_cache[0] = None
+        req = _nav_request[0]
+        req() if req is not None else render_once()
+        return
+    if action == "activate":
+        ms_action = main_settings_widget.activate()
+        if ms_action == "exit":
+            if main_settings_widget is not None and not bool(
+                getattr(main_settings_widget.state, "exit_enabled", True)
+            ):
+                skip_cache[0] = None
+                render_once()
+            else:
+                dev_phase[0] = DevPhase.OFF
+                skip_cache[0] = None
+                sync_developer_chrome()
+                render_once()
+        else:
+            _handle_main_settings_action(ms_action)
+            skip_cache[0] = None
+            render_once()

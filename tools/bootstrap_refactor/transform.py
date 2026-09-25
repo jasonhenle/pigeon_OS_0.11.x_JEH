@@ -100,8 +100,10 @@ for mod, names in PLAN.items():
         assert norm(chk) == norm(fn), f"AST mismatch {name}"
         modules_out.setdefault(mod, []).append((name, new, set(r["imps"]) | set(imps)))
         if deps:
-            b = f"{IND}{name} = _bind_deps(\n{IND}    _core_{mod}.{name},\n" + "".join(f"{IND}    {d}={d},\n" for d in deps) + f"{IND})\n"
-            one = f"{IND}{name} = _bind_deps(_core_{mod}.{name}, " + ", ".join(f"{d}={d}" for d in deps) + ")\n"
+            late = set(r.get("late", ()))
+            val = lambda d: f'_late(lambda: {d}, "{d}")' if d in late else d
+            b = f"{IND}{name} = _bind_deps(\n{IND}    _core_{mod}.{name},\n" + "".join(f"{IND}    {d}={val(d)},\n" for d in deps) + f"{IND})\n"
+            one = f"{IND}{name} = _bind_deps(_core_{mod}.{name}, " + ", ".join(f"{d}={val(d)}" for d in deps) + ")\n"
             if len(one) <= 100: b = one
         else:
             b = f"{IND}{name} = _core_{mod}.{name}\n"
@@ -145,6 +147,12 @@ while k <= len(lines):
     k += 1
 src2 = "".join(out)
 # add module imports
+if any(ROWS[n].get("late") for names in PLAN.values() for n in names):
+    imp = "from pigeon.core.binding import late as _late\n"
+    if imp not in src2:
+        anchor = "from pigeon.core.binding import bind_deps as _bind_deps\n"
+        assert anchor in src2
+        src2 = src2.replace(anchor, anchor + imp, 1)
 for mod in PLAN:
     imp = f"from pigeon.core import {mod} as _core_{mod}\n"
     if imp not in src2:

@@ -594,3 +594,484 @@ def _compose_shown_frame(frame_bgr: np.ndarray | None, brightness: float, *, DES
 def _backdrop_active_for_view(*, DisplayView, _effective_display_view, use_backdrop_scene) -> bool:
     """True when backdrop scene should be used by the current effective view."""
     return bool(use_backdrop_scene[0] and _effective_display_view() != DisplayView.SIX)
+
+
+def _warm_info_cluster_blits(now_mono: float, *, _PIGEON_EXT, _info_cluster_blits_sig, _info_cluster_compose_active, _location_toast_alpha, build_info_cluster_design_patches, info_cluster_blits, info_cluster_clock_widget, location_toast_state, receiver_overlay_state, status_bar_widget) -> None:
+    if (
+        not _PIGEON_EXT
+        or build_info_cluster_design_patches is None
+        or info_cluster_clock_widget is None
+    ):
+        info_cluster_blits[0] = []
+        _info_cluster_blits_sig[0] = None
+        return
+    if not _info_cluster_compose_active(now_mono):
+        info_cluster_blits[0] = []
+        _info_cluster_blits_sig[0] = None
+        return
+    st = location_toast_state
+    startup_tl = bool(st.get("startup_top_left"))
+    ta = (
+        _location_toast_alpha(now_mono)
+        if (bool(st.get("active")) and not startup_tl)
+        else 0.0
+    )
+    acc: tuple[int, int, int] | None = (
+        tuple(status_bar_widget.accent_bgr)
+        if status_bar_widget is not None
+        else None
+    )
+    sig = (
+        int(time.time()),
+        str(receiver_overlay_state.get("config", "")),
+        str(receiver_overlay_state.get("volume", "")),
+        str(st.get("text", "")),
+        int(round(float(ta) * 1000.0)),
+        int(bool(startup_tl)),
+        acc,
+    )
+    if sig == _info_cluster_blits_sig[0]:
+        return
+    _info_cluster_blits_sig[0] = sig
+    info_cluster_blits[0] = build_info_cluster_design_patches(
+        clock_widget=info_cluster_clock_widget,
+        audio_config=str(receiver_overlay_state.get("config", "")),
+        volume=str(receiver_overlay_state.get("volume", "")),
+        location=str(st.get("text", "")),
+        location_alpha=float(ta),
+        shadow_bgr=acc,
+    )
+
+
+def compose_display_from_source(
+    frame_bgr: np.ndarray | None,
+    brightness: float,
+    *,
+    show_grid: bool,
+    frame_is_design_sized: bool = False,
+    tmdb_logo_cover_design_xywh: tuple[int, int, int, int] | None = None,
+    CLOCK_ANCHOR_COL, CLOCK_ANCHOR_ROW, DESIGN_H, DESIGN_W, DevPhase, DisplayView, PATCH_LAYER_RECEIVER_AUDIO, SceneFit, _PIGEON_EXT, _active_tmdb_logo_widget, _active_tmdb_poster_bgra, _apply_auto_widget_policy, _apply_brightness, _blend_info_cluster_into_target, _blend_top_gradient_design, _blit_saver_layers_design, _clock_saver_backdrop_brightness, _clock_saver_dim_overlay_bgra, _clock_saver_dim_pre_digit_canvas, _clock_saver_for_compose, _clock_saver_layer_opacity, _clock_saver_layers, _clock_startup_intro_opacity, _compose_paused_screen, _composite_cap_dims, _composite_settings_on_canvas, _effective_display_view, _hitch_parts, _idle_audio_meter_active, _info_cluster_compose_active, _location_toast_alpha, _maybe_exit_settings_menus_on_idle, _paused_screen_active, _present_frame_to_display, _set_playback_overlay_clock_saver_volume_flag, _settings_is_native_1280, _show_paused_row_overlay, _splash_reveal_clock, _stage_grid_overlay_mode, _styled_video_content_c_poster, _sync_now_playing_screen_state_for_frame, _view_one_is_pigeon_poster, _view_one_uses_now_playing_screen, _view_one_video_content_a_tt_contain_rect_design, _vv_is_music, _warm_playback_overlay_blits, active_tmdb_display_title, active_tmdb_title_key, alpha_blend_bgra_over_bgr, blend_overlay_bgr, build_stage_overlay_source_bgra, clock_widget, dev_phase, display_dims, get_grid_geometry, location_toast_patch_bgra, location_toast_state, main_settings_widget, playback_lower_gradient_bgra, playback_overlay_flags, playback_overlay_widget, scale_cover_center_crop, scale_height_and_center_crop, startup_ph, status_bar_widget, tmdb_tt_gradient_bgr_holder, view_circles_widget,
+) -> np.ndarray:
+    """
+    Build display output: scale **source** video to design, draw widgets, optionally grid,
+    then scale down. Using the raw frame avoids letterboxing an already 800×480 image (which shifted
+    the grid/poster and cropped them on the left). Developer grid mode uses uniform letterboxing so
+    the full design width (including grid column 1) is visible on narrow windows.
+    """
+    assert _PIGEON_EXT
+    try:
+        _apply_auto_widget_policy()
+    except Exception:
+        pass
+    assert scale_height_and_center_crop is not None
+    assert scale_cover_center_crop is not None
+    assert blend_overlay_bgr is not None
+    assert build_stage_overlay_source_bgra is not None
+
+    def _paste_tmdb_logo_uniform_cover_design(
+        canvas_bgr: np.ndarray,
+        logo_w,
+        rx: int,
+        ry: int,
+        rw: int,
+        rh: int,
+    ) -> None:
+        if (
+            logo_w is None
+            or rw < 1
+            or rh < 1
+            or not active_tmdb_title_key[0]
+            or alpha_blend_bgra_over_bgr is None
+        ):
+            return
+        patch_bgra = logo_w.bgra_patch_for_title(
+            active_tmdb_title_key[0],
+            display_title=active_tmdb_display_title[0],
+            patch_wh=(rw, rh),
+        )
+        ph, pw = int(patch_bgra.shape[0]), int(patch_bgra.shape[1])
+        if pw < 1 or ph < 1:
+            return
+        # Uniform fit inside the grid box (no crop): largest scale where both dimensions fit;
+        # centers the patch so ascenders / top caps are not clipped (cover would crop).
+        scale_c = min(rw / float(pw), rh / float(ph))
+        nw = max(1, int(round(pw * scale_c)))
+        nh = max(1, int(round(ph * scale_c)))
+        rsz = cv2.resize(
+            patch_bgra,
+            (nw, nh),
+            interpolation=cv_resize_interp(pw, ph, nw, nh),
+        )
+        ox = rx + (rw - nw) // 2
+        oy = ry + (rh - nh) // 2
+        dst_x0 = max(0, ox)
+        dst_y0 = max(0, oy)
+        dst_x1 = min(DESIGN_W, ox + nw)
+        dst_y1 = min(DESIGN_H, oy + nh)
+        if dst_x1 <= dst_x0 or dst_y1 <= dst_y0:
+            return
+        src_x0 = dst_x0 - ox
+        src_y0 = dst_y0 - oy
+        cw = dst_x1 - dst_x0
+        ch = dst_y1 - dst_y0
+        crop2 = rsz[src_y0 : src_y0 + ch, src_x0 : src_x0 + cw]
+        sub = canvas_bgr[dst_y0:dst_y1, dst_x0:dst_x1]
+        sub[:] = alpha_blend_bgra_over_bgr(sub, crop2)
+
+    def _paste_video_content_c_poster_above_top_gradient(canvas_bgr: np.ndarray) -> None:
+        if (
+            not _view_one_is_pigeon_poster()
+            or _effective_display_view() != DisplayView.ONE
+            or alpha_blend_bgra_over_bgr is None
+            or get_grid_geometry is None
+        ):
+            return
+        g = get_grid_geometry()
+        # Full-width band, vertically centered in rows 1→7.5 so the poster reads centered
+        # on the canvas (not biased toward the top margin above row 1).
+        top_y = int(round(g.y0 + (1.0 - 1.0) * float(g.cell)))
+        bottom_y = int(round(g.y0 + (7.5 - 1.0) * float(g.cell)))
+        poster_h = max(1, bottom_y - top_y)
+        rect = (0, int(top_y), int(DESIGN_W), int(poster_h))
+        patch_bgra = _styled_video_content_c_poster(_active_tmdb_poster_bgra())
+        if patch_bgra is None:
+            return
+        rx, ry, rw, rh = (int(rect[0]), int(rect[1]), int(rect[2]), int(rect[3]))
+        ph, pw = int(patch_bgra.shape[0]), int(patch_bgra.shape[1])
+        if rw < 1 or rh < 1 or pw < 1 or ph < 1:
+            return
+        scale = min(rw / float(pw), rh / float(ph))
+        nw = max(1, int(round(pw * scale)))
+        nh = max(1, int(round(ph * scale)))
+        rsz = cv2.resize(
+            patch_bgra,
+            (nw, nh),
+            interpolation=cv_resize_interp(pw, ph, nw, nh),
+        )
+        ox = rx + (rw - nw) // 2
+        oy = ry + (rh - nh) // 2
+        dst_x0 = max(0, ox)
+        dst_y0 = max(0, oy)
+        dst_x1 = min(DESIGN_W, ox + nw)
+        dst_y1 = min(DESIGN_H, oy + nh)
+        if dst_x1 <= dst_x0 or dst_y1 <= dst_y0:
+            return
+        src_x0 = dst_x0 - ox
+        src_y0 = dst_y0 - oy
+        cw = dst_x1 - dst_x0
+        ch = dst_y1 - dst_y0
+        crop2 = rsz[src_y0 : src_y0 + ch, src_x0 : src_x0 + cw]
+        sub = canvas_bgr[dst_y0:dst_y1, dst_x0:dst_x1]
+        sub[:] = alpha_blend_bgra_over_bgr(sub, crop2)
+    if _paused_screen_active() and not show_grid:
+        tw, th = display_dims[0], display_dims[1]
+        cap_w, cap_h, use_cap = _composite_cap_dims(tw, th)
+        base_pause = _compose_paused_screen(cap_w, cap_h)
+        if use_cap:
+            return _present_frame_to_display(base_pause, tw, th)
+        return base_pause
+    if frame_bgr is None or frame_bgr.size == 0:
+        sb, sg, sr = get_stage_bgr()
+        canvas = np.empty((DESIGN_H, DESIGN_W, 3), dtype=np.uint8)
+        canvas[:] = (sb, sg, sr)
+    else:
+        lit = _apply_brightness(frame_bgr, brightness)
+        if frame_is_design_sized:
+            canvas = lit
+        else:
+            fit_d = SceneFit(target_w=DESIGN_W, target_h=DESIGN_H)
+            canvas = fit_d.scale_and_crop(lit)
+    # All widget/grid math is in design pixels (DESIGN_W×DESIGN_H). If the base layer is off-size
+    # (e.g. a bad master path), resize so overlays are not clipped on the left before scaling to the window.
+    ch_can, cw_can = int(canvas.shape[0]), int(canvas.shape[1])
+    if cw_can != DESIGN_W or ch_can != DESIGN_H:
+        canvas = cv2.resize(
+            canvas,
+            (DESIGN_W, DESIGN_H),
+            interpolation=cv_resize_interp(cw_can, ch_can, DESIGN_W, DESIGN_H),
+        )
+    if not canvas.flags["C_CONTIGUOUS"]:
+        canvas = np.ascontiguousarray(canvas)
+    if _maybe_exit_settings_menus_on_idle():
+        pass
+    if dev_phase[0] == DevPhase.MAIN_SETTINGS and main_settings_widget is not None:
+        _composite_settings_on_canvas(canvas)
+        dw, dh = display_dims[0], display_dims[1]
+        cap_w, cap_h, use_cap = _composite_cap_dims(dw, dh)
+        if (
+            int(cap_w) == int(DESIGN_W)
+            and int(cap_h) == int(DESIGN_H)
+        ):
+            base2 = canvas
+        else:
+            base2 = cv2.resize(
+                canvas,
+                (cap_w, cap_h),
+                interpolation=cv_resize_interp(
+                    int(DESIGN_W), int(DESIGN_H), cap_w, cap_h
+                ),
+            )
+        if use_cap:
+            return _present_frame_to_display(
+                base2, dw, dh, native_now_playing=True
+            )
+        return base2
+    _set_playback_overlay_clock_saver_volume_flag()
+    now_cs = time.monotonic()
+    cs = _clock_saver_for_compose(now_cs) and not show_grid
+    intro_op = _clock_startup_intro_opacity(now_cs)
+    bdim_c = _clock_saver_backdrop_brightness(now_cs)
+    if intro_op is not None:
+        canvas[:] = 0
+    elif bdim_c < 1.0 - 1e-6:
+        canvas = (canvas.astype(np.float32) * bdim_c).astype(np.uint8)
+    # Layer order: top gradient first, then bottom gradient (in the
+    # non-saver branch below), then the mic/EQ visualizer on top of
+    # the gradient, then clock saver / clock widget / overlays on
+    # top of the visualizer. See the saver branch for the no-gradient
+    # variant.
+    if intro_op is None and not (_view_one_uses_now_playing_screen() and not cs):
+        _blend_top_gradient_design(canvas)
+    if not cs and _view_one_uses_now_playing_screen():
+        canvas[:] = (0, 0, 0)
+        if startup_ph[0] is not None and not _splash_reveal_clock[0]:
+            # Pre-reveal splash underlay stays black.
+            pass
+        elif dev_phase[0] == DevPhase.MAIN_SETTINGS and main_settings_widget is not None:
+            _composite_settings_on_canvas(canvas)
+        else:
+            t_sync0 = time.perf_counter()
+            _sync_now_playing_screen_state_for_frame()
+            t_sync1 = time.perf_counter()
+            if view_circles_widget is not None:
+                view_circles_widget.render(canvas)
+            _hitch_parts[0] = (t_sync1 - t_sync0) * 1000.0
+            _hitch_parts[1] = (time.perf_counter() - t_sync1) * 1000.0
+    elif cs:
+        if alpha_blend_bgra_over_bgr is not None:
+            acc_cs = (
+                tuple(status_bar_widget.accent_bgr)
+                if status_bar_widget is not None
+                else None
+            )
+            _cs_dim_d = _clock_saver_layer_opacity(now_cs)
+            _meter_face_d = _idle_audio_meter_active(now_cs)
+            if intro_op is None and not _meter_face_d:
+                _clock_saver_dim_pre_digit_canvas(canvas, _cs_dim_d)
+            _time_op_d = float(intro_op) if intro_op is not None else 1.0
+            _date_op_d = float(intro_op) if intro_op is not None else _cs_dim_d
+            (time_bgra, t_rect), (date_bgra, d_rect) = _clock_saver_layers(
+                shadow_bgr=acc_cs,
+                layer_opacity=_cs_dim_d,
+                time_layer_opacity=_time_op_d,
+                date_layer_opacity=_date_op_d,
+                date_anchor_row=CLOCK_ANCHOR_ROW,
+                date_anchor_col=CLOCK_ANCHOR_COL,
+                replace_with_meter=_meter_face_d,
+            )
+            _blit_saver_layers_design(
+                canvas,
+                time_bgra,
+                t_rect,
+                date_bgra,
+                d_rect,
+                copy_full_bgr=_meter_face_d,
+            )
+            if playback_overlay_widget is not None and (
+                playback_overlay_flags.get("clock_saver_volume_only")
+                or playback_overlay_flags.get("clock_saver_netflix_full_overlay")
+            ):
+                ch, cw = canvas.shape[:2]
+                for p in playback_overlay_widget.design_blits():
+                    x, y, w, h = p.x, p.y, p.w, p.h
+                    if w < 1 or h < 1:
+                        continue
+                    x0 = max(0, x)
+                    y0 = max(0, y)
+                    x1 = min(cw, x + w)
+                    y1 = min(ch, y + h)
+                    if x0 >= x1 or y0 >= y1:
+                        continue
+                    sx0 = x0 - x
+                    sy0 = y0 - y
+                    roi = canvas[y0:y1, x0:x1]
+                    src = _clock_saver_dim_overlay_bgra(p.bgra, _cs_dim_d)
+                    patch = src[sy0 : sy0 + (y1 - y0), sx0 : sx0 + (x1 - x0)]
+                    roi[:] = alpha_blend_bgra_over_bgr(roi, patch)
+    else:
+        if (
+            playback_lower_gradient_bgra is not None
+            and alpha_blend_bgra_over_bgr is not None
+            and not _vv_is_music()
+        ):
+            gx, gy, gw, gh, grad_bgra = playback_lower_gradient_bgra(
+                gradient_bgr=tmdb_tt_gradient_bgr_holder[0]
+            )
+            sub = canvas[gy : gy + gh, gx : gx + gw]
+            sub[:] = alpha_blend_bgra_over_bgr(sub, grad_bgra)
+        # viewOne.videoContent_c poster: sits above the top gradient and
+        # below the nowPlaying widget (status bar + playback overlay).
+        _paste_video_content_c_poster_above_top_gradient(canvas)
+        _warm_playback_overlay_blits()
+        if clock_widget is not None and _effective_display_view() != DisplayView.FOUR:
+            if _info_cluster_compose_active(now_cs):
+                _blend_info_cluster_into_target(
+                    canvas, int(DESIGN_W), int(DESIGN_H), now_cs
+                )
+            else:
+                clock_widget.render(canvas)
+        if status_bar_widget is not None:
+            status_bar_widget.render(canvas)
+        if playback_overlay_widget is not None and alpha_blend_bgra_over_bgr is not None:
+            playback_overlay_flags["show_paused_row"] = _show_paused_row_overlay()
+            ch, cw = canvas.shape[:2]
+            for p in playback_overlay_widget.design_blits():
+                if (
+                    _info_cluster_compose_active(now_cs)
+                    and getattr(p, "layer", "") == PATCH_LAYER_RECEIVER_AUDIO
+                ):
+                    continue
+                x, y, w, h = p.x, p.y, p.w, p.h
+                if w < 1 or h < 1:
+                    continue
+                x0 = max(0, x)
+                y0 = max(0, y)
+                x1 = min(cw, x + w)
+                y1 = min(ch, y + h)
+                if x0 >= x1 or y0 >= y1:
+                    continue
+                sx0 = x0 - x
+                sy0 = y0 - y
+                roi = canvas[y0:y1, x0:x1]
+                patch = p.bgra[sy0 : sy0 + (y1 - y0), sx0 : sx0 + (x1 - x0)]
+                roi[:] = alpha_blend_bgra_over_bgr(roi, patch)
+        if (
+            dev_phase[0] == DevPhase.OFF
+            and location_toast_patch_bgra is not None
+            and alpha_blend_bgra_over_bgr is not None
+            and (
+                not _info_cluster_compose_active(now_cs)
+                or bool(location_toast_state.get("startup_top_left"))
+            )
+        ):
+            now_lt = time.monotonic()
+            ta = _location_toast_alpha(now_lt)
+            if ta > 1e-6:
+                acc = (
+                    tuple(status_bar_widget.accent_bgr)
+                    if status_bar_widget is not None
+                    else None
+                )
+                patch_lt, (lwx, lwy, lww, lwh) = location_toast_patch_bgra(
+                    str(location_toast_state["text"]),
+                    alpha=ta,
+                    shadow_bgr=acc,
+                    col_right_offset_cells=0.0,
+                    row_offset_cells=0.0,
+                    startup_top_left=bool(
+                        location_toast_state.get("startup_top_left")
+                    ),
+                )
+                if patch_lt is not None:
+                    sub = canvas[lwy : lwy + lwh, lwx : lwx + lww]
+                    sub[:] = alpha_blend_bgra_over_bgr(sub, patch_lt)
+        _logo_w2 = _active_tmdb_logo_widget()
+        if _logo_w2 is not None and _effective_display_view() not in (
+            DisplayView.FOUR,
+            DisplayView.TWO,
+            DisplayView.THREE,
+        ) and not _view_one_is_pigeon_poster() and not _view_one_uses_now_playing_screen():
+            if tmdb_logo_cover_design_xywh is not None:
+                lx, ly, lw, lh = tmdb_logo_cover_design_xywh
+                _paste_tmdb_logo_uniform_cover_design(
+                    canvas, _logo_w2, int(lx), int(ly), int(lw), int(lh)
+                )
+            elif (
+                _effective_display_view() == DisplayView.ONE
+                and active_tmdb_title_key[0]
+            ):
+                _dwx, _dwy, _dww, _dwh = _view_one_video_content_a_tt_contain_rect_design()
+                _paste_tmdb_logo_uniform_cover_design(
+                    canvas, _logo_w2, int(_dwx), int(_dwy), int(_dww), int(_dwh)
+                )
+            else:
+                _logo_w2.render(
+                    canvas,
+                    title_key_str=active_tmdb_title_key[0],
+                    display_title=active_tmdb_display_title[0],
+                )
+    if show_grid:
+        ov = build_stage_overlay_source_bgra(_stage_grid_overlay_mode())
+        canvas = blend_overlay_bgr(canvas, ov)
+    tw, th = display_dims[0], display_dims[1]
+    native_np = (
+        _view_one_uses_now_playing_screen()
+        and dev_phase[0] == DevPhase.OFF
+    ) or _settings_is_native_1280()
+    return _present_frame_to_display(
+        canvas, tw, th, native_now_playing=bool(native_np)
+    )
+
+
+def _layout_chrome(*, _ui_scale, command_entry_visible, display_dims, place_command_bar) -> None:
+    dw, dh = display_dims[0], display_dims[1]
+    _ui_scale()
+    if command_entry_visible[0]:
+        place_command_bar()
+
+
+def cycle_dev_phase(_event=None, *, DevPhase, _bump_pigeon_user_activity, dev_phase, main_settings_widget, render_once, skip_cache, sync_developer_chrome) -> str:
+    """Toggle OFF ↔ MAIN_SETTINGS (also exits GRID → OFF)."""
+    _bump_pigeon_user_activity()
+    if dev_phase[0] == DevPhase.MAIN_SETTINGS:
+        if main_settings_widget is not None:
+            try:
+                if not bool(getattr(main_settings_widget.state, "exit_enabled", True)):
+                    return "settings"
+            except Exception:
+                pass
+        if main_settings_widget is not None:
+            try:
+                st_ms = main_settings_widget.state
+                if st_ms.keyboard_open:
+                    st_ms.close_keyboard(commit=False)
+                st_ms.exit_pigeon_settings()
+                main_settings_widget.invalidate()
+            except Exception:
+                pass
+        dev_phase[0] = DevPhase.OFF
+    elif dev_phase[0] == DevPhase.GRID:
+        dev_phase[0] = DevPhase.OFF
+    else:
+        if main_settings_widget is not None:
+            try:
+                if main_settings_widget.state.keyboard_open:
+                    main_settings_widget.state.close_keyboard(commit=False)
+                    main_settings_widget.invalidate()
+            except Exception:
+                pass
+            try:
+                from pigeon.widgets.ui_color_settings import (
+                    load_persisted_theme_into_state,
+                )
+
+                load_persisted_theme_into_state(main_settings_widget.state)
+                main_settings_widget.invalidate()
+            except Exception:
+                pass
+            try:
+                main_settings_widget.prefetch_scans_for_settings()
+            except Exception:
+                pass
+        dev_phase[0] = DevPhase.MAIN_SETTINGS
+    skip_cache[0] = None
+    sync_developer_chrome()
+    if dev_phase[0] == DevPhase.MAIN_SETTINGS:
+        try:
+            from pigeon.weather import DEFAULT_WEATHER_ZIP, refresh_weather
+
+            refresh_weather(zip_code=DEFAULT_WEATHER_ZIP, force=True)
+        except Exception:
+            pass
+        render_once()
+    return "break"

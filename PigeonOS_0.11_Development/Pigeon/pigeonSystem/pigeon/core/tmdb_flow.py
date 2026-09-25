@@ -797,3 +797,69 @@ def _refresh_tmdb_tt_gradient_tint(*, active_tmdb_display_title, active_tmdb_tit
             f"pigeon: TT contrast → {label} gradient (luminance={lum_s}, title={title!r})",
             file=sys.stderr,
         )
+
+
+def _perform_tmdb_error_flag_retry(*, TMDB_ERROR_FLAG_RETRY_RULES, _PIGEON_EXT, _alternate_tmdb_query_from_metadata, _clear_now_playing_view_caches, _mark_tmdb_missing_art, _raw_title_query_from_metadata, _sync_now_playing_screen_state, _tmdb_retry_log_append, _tmdb_spawn_identity, _view_one_uses_now_playing_screen, apple_tv_auto_state, render_once, skip_cache, spawn_tmdb_poster_fetch, tmdb_error_flag_retry_active, tmdb_error_flag_retry_rule_idx) -> None:
+    """Second-chance TMDb fetch when the user flags bad artwork (⌘⇧X).
+
+    Runs at most one full pass of ``TMDB_ERROR_FLAG_RETRY_RULES`` (auto-chained
+    from ``finish_tmdb`` on failure). After the cycle is exhausted, marks
+    missing art so the circles poster shows "?" instead of respawning forever.
+    """
+    if not _PIGEON_EXT:
+        return
+    rules = TMDB_ERROR_FLAG_RETRY_RULES
+    if not tmdb_error_flag_retry_active[0]:
+        return
+    idx = int(tmdb_error_flag_retry_rule_idx[0])
+    if idx >= len(rules):
+        primary = str(apple_tv_auto_state.get("query") or "").strip()
+        prefer_ex = str(apple_tv_auto_state.get("prefer") or "auto")
+        _mark_tmdb_missing_art(
+            identity=_tmdb_spawn_identity(primary, prefer_ex) if primary else None
+        )
+        if _view_one_uses_now_playing_screen():
+            _clear_now_playing_view_caches()
+            _sync_now_playing_screen_state()
+        skip_cache[0] = None
+        try:
+            render_once()
+        except Exception:
+            pass
+        return
+    prefer, qsource, rule_id = rules[idx]
+    primary = str(apple_tv_auto_state.get("query") or "").strip()
+    md_raw = apple_tv_auto_state.get("last_metadata")
+    md = md_raw if isinstance(md_raw, dict) else {}
+    alt = _alternate_tmdb_query_from_metadata(md if md else None, primary)
+    raw_q = _raw_title_query_from_metadata(md if md else None)
+    if qsource == "raw_title":
+        q = (raw_q or primary).strip()
+    elif qsource == "alternate":
+        q = (alt or raw_q or primary).strip()
+    else:
+        q = primary
+    if not q:
+        _mark_tmdb_missing_art(identity=None)
+        return
+    apple_tv_auto_state["tmdb_missing_art"] = False
+    tmdb_error_flag_retry_rule_idx[0] = idx + 1
+    _tmdb_retry_log_append(
+        {
+            "event": "tmdb_error_flag_retry",
+            "rule_index": idx,
+            "rule_id": rule_id,
+            "prefer": prefer,
+            "query_source": qsource,
+            "query_sent": q,
+            "primary_query": primary,
+            "raw_title_query": raw_q,
+            "alternate_available": bool(alt),
+            "alternate_query": alt,
+        }
+    )
+    spawn_tmdb_poster_fetch(q, prefer=prefer, force=True)
+    sys.stderr.write(
+        f"pigeon: tmdb error-flag retry ({rule_id}) prefer={prefer} q={q!r}\n"
+    )
+    sys.stderr.flush()

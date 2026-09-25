@@ -458,3 +458,20 @@ def _collect_view_four_playback_lines(*, _view_four_display_metadata, _view_four
         if _view_four_has_value(pos) or _view_four_has_value(tot):
             _ln(f"Position / duration: {pos!r} / {tot!r}", False)
     return rows
+
+
+def _view_four_has_value(v: object, *, _view_four_has_value, _view_four_text_is_placeholder) -> bool:
+    """True when a View 4 debug field should be listed (skip None / empty / NONE / -)."""
+    if v is None:
+        return False
+    if isinstance(v, bool):
+        return True
+    if isinstance(v, str):
+        return not _view_four_text_is_placeholder(v)
+    if isinstance(v, (list, tuple, set)):
+        return any(_view_four_has_value(x) for x in v)
+    if isinstance(v, dict):
+        return any(_view_four_has_value(x) for x in v.values())
+    if isinstance(v, float) and v != v:
+        return False
+    return True

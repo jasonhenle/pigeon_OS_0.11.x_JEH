@@ -577,3 +577,96 @@ def _clock_saver_backdrop_brightness(now: float, *, CLOCK_SAVER_BACKDROP_DIM, _b
     if not _clock_saver_for_compose(now):
         return 1.0
     return float(CLOCK_SAVER_BACKDROP_DIM)
+
+
+def _bump_clock_saver_significant_device_from_metadata(md: dict[str, object], *, _bump_clock_saver_significant_device, _coarse_device_state_for_saver, _content_key_from_metadata, _cs_sig_ck, _cs_sig_ds, _cs_sig_fp, _cs_sig_init, _cs_sig_vol, _metadata_activity_fingerprint, _note_metadata_activity, _vol_norm_for_clock_saver) -> None:
+    """Content/play-state changes postpone savers; volume only affects the 300 s path."""
+    ck = _content_key_from_metadata(md)
+    ds = _coarse_device_state_for_saver(str(md.get("device_state") or ""))
+    vk = _vol_norm_for_clock_saver(md.get("volume_percent"))
+    fp = _metadata_activity_fingerprint(md)
+    if not _cs_sig_init[0]:
+        _cs_sig_init[0] = True
+        _cs_sig_ck[0] = ck
+        _cs_sig_ds[0] = ds
+        _cs_sig_vol[0] = vk
+        _cs_sig_fp[0] = fp
+        _note_metadata_activity()
+        return
+    content_bump = fp != _cs_sig_fp[0]
+    # Keep legacy ck/ds tracking for diagnostics; content fingerprint is authoritative.
+    if ck != _cs_sig_ck[0] and (ck or _cs_sig_ck[0]):
+        content_bump = True
+    if ds != _cs_sig_ds[0]:
+        content_bump = True
+    _cs_sig_ck[0] = ck
+    _cs_sig_ds[0] = ds
+    _cs_sig_vol[0] = vk
+    _cs_sig_fp[0] = fp
+    if content_bump:
+        _bump_clock_saver_significant_device()
+        _note_metadata_activity()
+
+
+def _idle_audio_listen(now: float | None = None, *, _clock_saver_for_compose, _view_one_uses_now_playing_screen) -> bool:
+    """Keep ALSA open on the clock saver so incoming audio can wake NP."""
+    if not _view_one_uses_now_playing_screen():
+        return False
+    t = time.monotonic() if now is None else float(now)
+    try:
+        return bool(_clock_saver_for_compose(t))
+    except Exception:
+        return False
+
+
+def _nudge_clock_saver_volume(action: str, *, _clock_saver_for_compose, _clock_saver_volume, _clock_saver_volume_raw, _note_volume_graphics, _note_zone3_volume_takeover, _sync_now_playing_screen_state, _view_one_uses_now_playing_screen, clock_saver_force_on, denon_vol_cache, receiver_overlay_state, render_once, skip_cache) -> None:
+    """Move the saver line immediately; the AVR poll confirms the real level."""
+    from pigeon.widgets.clock_saver import step_clock_saver_volume
+
+    cur = _clock_saver_volume_raw()
+    if not cur:
+        try:
+            cur = str(denon_vol_cache.get("np_hold") or "").strip()
+        except NameError:
+            cur = ""
+        if not cur:
+            try:
+                cur = str(_clock_saver_volume.hold or "").strip()
+            except Exception:
+                cur = ""
+    nxt = step_clock_saver_volume(
+        cur,
+        action,
+        unmute_to=_clock_saver_volume.pre_mute or None,
+    )
+    if nxt:
+        _clock_saver_volume.remember(nxt, source="nudge")
+        _note_zone3_volume_takeover()
+        _note_volume_graphics(nxt)
+        try:
+            receiver_overlay_state["volume"] = nxt
+        except NameError:
+            pass
+        try:
+            denon_vol_cache["effective"] = nxt
+            denon_vol_cache["np_hold"] = nxt
+        except NameError:
+            pass
+    skip_cache[0] = None
+    saver_up = False
+    try:
+        saver_up = bool(
+            _clock_saver_for_compose(time.monotonic()) or clock_saver_force_on[0]
+        )
+    except Exception:
+        saver_up = False
+    if not saver_up:
+        try:
+            if _view_one_uses_now_playing_screen():
+                _sync_now_playing_screen_state()
+        except Exception:
+            pass
+    try:
+        render_once()
+    except Exception:
+        pass

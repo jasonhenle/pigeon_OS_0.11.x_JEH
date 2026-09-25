@@ -10,6 +10,10 @@ from __future__ import annotations
 import time
 import cv2
 import numpy as np
+from pathlib import Path
+from pigeon.app_state import read_saved_av_receiver
+import json
+import threading
 
 
 def _metadata_is_netflix_app(metadata: dict[str, object] | None) -> bool:
@@ -829,3 +833,769 @@ def _warm_status_bar_blits(*, status_bar_blits, status_bar_widget) -> None:
         status_bar_blits[0] = []
         return
     status_bar_blits[0] = list(status_bar_widget.design_blits())
+
+
+def _has_playback_position(*, _playback_progress_fraction_for_bar) -> bool:
+    """True when zone5 can draw a real progress bar (not LIVE / empty)."""
+    return _playback_progress_fraction_for_bar() is not None
+
+
+def _metadata_activity_fingerprint(md: dict[str, object], *, _coarse_device_state_for_saver, _content_key_from_metadata) -> str:
+    """Content/playback signature for the 2-minute metadata-idle saver.
+
+    Volume is excluded (receiver/ATV level noise must not reset the timer).
+    Position is only included while Playing so Idle/home None↔0 flaps are ignored.
+    TMDb art presence is ignored.
+    """
+    ck = _content_key_from_metadata(md) or ""
+    ds = _coarse_device_state_for_saver(str(md.get("device_state") or ""))
+    title = str(md.get("title") or "").strip().lower()
+    artist = str(md.get("artist") or "").strip().lower()
+    album = str(md.get("album") or "").strip().lower()
+    series = str(md.get("series_name") or "").strip().lower()
+    app = str(md.get("app_name") or md.get("app") or "").strip().lower()
+    app_id = str(md.get("app_id") or "").strip().lower()
+    query = str(md.get("query") or "").strip().lower()
+    pos_tok = ""
+    if ds == "playing":
+        pos_raw = md.get("position")
+        if pos_raw is not None:
+            try:
+                pos_tok = f"{int(max(0.0, float(pos_raw)) * 4.0)}"
+            except (TypeError, ValueError):
+                pos_tok = ""
+    return "|".join(
+        (ck, ds, title, artist, album, series, app, app_id, query, pos_tok)
+    )
+
+
+def _player_metadata_class(*, _playback_extrapolated_pair, _show_paused_row_overlay, _something_playing_now, apple_tv_auto_state, apple_tv_playback_clock) -> str:
+    """Same ok/stopped/absent class auto widgets use for the live layout."""
+    lm = apple_tv_auto_state.get("last_metadata")
+    md = lm if isinstance(lm, dict) else None
+    try:
+        from pigeon.auto_widgets import classify_player_metadata
+
+        rem = None
+        try:
+            from pigeon.display_confidence import remaining_seconds
+
+            rem = remaining_seconds(md)
+        except Exception:
+            rem = None
+        if rem is None:
+            pair = _playback_extrapolated_pair()
+            clk = apple_tv_playback_clock
+            has_total = (
+                clk.get("latched_total") is not None
+                or clk.get("last_reported_total") is not None
+            )
+            if pair is not None and has_total:
+                rem = float(pair[1])
+        return classify_player_metadata(
+            md,
+            paused=_show_paused_row_overlay(),
+            playing=_something_playing_now(),
+            remaining_s=rem,
+        )
+    except Exception:
+        from pigeon.auto_widgets import METADATA_ABSENT, METADATA_OK, METADATA_STOPPED
+
+        ds = str((md or {}).get("device_state") or "")
+        if _show_paused_row_overlay() or "Paused" in ds or "Stopped" in ds:
+            return METADATA_STOPPED
+        if md and (
+            str(md.get("title") or "").strip() or str(md.get("query") or "").strip()
+        ):
+            return METADATA_OK
+        return METADATA_ABSENT
+
+
+def _sync_now_playing_screen_state(*, DisplayView, _active_tmdb_tt_src_bgra, _atv_metadata_is_content_idle, _circles_poster_bgra, _effective_display_view, _format_hmmss, _has_playback_position, _np_dump_mono, _np_widgets_content_active, _paused_screen_backdrop_bgr, _pausesaver_is_holding, _playback_extrapolated_pair, _playback_progress_fraction_for_bar, _refresh_paused_row_stamp, _resolve_receiver_input_label, _resolve_receiver_lines_for_now_playing, _show_paused_row_overlay, _spawn_youtube_thumb_fetch, _vv_is_music, _vv_is_youtube, active_tmdb_display_title, active_tmdb_title_key, apple_tv_auto_state, apple_tv_playback_clock, receiver_standby_holder, skip_cache, streaming_badge_state, view_circles_widget) -> None:
+    if view_circles_widget is None:
+        return
+    try:
+        from pigeon.hdmi_capture import probe_hdmi_presence
+
+        # HDMI probe grabs a capture frame on a worker; numpy on that
+        # frame holds the GIL and hitchs live widgets every ~1.5 s.
+        probe_hdmi_presence()
+    except Exception:
+        pass
+    prog = _playback_progress_fraction_for_bar()
+    progress = float(prog) if prog is not None else 0.0
+    remaining_text = ""
+    played_text = ""
+    clk = apple_tv_playback_clock
+    if clk.get("live_mode"):
+        remaining_text = "LIVE"
+        played_text = "LIVE"
+    else:
+        pair = _playback_extrapolated_pair()
+        if pair is not None:
+            played_text = _format_hmmss(int(pair[0]))
+            remaining_text = _format_hmmss(int(pair[1]))
+    inc, cfg, vol = _resolve_receiver_lines_for_now_playing()
+    recv_input = _resolve_receiver_input_label()
+    circles_poster_bgra = _circles_poster_bgra()
+    has_np = _effective_display_view() == DisplayView.ONE
+    sb = streaming_badge_state
+    badge_label = str(sb.get("label") or "").strip()
+    changed = False
+    vol_frac = 0.0
+    try:
+        from pigeon.widgets.playback_overlay import volume_fraction_from_display_line
+
+        vol_frac = float(volume_fraction_from_display_line(vol))
+    except Exception:
+        vol_frac = 0.0
+    try:
+        from pigeon.runtime_state import update_receiver_runtime
+
+        update_receiver_runtime(
+            incoming=inc,
+            config=cfg,
+            volume=vol,
+            volume_fraction=vol_frac,
+            muted=vol.strip().lower() in ("mute", "muted", "off"),
+        )
+    except Exception:
+        pass
+    circles_paused = bool(_show_paused_row_overlay())
+    circles_service = badge_label
+    if not circles_service:
+        lm_svc = apple_tv_auto_state.get("last_metadata")
+        if isinstance(lm_svc, dict):
+            circles_service = str(lm_svc.get("app_name") or "").strip()
+    yt_now = bool(_vv_is_youtube())
+    video_art = apple_tv_auto_state.get("video_artwork_bgra")
+    if (
+        not yt_now
+        and isinstance(video_art, np.ndarray)
+        and video_art.size > 0
+    ):
+        try:
+            from pigeon.np_layout import poster_image_is_16x9
+
+            yt_now = bool(poster_image_is_16x9(video_art))
+        except Exception:
+            yt_now = False
+    if yt_now and "youtube" not in str(circles_service or "").lower():
+        circles_service = "YouTube"
+    if yt_now:
+        try:
+            _spawn_youtube_thumb_fetch()
+        except Exception:
+            pass
+    np_active = _np_widgets_content_active(incoming=inc, config=cfg)
+    recv_name = ""
+    try:
+        _avr_row = read_saved_av_receiver()
+        if isinstance(_avr_row, dict):
+            recv_name = str(
+                _avr_row.get("name") or _avr_row.get("label") or ""
+            ).strip()
+    except Exception:
+        recv_name = ""
+    if not str(circles_service or "").strip() and inc:
+        circles_service = inc
+    svc_l = str(circles_service or "").strip().casefold()
+    recv_l = recv_name.casefold()
+    if svc_l and recv_l and (svc_l == recv_l or svc_l in recv_l or recv_l in svc_l):
+        circles_service = ""
+    if _vv_is_music():
+        lm_music = apple_tv_auto_state.get("last_metadata")
+        song_t = album_t = artist_t = ""
+        if isinstance(lm_music, dict):
+            song_t = str(lm_music.get("title") or "").strip()
+            album_t = str(lm_music.get("album") or "").strip()
+            artist_t = str(lm_music.get("artist") or "").strip()
+            # Match classic music text: promote album when title is empty.
+            if not song_t and album_t:
+                song_t, album_t = album_t, ""
+        if view_circles_widget.update_state(
+            progress=progress,
+            elapsed_text=played_text,
+            remaining_text=remaining_text,
+            volume_text=vol,
+            volume_fraction=vol_frac,
+            incoming_audio=inc,
+            playback_config=cfg,
+            cast=[],
+            poster_bgra=circles_poster_bgra,
+            has_now_playing=has_np,
+            searching=False,
+            missing_art=False,
+            content_mode="music",
+            song_title=song_t,
+            album_title=album_t,
+            artist_title=artist_t,
+            paused=circles_paused,
+            service_name=circles_service,
+            has_position=_has_playback_position(),
+            content_active=np_active,
+            is_youtube=False,
+            tt_bgra=circles_poster_bgra,
+            tt_title=song_t,
+            backdrop_bgr=_paused_screen_backdrop_bgr(),
+            receiver_name=recv_name,
+            receiver_input=recv_input,
+            has_receiver=(
+                not bool(receiver_standby_holder[0])
+                and bool(recv_name or recv_input or inc or cfg or vol)
+            ),
+        ):
+            changed = True
+    else:
+        cast_rows: list[tuple[str, str]] = []
+        try:
+            from pigeon.tmdb_poster import get_cached_tmdb_cast
+
+            tk = str(active_tmdb_title_key[0] or "").strip()
+            if tk:
+                cast_rows = get_cached_tmdb_cast(tk)
+        except Exception:
+            cast_rows = []
+        fetch_busy = bool(
+            apple_tv_auto_state.get("tmdb_fetch_in_flight")
+            or apple_tv_auto_state.get("pending_tmdb")
+        )
+        missing_art = bool(apple_tv_auto_state.get("tmdb_missing_art"))
+        song_t = album_t = artist_t = ""
+        if yt_now:
+            fetch_busy = bool(apple_tv_auto_state.get("youtube_thumb_in_flight"))
+            missing_art = False
+            cast_rows = []
+            lm_yt = apple_tv_auto_state.get("last_metadata")
+            if isinstance(lm_yt, dict):
+                song_t = str(lm_yt.get("title") or "").strip()
+                artist_t = str(lm_yt.get("artist") or "").strip()
+                album_t = str(lm_yt.get("album") or "").strip()
+                if not song_t:
+                    try:
+                        from pigeon.apple_tv_now_playing import (
+                            youtube_title_from_metadata,
+                        )
+
+                        song_t = youtube_title_from_metadata(lm_yt)
+                    except Exception:
+                        song_t = ""
+                if not song_t and album_t:
+                    song_t, album_t = album_t, ""
+        tt_src = None
+        try:
+            tt_src = _active_tmdb_tt_src_bgra()
+        except Exception:
+            tt_src = None
+        atv_title = ""
+        if not yt_now:
+            lm_vid = apple_tv_auto_state.get("last_metadata")
+            if isinstance(lm_vid, dict) and not _atv_metadata_is_content_idle(lm_vid):
+                atv_title = str(
+                    lm_vid.get("title")
+                    or lm_vid.get("query")
+                    or ""
+                ).strip()
+        tt_fallback = (
+            str(active_tmdb_display_title[0] or "").strip() or song_t or atv_title
+        )
+        if view_circles_widget.update_state(
+            progress=progress,
+            elapsed_text=played_text,
+            remaining_text=remaining_text,
+            volume_text=vol,
+            volume_fraction=vol_frac,
+            incoming_audio=inc,
+            playback_config=cfg,
+            cast=cast_rows,
+            poster_bgra=circles_poster_bgra,
+            has_now_playing=has_np,
+            searching=fetch_busy and not missing_art,
+            missing_art=missing_art and not fetch_busy,
+            content_mode="video",
+            song_title=song_t if yt_now else "",
+            album_title=album_t if yt_now else "",
+            artist_title=artist_t if yt_now else "",
+            paused=circles_paused,
+            service_name=circles_service,
+            has_position=_has_playback_position(),
+            content_active=np_active,
+            is_youtube=yt_now,
+            tt_bgra=tt_src,
+            tt_title=tt_fallback,
+            backdrop_bgr=_paused_screen_backdrop_bgr(),
+            receiver_name=recv_name,
+            receiver_input=recv_input,
+            has_receiver=(
+                not bool(receiver_standby_holder[0])
+                and bool(recv_name or recv_input or inc or cfg or vol)
+            ),
+        ):
+            changed = True
+    if changed:
+        skip_cache[0] = None
+    try:
+        t_dump = time.monotonic()
+        if t_dump - _np_dump_mono[0] >= 5.0:
+            _np_dump_mono[0] = t_dump
+            lm = apple_tv_auto_state.get("last_metadata")
+            lm_d = lm if isinstance(lm, dict) else {}
+            st = view_circles_widget._state if view_circles_widget is not None else None
+            from pigeon.auto_widgets import live_plan as _dump_live_plan
+
+            _dump_plan = _dump_live_plan()
+            Path("/tmp/pigeon-np-zones.json").write_text(
+                json.dumps(
+                    {
+                        "title_key": active_tmdb_title_key[0],
+                        "display_title": active_tmdb_display_title[0],
+                        "tt_title": getattr(st, "tt_title", None),
+                        "cast_n": len(getattr(st, "cast", None) or []),
+                        "cast0": (getattr(st, "cast", None) or [None])[0],
+                        "has_position": bool(getattr(st, "has_position", False)),
+                        "remaining": getattr(st, "remaining_text", ""),
+                        "incoming": getattr(st, "incoming", ""),
+                        "config": getattr(st, "config", ""),
+                        "input": getattr(st, "receiver_input", ""),
+                        "service": getattr(st, "service_name", ""),
+                        "mode": getattr(st, "content_mode", ""),
+                        "youtube": bool(getattr(st, "is_youtube", False)),
+                        "searching": bool(getattr(st, "searching", False)),
+                        "md_state": str(lm_d.get("device_state") or ""),
+                        "md_title": str(lm_d.get("title") or ""),
+                        "md_query": str(lm_d.get("query") or ""),
+                        "md_app": str(lm_d.get("app_name") or ""),
+                        "layout": getattr(_dump_plan, "layout", None),
+                        "pause_age": round(
+                            float(_refresh_paused_row_stamp(t_dump)), 1
+                        ),
+                        "pausesaver_hold": bool(_pausesaver_is_holding()),
+                        "assignments": list(view_circles_widget._assignments())
+                        if view_circles_widget is not None
+                        else [],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+    except Exception:
+        pass
+
+
+def _circles_poster_bgra(*, _active_tmdb_poster_bgra, _vv_is_music, _vv_is_youtube, apple_tv_auto_state) -> np.ndarray | None:
+    """Poster slot for view_circles — poster art only (no backdrop fill)."""
+    if _vv_is_music():
+        bgra = apple_tv_auto_state.get("music_artwork_bgra")
+        if isinstance(bgra, np.ndarray) and bgra.size > 0:
+            return bgra
+        return None
+    if _vv_is_youtube():
+        bgra = apple_tv_auto_state.get("video_artwork_bgra")
+        if isinstance(bgra, np.ndarray) and bgra.size > 0:
+            return bgra
+        return None
+    bgra = apple_tv_auto_state.get("video_artwork_bgra")
+    if isinstance(bgra, np.ndarray) and bgra.size > 0:
+        try:
+            from pigeon.np_layout import poster_image_is_16x9
+
+            if poster_image_is_16x9(bgra):
+                return bgra
+        except Exception:
+            pass
+    if apple_tv_auto_state.get("tmdb_fetch_in_flight") or apple_tv_auto_state.get(
+        "pending_tmdb"
+    ):
+        return None
+    return _active_tmdb_poster_bgra()
+
+
+def _spawn_youtube_thumb_fetch(*, _store_music_artwork_from_metadata, _sync_now_playing_screen_state, apple_tv_auto_state, render_once, root, skip_cache) -> None:
+    """Fill zone 6 from YouTube's CDN when pyatv artwork() is empty."""
+    bgra = apple_tv_auto_state.get("video_artwork_bgra")
+    if isinstance(bgra, np.ndarray) and bgra.size > 0:
+        return
+    if apple_tv_auto_state.get("youtube_thumb_in_flight"):
+        return
+    md_raw = apple_tv_auto_state.get("last_metadata")
+    md = dict(md_raw) if isinstance(md_raw, dict) else {}
+    try:
+        from pigeon.apple_tv_now_playing import (
+            download_youtube_thumbnail_bytes,
+            youtube_thumb_identity,
+            youtube_title_from_metadata,
+            youtube_video_id_from_metadata,
+        )
+    except Exception:
+        return
+    if not youtube_video_id_from_metadata(md) and not youtube_title_from_metadata(md):
+        return
+    key = youtube_thumb_identity(md)
+    if not key or key == apple_tv_auto_state.get("youtube_thumb_key"):
+        return
+    apple_tv_auto_state["youtube_thumb_in_flight"] = True
+
+    def worker() -> None:
+        raw: bytes | None = None
+        try:
+            raw = download_youtube_thumbnail_bytes(md)
+        except Exception:
+            raw = None
+
+        def finish() -> None:
+            apple_tv_auto_state["youtube_thumb_in_flight"] = False
+            apple_tv_auto_state["youtube_thumb_key"] = key
+            if raw:
+                art_md = dict(md)
+                art_md["artwork_bytes"] = raw
+                try:
+                    _store_music_artwork_from_metadata(art_md)
+                except Exception:
+                    pass
+            try:
+                _sync_now_playing_screen_state()
+            except Exception:
+                pass
+            skip_cache[0] = None
+            try:
+                render_once()
+            except Exception:
+                pass
+
+        try:
+            root.after(0, finish)
+        except Exception:
+            finish()
+
+    threading.Thread(target=worker, daemon=True, name="youtube-thumb").start()
+
+
+def _content_key_from_metadata(metadata: dict[str, object], *, _tmdb_pref_from_metadata, resolve_metadata_tmdb_query) -> str | None:
+    pyatv_q = str(metadata.get("query") or "").strip()
+    if resolve_metadata_tmdb_query is not None:
+        query = pyatv_q or resolve_metadata_tmdb_query(metadata)
+    else:
+        query = pyatv_q
+    if not query:
+        return None
+    prefer = _tmdb_pref_from_metadata(metadata)
+    title = str(metadata.get("title") or "").strip()
+    try:
+        from pigeon.raw_title import (
+            _title_looks_like_episode_in_metadata,
+            raw_title_from_metadata_dict,
+        )
+        from pigeon.tmdb_poster import is_degenerate_tmdb_query
+
+        rt = raw_title_from_metadata_dict(metadata)
+        if _title_looks_like_episode_in_metadata(metadata, rt):
+            for key in ("album", "series_name", "artist"):
+                val = str(metadata.get(key) or "").strip()
+                if val and not is_degenerate_tmdb_query(val):
+                    title = val
+                    break
+    except ImportError:
+        pass
+    return "|".join((query, prefer, title))
+
+
+def _sync_trt_text_to_true_once(*, _format_hmmss, _playback_extrapolated_pair, _playback_progress_fraction_for_bar, _refresh_trt_progress_only, _sync_status_bar_trt_substantive, _warm_status_bar_blits, apple_tv_playback_clock, skip_cache, status_bar_widget) -> None:
+    """Set TRT text to the latest polled integer second (used to recover from missed metronome ticks)."""
+    try:
+        if status_bar_widget is None:
+            return
+        clk = apple_tv_playback_clock
+        if clk.get("live_mode"):
+            # Live: digits are suppressed; show LIVE.
+            if status_bar_widget.set_now_playing_display(
+                played_text="LIVE",
+                remaining_text="",
+                progress=0.0,
+            ):
+                _warm_status_bar_blits()
+                skip_cache[0] = None
+            return
+
+        pair = _playback_extrapolated_pair()
+        if pair is None:
+            return
+        played_true, rem_true = pair
+        disp_true = int(played_true)
+
+        # If we're already showing this second, avoid touching TRT text cadence.
+        disp_cur = clk.get("display_played_sec")
+        if disp_cur is not None and int(disp_cur) == disp_true:
+            _refresh_trt_progress_only()
+            return
+
+        clk["display_played_sec"] = disp_true
+        played_text = _format_hmmss(disp_true)
+        remaining_text = _format_hmmss(int(rem_true))
+        pfrac = _playback_progress_fraction_for_bar()
+        prog = pfrac if pfrac is not None else 0.0
+        if status_bar_widget.set_now_playing_display(
+            played_text=played_text,
+            remaining_text=remaining_text,
+            progress=prog,
+        ):
+            _warm_status_bar_blits()
+            skip_cache[0] = None
+    finally:
+        _sync_status_bar_trt_substantive()
+
+
+def _playback_ui_tick(*, _idle_audio_meter_active, _playback_ui_tick, _refresh_content_indicator, _refresh_extrapolated_timecodes, apple_tv_playback_clock, root) -> None:
+    try:
+        clk = apple_tv_playback_clock
+        now_m = time.monotonic()
+        nf = clk.get("trt_next_fire_mono")
+        if nf is None:
+            nf = now_m + 1.0
+            clk["trt_next_fire_mono"] = nf
+        nf = float(nf)
+        tick_steps = 0
+        while nf <= now_m and tick_steps < 12:
+            nf += 1.0
+            tick_steps += 1
+        if tick_steps == 0:
+            root.after(max(1, int(round((nf - now_m) * 1000))), _playback_ui_tick)
+            return
+        clk["trt_next_fire_mono"] = nf
+        if not _idle_audio_meter_active():
+            _refresh_extrapolated_timecodes(tick_steps=tick_steps)
+            _refresh_content_indicator()
+        now2 = time.monotonic()
+        next_nf_raw = clk.get("trt_next_fire_mono")
+        if next_nf_raw is None:
+            next_nf_raw = now2 + 1.0
+            clk["trt_next_fire_mono"] = next_nf_raw
+        next_nf = float(next_nf_raw)
+        delay_ms = max(1, min(120_000, int(round((next_nf - now2) * 1000))))
+        root.after(delay_ms, _playback_ui_tick)
+    except Exception:
+        # Never let TRT tick crashes take down the UI loop (discovery/pairing run on Tk too).
+        try:
+            clk = apple_tv_playback_clock
+            clk["trt_next_fire_mono"] = time.monotonic() + 1.0
+        except Exception:
+            pass
+        root.after(1000, _playback_ui_tick)
+
+
+def _sync_streaming_badge_from_playback_sources(
+    md: dict[str, object] | None,
+    *,
+    roku_app_name: str | None = None,
+    _PROJECT_DIR, _apply_netflix_backdrop_when_running, _atv_metadata_is_content_idle, _idle_audio_meter_active, _warm_playback_overlay_blits, playback_overlay_widget, render_once, skip_cache, streaming_badge_state,
+) -> None:
+    """Streaming-service badge: pyatv metadata when present, else Roku ECP active-app name."""
+    if playback_overlay_widget is None:
+        return
+    from pigeon.streaming_service_badges import resolve_streaming_badge_media
+
+    assets = Path(_PROJECT_DIR) / "pigeonAssets"
+    prev_show = bool(streaming_badge_state.get("show"))
+    prev_filename = str(streaming_badge_state.get("filename") or "")
+    prev_label = str(streaming_badge_state.get("label") or "")
+    show = False
+    filename = ""
+    label = ""
+    md_active = md is not None and not _atv_metadata_is_content_idle(md)
+    pyatv_app = False
+    if md_active:
+        an = str(md.get("app_name") or "").strip()
+        bid = str(md.get("app_id") or "").strip()
+        pyatv_app = bool(an or bid)
+        if pyatv_app:
+            fn, label = resolve_streaming_badge_media(
+                assets,
+                app_name=an,
+                app_id=bid,
+            )
+            if fn or label:
+                show = True
+                filename = fn or ""
+    if not show and roku_app_name and str(roku_app_name).strip():
+        ra = str(roku_app_name).strip()
+        fn, label = resolve_streaming_badge_media(
+            assets,
+            app_name=ra,
+            app_id="",
+        )
+        if fn or label:
+            show = True
+            filename = fn or ""
+    if not show and md_active:
+        fn, label = resolve_streaming_badge_media(
+            assets,
+            app_name=str(md.get("app_name") or ""),
+            app_id=str(md.get("app_id") or ""),
+        )
+        if fn or label:
+            show = True
+            filename = fn or ""
+    if not show and isinstance(md, dict):
+        an = str(md.get("app_name") or "").strip()
+        bid = str(md.get("app_id") or "").strip()
+        if an or bid:
+            fn, label = resolve_streaming_badge_media(
+                assets,
+                app_name=an,
+                app_id=bid,
+            )
+            if fn or label:
+                show = True
+                filename = fn or ""
+    streaming_badge_state["show"] = show
+    streaming_badge_state["filename"] = filename
+    streaming_badge_state["label"] = label
+    if (
+        prev_show == show
+        and prev_filename == filename
+        and prev_label == label
+    ):
+        return
+    if _idle_audio_meter_active():
+        return
+    _warm_playback_overlay_blits()
+    skip_cache[0] = None
+    _apply_netflix_backdrop_when_running()
+    try:
+        render_once()
+    except Exception:
+        pass
+
+
+def _metadata_debug_provider(*, _content_indicator_ok, _tmdb_info_current_and_available, _view_four_display_metadata, apple_tv_auto_state, apple_tv_playback_clock, streaming_badge_state) -> dict[str, object]:
+    """Rows for the [4] metadata inspector (player / hdmi / pigeon pages)."""
+    from pigeon.hdmi_capture import hdmi_capture_available
+
+    lm = _view_four_display_metadata() or {}
+    try:
+        player_active = bool(_content_indicator_ok())
+    except Exception:
+        player_active = False
+    try:
+        hdmi_active = bool(hdmi_capture_available())
+    except Exception:
+        hdmi_active = False
+
+    rt = None
+    if lm:
+        try:
+            from pigeon.raw_title import raw_title_from_metadata_dict
+
+            rt = raw_title_from_metadata_dict(lm)
+        except Exception:
+            rt = None
+
+    def _rt(field: str) -> str:
+        return str(getattr(rt, field, "") or "").strip() if rt is not None else ""
+
+    # --- player: network metadata exactly as the box broadcasts it ---
+    p_title = str(lm.get("title") or "").strip()
+    p_series = str(lm.get("series_name") or "").strip()
+    is_tv = bool(p_series) or "tv" in _rt("media_type_label").casefold()
+    if is_tv and not p_series:
+        # layer_series_title falls back to the plain title for movies,
+        # so only trust it once we know this is episodic content.
+        p_series = _rt("layer_series_title")
+    p_episode = (
+        (_rt("raw_episode_title") or _rt("layer_episode_title") or p_title)
+        if is_tv
+        else p_title
+    )
+    player_rows = {
+        "service": str(lm.get("app_name") or "").strip(),
+        "series": p_series,
+        "title": p_title,
+        "episode": p_episode,
+    }
+
+    # --- hdmi: signal only (LED). HDMI no longer supplies metadata
+    # since OCR was retired, so every field stays blank.
+    hdmi_rows = {
+        "service": "",
+        "series": "",
+        "title": "",
+        "episode": "",
+        "year": "",
+    }
+
+    # --- pigeon: the final verdict (search terms + confidence) ---
+    refined = str(
+        apple_tv_auto_state.get("last_tmdb_fetch_refined")
+        or apple_tv_auto_state.get("last_tmdb_fetch_input")
+        or ""
+    ).strip()
+    g_title = refined or _rt("raw_query") or p_title
+    g_year = ""
+    try:
+        from pigeon.tmdb_poster import split_query_and_year
+
+        cleaned, year = split_query_and_year(g_title)
+        if cleaned:
+            g_title = cleaned.strip()
+        if year:
+            g_year = str(year)
+    except Exception:
+        pass
+    g_series = p_series
+    g_episode = ""
+    se_i, ep_i = getattr(rt, "season_index", None), getattr(rt, "episode_index", None)
+    if is_tv:
+        g_episode = _rt("layer_episode_title") or _rt("raw_episode_title")
+        if not g_episode and se_i is not None and ep_i is not None:
+            g_episode = f"S{se_i} E{ep_i}"
+    g_episode = g_episode or g_title
+    svc_label = str(streaming_badge_state.get("label") or "").strip()
+    pigeon_rows: dict[str, object] = {
+        "service": svc_label or player_rows["service"],
+        "series": g_series,
+        "title": g_title,
+        "episode": g_episode,
+        "year": g_year,
+    }
+    try:
+        from pigeon.title_decision import decision_from_metadata
+
+        why = decision_from_metadata(lm) or str(
+            apple_tv_auto_state.get("last_title_decision") or ""
+        ).strip()
+        if why:
+            pigeon_rows["decision"] = why
+    except Exception:
+        pass
+    try:
+        from pigeon.display_confidence import scores_for_metadata
+        from pigeon.tmdb_poster import last_trt_comparison
+
+        clk = apple_tv_playback_clock
+        advancing = bool(clk.get("has_sync") and clk.get("playing"))
+        trt_cmp = last_trt_comparison()
+        scores = scores_for_metadata(
+            lm,
+            position_advancing=advancing,
+            tmdb_matches=bool(_tmdb_info_current_and_available()),
+            hdmi_present=hdmi_capture_available(),
+            player_duration_s=trt_cmp.get("player_s"),
+            tmdb_runtime_s=trt_cmp.get("tmdb_s"),
+        )
+        pigeon_rows["confidence"] = {
+            "service": scores.get("app"),
+            "series": scores.get("identity"),
+            "title": scores.get("identity"),
+            "episode": scores.get("position"),
+            "year": scores.get("art"),
+            "trt": scores.get("trt"),
+        }
+    except Exception:
+        pigeon_rows["confidence"] = {}
+
+    return {
+        "player": player_rows,
+        "hdmi": hdmi_rows,
+        "pigeon": pigeon_rows,
+        "player_active": player_active,
+        "hdmi_active": hdmi_active,
+    }

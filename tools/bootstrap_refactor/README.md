@@ -121,3 +121,29 @@ recursive helpers. `_handle_main_settings_action` is blocked by the
 `_remove_streaming_device_at` and `_remove_receiver_device_at` now clear the
 real render cache (`skip_cache[0] = None`) instead of a throwaway local, so
 the settings screen repaints after an update-badge prefetch or device removal.
+
+## Pass 7: late binding for forward references
+
+`pass3.py` refuses a helper when something could call it before the names it
+uses are bound. For names that are *functions* bound later in `bootstrap()`
+(including the helper itself, when it is recursive), nothing has to move:
+`pass7.py` binds them at the original `def` site as
+`X=_late(lambda: X, "X")` (`pigeon.core.binding.late`), which looks `X` up on
+every call exactly like the closure did (and raises `NameError` if called
+before `X` exists, as before). A helper qualifies only if each such `X` is bound
+once by a `def` / `_bind_deps(...)` / `_core_*.X`, and the helper only calls it
+or passes it as an argument.
+
+```bash
+python3 $T/pass2.py pigeon_0_9.py /tmp/p2.json
+python3 $T/pass7.py pigeon_0_9.py /tmp/p2.json /tmp/p7.json
+python3 $T/transform.py . $T/plan7.json /tmp/p7.json $T/new_module_docs.json
+```
+
+`plan7.json` lifts 40 helpers (39 via late binding + `_handle_main_settings_action`,
+freed by the skip_cache fix), incl. `render`-adjacent code such as
+`compose_display_from_source` and `_apple_tv_auto_poll_tick`.
+
+Remaining blockers: forward references to *values* bound later (holders and
+widgets such as `dev_phase`, `main_settings_widget`, `update_btn`), and more
+rebound state (`brightness_*`, `last_frame`, `scaled_*`, `_atv_ix_*`, …).
