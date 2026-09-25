@@ -2956,7 +2956,6 @@ def main() -> int:
         brightness_duration_down_s = 1.0
 
         last_atv_interaction_mono = [0.0]
-        last_device_interaction_mono = [0.0]
         last_timecode_motion_mono = [0.0]
         # ``last_metadata_activity_mono`` is initialized with pigeon user-activity state above.
         last_clock_saver_significant_device_mono = [time.monotonic()]
@@ -6577,7 +6576,6 @@ def main() -> int:
             avr_slot_holder=avr_slot_holder,
             clock_saver_force_on=clock_saver_force_on,
             denon_vol_cache=denon_vol_cache,
-            last_device_interaction_mono=last_device_interaction_mono,
             receiver_http_host=receiver_http_host,
             receiver_overlay_state=receiver_overlay_state,
             receiver_panel_led_holder=receiver_panel_led_holder,

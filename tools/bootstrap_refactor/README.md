@@ -175,5 +175,5 @@ Left in `bootstrap()`: 9 helpers that read Tk widgets created after them
 (`main_settings_widget`, `view_circles_widget`, `update_btn`,
 `purge_image_media_btn`) or `scene_enabled`.
 
-Known quirk (unchanged): `_update_atv_interaction_from_poll_metadata` sets
-`last_device_interaction_mono = now` without `nonlocal`, so that update is lost.
+Removed: `last_device_interaction_mono` was written (receiver poll, and a lost
+local write in `_update_atv_interaction_from_poll_metadata`) but never read.

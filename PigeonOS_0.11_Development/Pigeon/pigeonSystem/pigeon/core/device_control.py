@@ -1305,7 +1305,6 @@ def _update_atv_interaction_from_poll_metadata(metadata: dict[str, object], *, _
 
     if bump:
         last_atv_interaction_mono[0] = now
-        last_device_interaction_mono = now
 
     _atv_ix_sig_ds[0] = ds
     _atv_ix_sig_ck[0] = ck
@@ -1462,7 +1461,7 @@ def _apply_persisted_location_to_runtime(*, _atv_ix_extrap_playing, _atv_ix_pos,
     _schedule_refresh_pairing_leds()
 
 
-def _receiver_poll_tick(*, RECEIVER_POLL_MS, _PIGEON_EXT, _bind_receiver_volume_hub, _bump_clock_saver_significant_device, _clock_saver_for_compose, _clock_saver_receiver_off, _clock_saver_volume, _denon_telnet_audio_fallback, _idle_audio_meter_active, _note_volume_graphics, _note_volume_source_lines, _paint_boolean_led, _quick_receiver_volume_poll, _receiver_poll_tick, _refresh_observed_pairing_led_rows, _remember_clock_saver_volume, _sync_now_playing_screen_state, _sync_streaming_badge_from_playback_sources, _view_one_uses_now_playing_screen, _warm_playback_overlay_blits, apple_tv_auto_state, avr_slot_holder, clock_saver_force_on, denon_vol_cache, last_device_interaction_mono, receiver_http_host, receiver_overlay_state, receiver_panel_led_holder, receiver_poll_busy, receiver_power_on_pending, receiver_power_on_until, receiver_standby_holder, receiver_telnet_debug_holder, receiver_volume_cmd_busy, render_once, root, skip_cache, streaming_slot_holder) -> None:
+def _receiver_poll_tick(*, RECEIVER_POLL_MS, _PIGEON_EXT, _bind_receiver_volume_hub, _bump_clock_saver_significant_device, _clock_saver_for_compose, _clock_saver_receiver_off, _clock_saver_volume, _denon_telnet_audio_fallback, _idle_audio_meter_active, _note_volume_graphics, _note_volume_source_lines, _paint_boolean_led, _quick_receiver_volume_poll, _receiver_poll_tick, _refresh_observed_pairing_led_rows, _remember_clock_saver_volume, _sync_now_playing_screen_state, _sync_streaming_badge_from_playback_sources, _view_one_uses_now_playing_screen, _warm_playback_overlay_blits, apple_tv_auto_state, avr_slot_holder, clock_saver_force_on, denon_vol_cache, receiver_http_host, receiver_overlay_state, receiver_panel_led_holder, receiver_poll_busy, receiver_power_on_pending, receiver_power_on_until, receiver_standby_holder, receiver_telnet_debug_holder, receiver_volume_cmd_busy, render_once, root, skip_cache, streaming_slot_holder) -> None:
     root.after(RECEIVER_POLL_MS, _receiver_poll_tick)
     if not _PIGEON_EXT:
         return
@@ -1549,7 +1548,6 @@ def _receiver_poll_tick(*, RECEIVER_POLL_MS, _PIGEON_EXT, _bind_receiver_volume_
                 skip_cache[0] = None
                 render_once()
             return
-        last_device_interaction_mono[0] = time.monotonic()
         if old_vol_raw != new_vol and not saver_up:
             _bump_clock_saver_significant_device()
         if _idle_audio_meter_active():
