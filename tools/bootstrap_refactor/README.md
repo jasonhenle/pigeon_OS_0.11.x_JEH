@@ -114,3 +114,10 @@ Still blocked: the remaining helpers are mostly forward-reference cases that
 `pass3.py` rejects (they can run before a name they use is bound), plus 9
 recursive helpers. `_handle_main_settings_action` is blocked by the
 `_stale_skip_cache` nonlocal until the skip_cache quirk is fixed for real.
+
+## skip_cache fix (behaviour change)
+
+`_prefetch_pigeon_update_badge`, its nested `finish_prefetch`,
+`_remove_streaming_device_at` and `_remove_receiver_device_at` now clear the
+real render cache (`skip_cache[0] = None`) instead of a throwaway local, so
+the settings screen repaints after an update-badge prefetch or device removal.

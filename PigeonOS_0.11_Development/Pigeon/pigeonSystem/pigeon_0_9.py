@@ -7077,7 +7077,7 @@ def main() -> int:
                     _sync_status_bar_visibility_for_playback(None)
                 if playback_overlay_widget is not None:
                     playback_overlay_widget.clear_cache()
-            _stale_skip_cache = None  # local only: never cleared the render cache (pre-existing)
+            skip_cache[0] = None
             try:
                 render_once()
             except Exception:
@@ -7117,7 +7117,7 @@ def main() -> int:
                         receiver_http_host["host"] = adr
                 if playback_overlay_widget is not None:
                     playback_overlay_widget.clear_cache()
-            _stale_skip_cache = None  # local only: never cleared the render cache (pre-existing)
+            skip_cache[0] = None
             try:
                 render_once()
             except Exception:
@@ -7678,7 +7678,7 @@ def main() -> int:
                             st.update_github_branch = update_check_state.get("github_branch")
                             st.update_error = None
                             main_settings_widget.invalidate()
-                            _stale_skip_cache = None  # local only: never cleared the render cache (pre-existing)
+                            skip_cache[0] = None
                     except Exception:
                         pass
 
@@ -7698,7 +7698,6 @@ def main() -> int:
                             )
 
                         def finish_prefetch() -> None:
-                            nonlocal _stale_skip_cache
                             if main_settings_widget is None:
                                 return
                             st2 = main_settings_widget.state
@@ -7720,7 +7719,7 @@ def main() -> int:
                             except Exception:
                                 pass
                             main_settings_widget.invalidate()
-                            _stale_skip_cache = None
+                            skip_cache[0] = None
 
                         root.after(0, finish_prefetch)
 
