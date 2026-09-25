@@ -1122,11 +1122,37 @@ def main() -> int:
         VolumeLineReveal() if VolumeLineReveal is not None else _NullVolumeLineReveal()
     )
 
+    # Shared with bootstrap() and the pigeon.core helpers. Created here (not inside
+    # bootstrap()) so the main()-level volume helpers below can read them too.
+    # Track the last usable Denon volume reading so the Apple TV metadata poll (which
+    # reports ``volume_percent=0`` when an AV receiver owns the volume line) does not
+    # briefly overwrite the authoritative dB value on its own cadence. The receiver
+    # poll keeps running on its own schedule; this cache only controls *display*.
+    denon_vol_cache: dict[str, object] = {
+        "effective": "",
+        "mono_usable": 0.0,
+        # Last volume string shown on View 1 (survives brief empty polls).
+        "np_hold": "",
+        "heal_quick_mono": 0.0,
+        "heal_sweep_mono": 0.0,
+        "bound_host": "",
+    }
+    # True when the last Denon poll answered but reported OFF/STANDBY — hide all
+    # receiver metadata and treat the receiver indicator as inactive.
+    receiver_standby_holder: list[bool] = [False]
+    receiver_overlay_state: dict[str, str] = {
+        "incoming": "",
+        "config": "",
+        "volume": "",
+        "input": "",
+    }
+    view_circles_widget_holder = [None]
+
     def _note_zone3_volume_takeover() -> None:
         """Hold the NP volume widget in zone 3 for 7s after an adjustment."""
         try:
-            if view_circles_widget is not None:
-                view_circles_widget.note_volume_adjustment()
+            if view_circles_widget_holder[0] is not None:
+                view_circles_widget_holder[0].note_volume_adjustment()
         except NameError:
             pass
         except Exception:
@@ -1200,7 +1226,7 @@ def main() -> int:
         except Exception:
             pass
         try:
-            st = getattr(view_circles_widget, "_state", None)
+            st = getattr(view_circles_widget_holder[0], "_state", None)
             candidates.append(getattr(st, "volume", ""))
         except NameError:
             pass
@@ -1923,7 +1949,6 @@ def main() -> int:
 
         # State created up front (hoisted; side-effect-free initialisers).
         main_settings_widget_holder = [None]
-        view_circles_widget_holder = [None]
         update_btn_holder = [None]
         purge_image_media_btn_holder = [None]
         scene_enabled = [None]
@@ -3110,12 +3135,6 @@ def main() -> int:
             else None
         )
 
-        receiver_overlay_state: dict[str, str] = {
-            "incoming": "",
-            "config": "",
-            "volume": "",
-            "input": "",
-        }
         receiver_telnet_debug_holder: list[dict[str, str]] = [{}]
 
         _denon_telnet_audio_fallback = _bind_deps(
@@ -3123,22 +3142,6 @@ def main() -> int:
             receiver_telnet_debug_holder=receiver_telnet_debug_holder,
         )
 
-        # Track the last usable Denon volume reading so the Apple TV metadata poll (which
-        # reports ``volume_percent=0`` when an AV receiver owns the volume line) does not
-        # briefly overwrite the authoritative dB value on its own cadence. The receiver
-        # poll keeps running on its own schedule; this cache only controls *display*.
-        denon_vol_cache: dict[str, object] = {
-            "effective": "",
-            "mono_usable": 0.0,
-            # Last volume string shown on View 1 (survives brief empty polls).
-            "np_hold": "",
-            "heal_quick_mono": 0.0,
-            "heal_sweep_mono": 0.0,
-            "bound_host": "",
-        }
-        # True when the last Denon poll answered but reported OFF/STANDBY — hide all
-        # receiver metadata and treat the receiver indicator as inactive.
-        receiver_standby_holder: list[bool] = [False]
 
         _resolve_receiver_lines_for_now_playing = _bind_deps(
             _core_device_control._resolve_receiver_lines_for_now_playing,
