@@ -75,3 +75,23 @@ Then re-run pass 2 / pass 3 and `transform.py` with `plan4.json` / `plan4b.json`
 Known pre-existing quirk preserved on purpose: `_prefetch_pigeon_update_badge`,
 `_remove_streaming_device_at` and `_remove_receiver_device_at` assign
 `skip_cache = None` without `nonlocal`, so they never cleared the render cache.
+
+## Pass 5
+
+`skip_cache` was still treated as rebound because three functions assign a
+*local* `skip_cache` (the quirk above), and one nested `nonlocal skip_cache`
+pointed at such a local. Those locals are renamed `_stale_skip_cache`
+(behaviour unchanged). Then `playback_overlay_widget` was bound once and
+`command_entry_visible`, `scene_enabled`, `info_cluster_blits`,
+`last_timecode_motion_mono` holderized; `plan5.json` / `plan5b.json` lift 24 helpers.
+
+Check every holderize run is a pure rename:
+
+```bash
+cp pigeon_0_9.py /tmp/before.py
+python3 $T/holderize.py pigeon_0_9.py NAME ...
+python3 $T/holder_equiv.py /tmp/before.py pigeon_0_9.py NAME ...   # AST: IDENTICAL
+```
+
+Dead code noticed (never called, kept verbatim): `_remove_saved_receiver_device`,
+`set_current_receiver_only`.

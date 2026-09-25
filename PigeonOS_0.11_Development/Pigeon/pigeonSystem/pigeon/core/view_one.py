@@ -183,3 +183,88 @@ def _view_one_uses_now_playing_screen(*, DisplayView, _effective_display_view, v
         _effective_display_view() == DisplayView.ONE
         and view_circles_widget is not None
     )
+
+
+def _view_one_video_content_a_tt_contain_rect_design(*, DESIGN_H, DESIGN_W, PATCH_LAYER_RECEIVER_AUDIO, VIEW_ONE_BADGE_COL_RIGHT, get_grid_geometry, playback_lower_gradient_bgra, playback_overlay_widget, rect_for_span_at_cell, rect_for_span_top_right_at_cell, tmdb_tt_gradient_bgr_holder) -> tuple[int, int, int, int]:
+    """Design-pixel (x, y, w, h) for pigeonTMDB_TT uniform contain-fit on viewOne.videoContent_a.
+
+    Horizontally the slot is **10 design cells wide**, centered on column **7.5**
+    (≈ columns 2.5–12.5): uniform-contain–fit, as large as that band and vertical clearance
+    allow. Vertically it clears the streaming badge, receiver-driven overlay lines, and the
+    gradient / status region (with a slightly lower floor and tighter gap to the gradient).
+    """
+    if (
+        get_grid_geometry is None
+        or rect_for_span_top_right_at_cell is None
+        or rect_for_span_at_cell is None
+    ):
+        return (0, 0, max(1, int(DESIGN_W)), max(1, int(DESIGN_H)))
+    g = get_grid_geometry()
+    pad = max(4, int(round(0.12 * float(g.cell))))
+
+    bx, by, bw, bh = rect_for_span_top_right_at_cell(
+        2,
+        1,
+        row_1based=0.5,
+        col_right_1based=float(VIEW_ONE_BADGE_COL_RIGHT),
+    )
+
+    top_min = int(by) + int(bh) + pad
+    top_min = max(
+        top_min,
+        int(round(float(g.y0) + (3.0 - 1.0) * float(g.cell))),
+    )
+    if playback_overlay_widget is not None:
+        try:
+            for _p in playback_overlay_widget.design_blits():
+                if getattr(_p, "layer", "") != PATCH_LAYER_RECEIVER_AUDIO:
+                    continue
+                py1 = int(_p.y) + int(_p.h) + pad
+                if py1 > top_min:
+                    top_min = min(py1, int(DESIGN_H) - 8)
+        except Exception:
+            pass
+
+    # Allow the title treatment to use more vertical band (still below TRT / status row).
+    bottom_max = int(round(float(g.y0) + (7.45 - 1.0) * float(g.cell)))
+    try:
+        if playback_lower_gradient_bgra is not None:
+            _gx, gy, _gw, _gh, _grad = playback_lower_gradient_bgra(
+                gradient_bgr=tmdb_tt_gradient_bgr_holder[0]
+            )
+            # Tighter than ``pad`` so the logo can sit closer to the gradient top edge.
+            _grad_pad = max(2, int(round(0.04 * float(g.cell))))
+            bottom_max = min(bottom_max, int(gy) - _grad_pad)
+    except Exception:
+        pass
+    bottom_max = max(top_min + 8, min(int(DESIGN_H) - pad, bottom_max))
+
+    # Columns 2.5–12.5 (10 cells wide, centered on the former 3–12 band): wider slot → larger TT.
+    _tt_span_w = 10.0
+    _tt_col_center = 7.5
+    gx_tt, _gy_tt, gw_tt, _gh_tt = rect_for_span_at_cell(
+        float(_tt_span_w),
+        1.0,
+        row_1based=1.0,
+        col_1based=float(_tt_col_center) - 0.5 * float(_tt_span_w),
+    )
+    x0 = int(gx_tt)
+    x1 = int(gx_tt) + int(gw_tt)
+    y0 = max(0, top_min)
+    y1 = bottom_max
+    rw = int(x1 - x0)
+    rh = int(y1 - y0)
+    if rw < 48 or rh < 48 or x1 <= x0:
+        _legacy = rect_for_span_top_right_at_cell(
+            14, 4, row_1based=2, col_right_1based=17.5
+        )
+        _rt = int(round(float(g.y0) + (2.5 - 1.0) * float(g.cell)))
+        _rb = int(round(float(g.y0) + (6.0 - 1.0) * float(g.cell)))
+        _rh = max(1, _rb - _rt)
+        return (
+            int(_legacy[0]),
+            int(_rt),
+            int(_legacy[2]),
+            int(_rh),
+        )
+    return (x0, y0, rw, rh)

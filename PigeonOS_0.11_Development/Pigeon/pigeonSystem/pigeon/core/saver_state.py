@@ -17,6 +17,10 @@ from pigeon.compositing import cv_resize_interp
 import cv2
 import os
 from pigeon.clock_saver_policy import should_hold_paused_screen
+from pigeon.clock_saver_policy import CLOCK_SAVER_PAUSED_AFTER_S
+from pigeon.clock_saver_policy import clock_saver_due_for_no_content
+from pigeon.clock_saver_policy import clock_saver_due_for_pause
+import sys
 
 
 def _bump_pigeon_user_activity(_event: object | None = None, *, _boot_clock_saver_until_playback, last_metadata_activity_mono, last_pigeon_user_activity_mono) -> None:
@@ -435,3 +439,107 @@ def _paused_screen_active(*, DevPhase, _apply_auto_widget_policy, _clock_saver_a
         has_backdrop=has_backdrop,
         clock_saver_active=saver_on,
     )
+
+
+def _apply_position_stall_grace_to_clock_saver(now: float, *, CLOCK_SAVER_POSITION_STALL_GRACE_S, last_clock_saver_significant_device_mono, last_timecode_motion_mono) -> None:
+    """Keep the saver device-signal timer pinned to ``now`` while content position is live.
+
+    The saver timer is "paused" (continually bumped to ``now``) for as long as the reported
+    content position has advanced within :data:`CLOCK_SAVER_POSITION_STALL_GRACE_S`. Once the
+    position stays flat beyond that window, we stop bumping and the existing 300 s
+    ``CLOCK_SAVER_AFTER_S`` accumulator begins counting from the last advance. A fresh
+    position advance during an already-open saver drops the dev-idle span back to zero here,
+    so ``_clock_saver_active`` returns ``False`` on the very next tick → saver ends.
+    """
+    lm = last_timecode_motion_mono[0]
+    if lm <= 0.0:
+        return
+    if (now - lm) >= CLOCK_SAVER_POSITION_STALL_GRACE_S:
+        return
+    last_clock_saver_significant_device_mono[0] = now
+
+
+def _clock_saver_active(now: float, *, CLOCK_SAVER_METADATA_IDLE_AFTER_S, DevPhase, _apple_tv_is_off, _apply_position_stall_grace_to_clock_saver, _boot_clock_saver_until_playback, _clock_saver_content_is_idle, _clock_saver_idle_need, _clock_saver_user_enabled, _cs_meta_idle_log_mono, _cs_meta_idle_was_active, _metadata_drives_clock_saver, _note_metadata_activity, _pausesaver_is_holding, _program_audio_session, _refresh_paused_row_stamp, _resolve_receiver_lines_for_now_playing, _something_playing_now, _splash_reveal_clock, _tmdb_info_current_and_available, apple_tv_playback_clock, clock_saver_composite_bgra, dev_phase, last_clock_saver_significant_device_mono, last_metadata_activity_mono, last_pigeon_user_activity_mono, receiver_standby_holder, scene_enabled, startup_ph) -> bool:
+    if clock_saver_composite_bgra is None:
+        return False
+    if not _clock_saver_user_enabled():
+        return False
+    if dev_phase[0] != DevPhase.OFF:
+        return False
+    paused_hold = _pausesaver_is_holding()
+    paused_age = _refresh_paused_row_stamp(now)
+    if clock_saver_due_for_pause(paused_hold, paused_age):
+        return True
+    if _program_audio_session():
+        _boot_clock_saver_until_playback[0] = False
+        return False
+    try:
+        inc_cs, cfg_cs, _vol_cs = _resolve_receiver_lines_for_now_playing()
+    except Exception:
+        inc_cs, cfg_cs = "", ""
+    if (not bool(receiver_standby_holder[0])) and (
+        str(inc_cs or "").strip() or str(cfg_cs or "").strip()
+    ):
+        _boot_clock_saver_until_playback[0] = False
+        return False
+    if _apple_tv_is_off():
+        return True
+    # Do not require ``scene_enabled``: view ONE now-playing (circles) commonly
+    # runs with the video scene off, and the saver must still arm there.
+    _apply_position_stall_grace_to_clock_saver(now)
+    # TMDb art dismisses the boot saver, but does not block idle / position stall.
+    if _tmdb_info_current_and_available():
+        _boot_clock_saver_until_playback[0] = False
+    # Boot: if nothing is playing after splash, stay on the saver until playback
+    # starts or a local control dismisses it.
+    if _boot_clock_saver_until_playback[0]:
+        if _something_playing_now() or _program_audio_session():
+            _boot_clock_saver_until_playback[0] = False
+            _note_metadata_activity(now)
+        elif startup_ph[0] is None or _splash_reveal_clock[0]:
+            return True
+    if clock_saver_due_for_no_content(
+        playing=_something_playing_now(),
+        paused_with_content=paused_hold,
+        live=bool(apple_tv_playback_clock.get("live_mode")),
+        content_idle=_clock_saver_content_is_idle(),
+        incoming_audio=_program_audio_session(),
+    ):
+        return True
+    # HDMI-only: 24 consecutive unchanged HDMI frames → saver.
+    # Ignored while player metadata is driving (position is authoritative).
+    if not _metadata_drives_clock_saver():
+        try:
+            from pigeon.hdmi_capture import hdmi_clock_saver_due
+            if hdmi_clock_saver_due():
+                return True
+        except Exception:
+            pass
+    # Content metadata + HDMI unchanged for 2 min → saver until content changes
+    # **or** any local Pigeon control is used. Position not advancing is primary.
+    lma = float(last_metadata_activity_mono[0])
+    meta_age = (now - lma) if lma > 0.0 else 0.0
+    ui_age = now - float(last_pigeon_user_activity_mono[0])
+    meta_idle = (
+        lma > 0.0
+        and meta_age >= CLOCK_SAVER_METADATA_IDLE_AFTER_S
+        and ui_age >= CLOCK_SAVER_METADATA_IDLE_AFTER_S
+    )
+    if meta_idle != _cs_meta_idle_was_active[0] or (
+        now - float(_cs_meta_idle_log_mono[0])
+    ) >= 30.0:
+        _cs_meta_idle_log_mono[0] = now
+        _cs_meta_idle_was_active[0] = bool(meta_idle)
+        sys.stderr.write(
+            f"pigeon: clock_saver meta_idle age={meta_age:.0f}s "
+            f"ui_age={ui_age:.0f}s need={CLOCK_SAVER_METADATA_IDLE_AFTER_S:.0f}s "
+            f"pause_age={paused_age:.0f}s pause_need={CLOCK_SAVER_PAUSED_AFTER_S:.0f}s "
+            f"active={bool(meta_idle)} boot={bool(_boot_clock_saver_until_playback[0])} "
+            f"scene={bool(scene_enabled[0])} phase={dev_phase[0]!s}\n"
+        )
+        sys.stderr.flush()
+    if meta_idle:
+        return True
+    ui_idle = (now - float(last_pigeon_user_activity_mono[0])) >= _clock_saver_idle_need()
+    dev_idle = (now - float(last_clock_saver_significant_device_mono[0])) >= _clock_saver_idle_need()
+    return ui_idle and dev_idle

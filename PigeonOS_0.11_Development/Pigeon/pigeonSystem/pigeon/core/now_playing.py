@@ -603,3 +603,222 @@ def _np_drawing_live_audio(*, _clock_saver_for_compose, _view_one_uses_now_playi
         return bool(view_circles_widget._live_audio_widgets_on())
     except Exception:
         return False
+
+
+def _apply_playback_clock_from_poll(metadata: dict[str, object], *, _content_key_from_metadata, apple_tv_playback_clock, last_timecode_motion_mono) -> None:
+    """Anchor wall clock to last reported position; polls resync and correct drift."""
+    clk = apple_tv_playback_clock
+    ds = str(metadata.get("device_state") or "")
+    playing_now = "Playing" in ds
+    now_m = time.monotonic()
+    content_key = _content_key_from_metadata(metadata)
+    prev_has_sync = bool(clk.get("has_sync"))
+    prev_pos = float(clk.get("sync_position") or 0.0)
+
+    tt_raw = metadata.get("total_time")
+    try:
+        reported_total = float(tt_raw) if tt_raw is not None else None
+    except (TypeError, ValueError):
+        reported_total = None
+    if reported_total is not None:
+        try:
+            if float(reported_total) > 0:
+                clk["last_reported_total"] = reported_total
+        except (TypeError, ValueError):
+            pass
+    elif content_key and content_key == clk.get("latched_content_key"):
+        # pyatv on some paths (often Linux) omits total_time while still reporting position.
+        for key in ("latched_total", "last_reported_total"):
+            prev = clk.get(key)
+            if prev is None:
+                continue
+            try:
+                pf = float(prev)
+            except (TypeError, ValueError):
+                continue
+            if pf > 0:
+                reported_total = pf
+                break
+
+    pos_raw = metadata.get("position")
+    pos_f: float | None = None
+    if pos_raw is not None:
+        try:
+            pos_f = max(0.0, float(pos_raw))
+        except (TypeError, ValueError):
+            pos_f = None
+
+    # Live/continuous content: playing with no duration and no scrub position.
+    live_now = bool(playing_now) and (reported_total is None or reported_total <= 0)
+    if live_now and pos_f is not None:
+        live_now = False
+    if live_now:
+        clk["live_mode"] = True
+        clk["has_sync"] = False
+        clk["latched_total"] = None
+        clk["display_played_sec"] = None
+        clk["trt_next_fire_mono"] = None
+        clk["playing"] = True
+        # Still latch content so TMDb artwork doesn't keep swapping.
+        if content_key and content_key != clk.get("latched_content_key"):
+            clk["latched_content_key"] = content_key
+        # Live has no position; metadata fingerprint (title/state) alone
+        # decides whether the 2-minute idle saver arms.
+        return
+    clk["live_mode"] = False
+
+    if content_key and content_key != clk.get("latched_content_key"):
+        clk["latched_content_key"] = content_key
+        clk["latched_total"] = reported_total
+        clk["display_played_sec"] = None
+        clk["trt_next_fire_mono"] = None
+
+    if pos_f is not None:
+        clk["sync_mono"] = now_m
+        clk["sync_position"] = pos_f
+        clk["playing"] = playing_now
+        clk["has_sync"] = True
+        pos_moved = not prev_has_sync or abs(pos_f - prev_pos) >= 0.25
+        if playing_now and pos_moved:
+            last_timecode_motion_mono[0] = now_m
+        # Metadata-idle saver stamp is refreshed via fingerprint (incl. position)
+        # in ``_bump_clock_saver_significant_device_from_metadata``.
+        return
+
+    if not clk.get("has_sync"):
+        clk["playing"] = playing_now
+        return
+
+    sp = float(clk["sync_position"])
+    sm = float(clk["sync_mono"])
+    extrap = sp + (now_m - sm) if clk.get("playing") else sp
+    extrap = max(0.0, extrap)
+    lt = clk.get("latched_total")
+    if lt is not None:
+        try:
+            extrap = min(extrap, float(lt))
+        except (TypeError, ValueError):
+            pass
+    clk["sync_position"] = extrap
+    clk["sync_mono"] = now_m
+    clk["playing"] = playing_now
+    if playing_now and abs(extrap - sp) >= 0.25:
+        last_timecode_motion_mono[0] = now_m
+
+
+def _sync_status_bar_trt_substantive(*, _trt_substantive_for_status_bar, _warm_status_bar_blits, skip_cache, status_bar_widget) -> None:
+    if status_bar_widget is None:
+        return
+    if status_bar_widget.set_trt_substantive(_trt_substantive_for_status_bar()):
+        _warm_status_bar_blits()
+        skip_cache[0] = None
+
+
+def _sync_status_bar_visibility_for_playback(metadata: dict[str, object] | None, *, DisplayView, _atv_metadata_is_content_idle, _effective_display_view, _np_widgets_content_active, _resolve_receiver_lines_for_now_playing, _sync_now_playing_screen_state, _sync_status_bar_trt_substantive, _warm_status_bar_blits, apple_tv_playback_clock, current_apple_tv, skip_cache, status_bar_widget) -> None:
+    """Hide now-playing bar + TRT pills when idle; show when content / AVR is live."""
+    if status_bar_widget is None:
+        return
+    if _effective_display_view() == DisplayView.ONE:
+        try:
+            inc, cfg, _vol = _resolve_receiver_lines_for_now_playing()
+        except Exception:
+            inc, cfg = "", ""
+        show = _np_widgets_content_active(incoming=inc, config=cfg)
+    elif not current_apple_tv.get("identifier"):
+        show = False
+    elif metadata is not None:
+        show = not _atv_metadata_is_content_idle(metadata)
+    else:
+        clk = apple_tv_playback_clock
+        show = bool(clk.get("has_sync"))
+    if status_bar_widget.set_now_playing_chrome_visible(show):
+        _warm_status_bar_blits()
+        skip_cache[0] = None
+    _sync_status_bar_trt_substantive()
+    _sync_now_playing_screen_state()
+
+
+def _refresh_trt_progress_only(*, _playback_progress_fraction_for_bar, _sync_now_playing_screen_state, _warm_status_bar_blits, skip_cache, status_bar_widget) -> None:
+    if status_bar_widget is None:
+        return
+    pfrac = _playback_progress_fraction_for_bar()
+    prog = pfrac if pfrac is not None else 0.0
+    if status_bar_widget.set_now_playing_display(progress=prog):
+        _warm_status_bar_blits()
+        skip_cache[0] = None
+    _sync_now_playing_screen_state()
+
+
+def _refresh_extrapolated_timecodes(*, tick_steps: int = 1, _format_hmmss, _idle_audio_meter_active, _playback_extrapolated_pair, _playback_progress_fraction_for_bar, _sync_status_bar_trt_substantive, _warm_status_bar_blits, apple_tv_playback_clock, skip_cache, status_bar_widget) -> None:
+    """Update TRT labels + progress using stepped display time (steady rhythm)."""
+    if status_bar_widget is None:
+        return
+    if _idle_audio_meter_active():
+        return
+    try:
+        clk = apple_tv_playback_clock
+        if clk.get("live_mode"):
+            if status_bar_widget.set_now_playing_display(
+                played_text="LIVE",
+                remaining_text="",
+                progress=0.0,
+            ):
+                _warm_status_bar_blits()
+                skip_cache[0] = None
+            return
+        pair = _playback_extrapolated_pair()
+        pfrac = _playback_progress_fraction_for_bar()
+        if pair is None:
+            clk["display_played_sec"] = None
+            clk["trt_next_fire_mono"] = None
+            if status_bar_widget.set_now_playing_display(progress=0.0):
+                _warm_status_bar_blits()
+                skip_cache[0] = None
+            return
+        played_true, _rem_true = pair
+        lt_use = clk.get("latched_total")
+        if lt_use is None:
+            lt_use = clk.get("last_reported_total")
+        playing = bool(clk.get("playing"))
+        disp = clk.get("display_played_sec")
+
+        if disp is None:
+            disp = int(played_true)
+        elif not playing:
+            disp = int(played_true)
+        else:
+            pt = int(played_true)
+            diff = pt - disp
+            # Keep the on-screen cadence steady: at most ±1 per tick for small drift.
+            # Snap only for major seeks (e.g. user scrubs).
+            if diff >= 10:
+                disp = pt
+            elif diff > 0:
+                disp = min(pt, disp + 1)
+            elif diff <= -10:
+                disp = pt
+            elif diff < 0:
+                disp = max(pt, disp - 1)
+        clk["display_played_sec"] = disp
+
+        if lt_use is not None:
+            try:
+                tft = int(round(float(lt_use)))
+                remaining_secs = max(0, tft - disp)
+            except (TypeError, ValueError):
+                remaining_secs = max(0, int(_rem_true) + int(played_true) - disp)
+        else:
+            remaining_secs = max(0, int(_rem_true) + int(played_true) - disp)
+
+        played_text = _format_hmmss(disp)
+        remaining_text = _format_hmmss(remaining_secs)
+        prog = pfrac if pfrac is not None else 0.0
+        if status_bar_widget.set_now_playing_display(
+            played_text=played_text,
+            remaining_text=remaining_text,
+            progress=prog,
+        ):
+            _warm_status_bar_blits()
+            skip_cache[0] = None
+    finally:
+        _sync_status_bar_trt_substantive()

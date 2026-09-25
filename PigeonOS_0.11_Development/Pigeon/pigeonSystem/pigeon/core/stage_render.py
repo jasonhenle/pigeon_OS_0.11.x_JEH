@@ -16,6 +16,7 @@ from pigeon.stage_background import bgr_to_tk_hex
 from pigeon.stage_background import get_stage_bgr
 from pigeon.compositing import cv_resize_interp
 import sys
+from pigeon.version import version_string
 
 if TYPE_CHECKING:
     from pigeon_0_9 import DisplayView, SceneFit
@@ -303,3 +304,64 @@ def _effective_display_view(*, DevPhase, DisplayView, _PIGEON_EXT, dev_phase, di
 def _design_grid_overlay_active(*, DevPhase, DisplayView, dev_phase, display_view_holder) -> bool:
     """Grid overlay on the composite (developer GRID phase or view 5)."""
     return dev_phase[0] == DevPhase.GRID or display_view_holder[0] == DisplayView.FIVE
+
+
+def _blend_info_cluster_into_target(
+    target: np.ndarray, cap_w: int, cap_h: int, now_mono: float
+, *, _design_rect_to_target, _info_cluster_compose_active, _warm_info_cluster_blits, alpha_blend_bgra_over_bgr, info_cluster_blits) -> None:
+    if not _info_cluster_compose_active(now_mono):
+        return
+    _warm_info_cluster_blits(now_mono)
+    if not info_cluster_blits[0] or alpha_blend_bgra_over_bgr is None:
+        return
+    for ib in info_cluster_blits[0]:
+        x0b, y0b, wwb, whb = int(ib.x), int(ib.y), int(ib.w), int(ib.h)
+        x2, y2, rw2, rh2 = _design_rect_to_target(x0b, y0b, wwb, whb, cap_w, cap_h)
+        _ph2, _pw2 = ib.bgra.shape[:2]
+        patch = cv2.resize(
+            ib.bgra,
+            (rw2, rh2),
+            interpolation=cv_resize_interp(_pw2, _ph2, rw2, rh2),
+        )
+        sub = target[y2 : y2 + rh2, x2 : x2 + rw2]
+        sub[:] = alpha_blend_bgra_over_bgr(sub, patch)
+
+
+def sync_developer_chrome(*, DevPhase, _PIGEON_EXT, _apply_dev_phase_widgets, _layout_chrome, _settings_unbind_wheel_globals, _start_location_toast, command_bar, command_entry_visible, dev_phase, hide_command_entry, label, place_command_bar, prev_dev_phase_for_location_toast, root) -> None:
+    was_phase = prev_dev_phase_for_location_toast[0]
+    _apply_dev_phase_widgets()
+    _layout_chrome()
+    if dev_phase[0] == DevPhase.GRID:
+        root.title(f"Pigeon {version_string()} — Developer mode (grid)")
+        label.configure(
+            highlightthickness=3,
+            highlightbackground="#0a84ff",
+            highlightcolor="#0a84ff",
+        )
+    elif dev_phase[0] == DevPhase.MAIN_SETTINGS:
+        root.title(f"Pigeon {version_string()} — settings")
+        try:
+            label.configure(highlightthickness=0)
+        except tk.TclError:
+            pass
+    else:
+        root.title("")
+        label.configure(highlightthickness=0)
+        hide_command_entry()
+    _settings_unbind_wheel_globals()
+    if command_entry_visible[0]:
+        place_command_bar()
+        command_bar.lift()
+    if _PIGEON_EXT and dev_phase[0] == DevPhase.OFF and was_phase != DevPhase.OFF:
+        # Keep the same launch placement after leaving Settings.
+        _start_location_toast(startup=True)
+    prev_dev_phase_for_location_toast[0] = dev_phase[0]
+
+
+def _on_advanced_matrix_closed(*, advanced_matrix_restore_phase, dev_phase, skip_cache, sync_developer_chrome) -> None:
+    tgt = advanced_matrix_restore_phase[0]
+    if tgt is not None:
+        advanced_matrix_restore_phase[0] = None
+        dev_phase[0] = tgt  # type: ignore[assignment]
+        skip_cache[0] = None
+        sync_developer_chrome()

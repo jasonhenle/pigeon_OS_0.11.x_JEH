@@ -12,6 +12,7 @@ import time
 from pigeon.app_state import read_last_receiver
 from pigeon.app_state import read_saved_av_receiver
 from pigeon.app_state import write_last_apple_tv
+from pigeon.app_state import write_last_receiver
 
 
 def _seed_current_apple_tv_from_streaming_slot(*, current_apple_tv, streaming_slot_holder) -> None:
@@ -259,3 +260,32 @@ def _on_hdmi_frame_checked(changed, *, _apply_hdmi_frame_check, apple_tv_auto_st
     except Exception:
         # Tk gone / shutdown: clear the gate so checks are not stuck off forever.
         apple_tv_auto_state["hdmi_check_in_flight"] = False
+
+
+def set_current_receiver_only(row: dict[str, str], *, persist: bool = True, _rebuild_paired_devices_panel, _schedule_refresh_pairing_leds, _warm_playback_overlay_blits, describe_current_apple_tv, playback_overlay_widget, receiver_http_host, render_once, skip_cache) -> None:
+    """Persist AVR / AirPlay-only row for Denon HTTP overlay only; does not change Apple TV playback."""
+    adr = str(row.get("address") or "").strip()
+    if not adr:
+        return
+    if persist:
+        write_last_receiver(
+            host=adr,
+            name=str(row.get("name") or "").strip() or None,
+            label=str(row.get("label") or "").strip() or None,
+            device_id=str(row.get("identifier") or "").strip() or None,
+        )
+    receiver_http_host["host"] = adr
+    if playback_overlay_widget is not None:
+        playback_overlay_widget.clear_cache()
+    try:
+        _warm_playback_overlay_blits()
+    except Exception:
+        pass
+    skip_cache[0] = None
+    try:
+        render_once()
+    except Exception:
+        pass
+    describe_current_apple_tv()
+    _rebuild_paired_devices_panel()
+    _schedule_refresh_pairing_leds()

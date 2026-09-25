@@ -1,0 +1,10 @@
+{
+ "saver_state": ["_apply_position_stall_grace_to_clock_saver"],
+ "stage_render": ["_blend_info_cluster_into_target", "sync_developer_chrome", "_on_advanced_matrix_closed"],
+ "view_one": ["_view_one_video_content_a_tt_contain_rect_design"],
+ "tmdb_flow": ["hide_command_entry", "show_command_entry", "on_return_overlay_command", "_schedule_tmdb_quality_auto_expire", "on_tmdb_quality_error_report_hotkey"],
+ "settings_ui": ["_start_location_toast", "_paint_coalesced_settings_nav", "_request_settings_nav_paint"],
+ "now_playing": ["_apply_playback_clock_from_poll", "_sync_status_bar_trt_substantive", "_sync_status_bar_visibility_for_playback"],
+ "input_keys": ["on_escape"],
+ "startup": ["_splash_paint_view_one_under_overlay"]
+}

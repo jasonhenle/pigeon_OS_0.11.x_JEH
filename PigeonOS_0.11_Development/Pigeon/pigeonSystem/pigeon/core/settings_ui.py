@@ -24,6 +24,9 @@ import sys
 from pigeon.app_state import clear_last_apple_tv
 from pigeon.app_state import read_saved_streaming_device
 from pigeon.app_state import write_saved_streaming_device
+from pigeon.app_state import clear_last_receiver
+from pigeon.app_state import read_saved_av_receiver
+from pigeon.app_state import write_saved_av_receiver
 
 
 def _settings_update_scrollregion(event: tk.Event | None = None, *, _settings_inner_scroll_size, settings_canvas, settings_inner) -> None:
@@ -1094,3 +1097,71 @@ def _sync_settings_zone2_tt(*, main_settings_widget) -> None:
     st_ms = main_settings_widget.state
     if getattr(st_ms, "zone2_tt_bgra", None) is not None:
         st_ms.zone2_tt_bgra = None
+
+
+def _start_location_toast(*, startup: bool = False, _PIGEON_EXT, _current_location_display_name, location_toast_state, skip_cache) -> None:
+    if not _PIGEON_EXT:
+        return
+    st = location_toast_state
+    st["text"] = _current_location_display_name()
+    st["active"] = True
+    st["t0"] = time.monotonic()
+    st["startup_top_left"] = bool(startup)
+    st["hold_full_s"] = 15.0 if startup else 5.0
+    skip_cache[0] = None
+
+
+def _paint_coalesced_settings_nav(*, _nav_coalescer_holder, main_settings_widget, render_once, skip_cache) -> None:
+    skip_cache[0] = None
+    coalescer = _nav_coalescer_holder[0]
+    if main_settings_widget is not None and (
+        coalescer is None or not coalescer.is_hot()
+    ):
+        main_settings_widget._nav_scrub = False
+    render_once()
+
+
+def _request_settings_nav_paint(*, _nav_coalescer_holder, main_settings_widget, render_once, skip_cache) -> None:
+    skip_cache[0] = None
+    if main_settings_widget is not None:
+        main_settings_widget._nav_scrub = True
+    coalescer = _nav_coalescer_holder[0]
+    if coalescer is None:
+        render_once()
+        return
+    coalescer.request()
+
+
+def _remove_saved_receiver_device(for_location_id: str | None = None, *, _rebuild_paired_devices_panel, _schedule_refresh_pairing_leds, _warm_playback_overlay_blits, apple_tv_busy, avr_slot_holder, describe_current_apple_tv, playback_overlay_widget, receiver_http_host, render_once, root, skip_cache) -> None:
+    if apple_tv_busy["active"]:
+        describe_current_apple_tv(suffix="busy")
+        return
+    if not messagebox.askyesno(
+        "Remove Receiver",
+        "Remove the saved Receiver device and stop the overlay status poll for it?",
+        parent=root,
+    ):
+        return
+    lid = (for_location_id or read_current_location_id() or "").strip()
+    write_saved_av_receiver(None, for_location_id=lid or None)
+    cur = read_current_location_id()
+    if lid and cur and lid == cur:
+        avr_slot_holder[0] = None
+        clear_last_receiver()
+        receiver_http_host["host"] = ""
+        if playback_overlay_widget is not None:
+            playback_overlay_widget.clear_cache()
+        try:
+            _warm_playback_overlay_blits()
+        except Exception:
+            pass
+        skip_cache[0] = None
+        try:
+            render_once()
+        except Exception:
+            pass
+    else:
+        avr_slot_holder[0] = read_saved_av_receiver()
+    describe_current_apple_tv()
+    _rebuild_paired_devices_panel()
+    _schedule_refresh_pairing_leds()

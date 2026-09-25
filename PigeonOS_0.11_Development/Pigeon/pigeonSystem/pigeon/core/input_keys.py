@@ -315,3 +315,12 @@ def on_dev_series_title_training_hotkey(event: tk.Event, *, DevPhase, DisplayVie
     tk.Button(bf, text="Cancel", command=tw.destroy).pack(side=tk.LEFT, padx=6)
     root.after_idle(lambda: ent.focus_set())
     return "break"
+
+
+def on_escape(event: tk.Event, *, _bump_pigeon_user_activity, command_entry_visible, hide_command_entry, quit_app) -> str | None:
+    _bump_pigeon_user_activity(event)
+    if command_entry_visible[0]:
+        hide_command_entry()
+        return "break"
+    quit_app()
+    return "break"

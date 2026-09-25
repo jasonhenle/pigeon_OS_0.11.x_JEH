@@ -632,3 +632,148 @@ def submit_command_entry(_event=None, *, DevPhase, DisplayView, _PIGEON_EXT, _bu
     command_entry.delete(0, tk.END)
     hide_command_entry()
     return "break"
+
+
+def hide_command_entry(_event=None, *, command_bar, command_entry_visible, label) -> None:
+    command_entry_visible[0] = False
+    command_bar.place_forget()
+    try:
+        label.focus_set()
+    except tk.TclError:
+        pass
+
+
+def show_command_entry(_event=None, *, DevPhase, DisplayView, command_bar, command_entry, command_entry_visible, dev_phase, display_view_holder, place_command_bar, root) -> None:
+    if dev_phase[0] != DevPhase.GRID and display_view_holder[0] != DisplayView.FIVE:
+        return
+    command_entry_visible[0] = True
+    place_command_bar()
+    command_bar.lift()
+    command_entry.focus_set()
+
+    def _focus_cmd() -> None:
+        try:
+            command_entry.focus_force()
+        except tk.TclError:
+            try:
+                command_entry.focus_set()
+            except tk.TclError:
+                pass
+
+    root.after_idle(_focus_cmd)
+
+
+def on_return_overlay_command(event: tk.Event, *, DevPhase, DisplayView, _PIGEON_EXT, _bump_pigeon_user_activity, _widget_accepts_typing, apple_tv_busy, command_entry, command_entry_visible, current_apple_tv, dev_phase, display_view_holder, show_command_entry, streaming_slot_holder) -> str | None:
+    _bump_pigeon_user_activity(event)
+    w = event.widget
+    if w == command_entry or str(w) == str(command_entry):
+        return None
+    if _widget_accepts_typing(w):
+        return None
+    if dev_phase[0] == DevPhase.GRID or display_view_holder[0] == DisplayView.FIVE:
+        if command_entry_visible[0]:
+            try:
+                command_entry.focus_force()
+            except tk.TclError:
+                command_entry.focus_set()
+        else:
+            show_command_entry()
+        return "break"
+    if _PIGEON_EXT:
+        from pigeon.player_remote import queue_player_remote_action
+
+        queue_player_remote_action(
+            streaming_slot_holder[0],
+            current_apple_tv=current_apple_tv,
+            action="select",
+            apple_tv_busy=apple_tv_busy,
+        )
+        return "break"
+    return None
+
+
+def _schedule_tmdb_quality_auto_expire(*, TMDB_QUALITY_UNLOG_WINDOW_S, _cancel_tmdb_quality_auto_unlog_timer, root, skip_cache, tmdb_quality_auto_unlog_after_id, tmdb_quality_error_flag) -> None:
+    _cancel_tmdb_quality_auto_unlog_timer()
+    delay_ms = int(round(TMDB_QUALITY_UNLOG_WINDOW_S * 1000.0))
+
+    def _expire() -> None:
+        tmdb_quality_auto_unlog_after_id[0] = None
+        if tmdb_quality_error_flag[0]:
+            tmdb_quality_error_flag[0] = False
+            skip_cache[0] = None
+
+    tmdb_quality_auto_unlog_after_id[0] = root.after(delay_ms, _expire)
+
+
+def on_tmdb_quality_error_report_hotkey(event: tk.Event, *, TMDB_QUALITY_UNLOG_WINDOW_S, _PIGEON_EXT, _adjust_tmdb_quality_failure_delta, _append_tmdb_quality_event_report_log, _bump_pigeon_user_activity, _clear_tmdb_quality_flag, _last_tmdb_quality_report_mono, _perform_tmdb_error_flag_retry, _schedule_tmdb_quality_auto_expire, _trigger_tmdb_quality_toggle_overlay, _widget_accepts_typing, active_tmdb_display_title, active_tmdb_title_key, apple_tv_auto_state, skip_cache, tmdb_error_flag_retry_active, tmdb_error_flag_retry_rule_idx, tmdb_quality_error_flag, tmdb_quality_flag_set_mono) -> str | None:
+    """Flag TMDb artwork error (⌘⇧X); log immediately, retry fetch, 20s undo window.
+
+    Bound only to Control/Command+Shift+X, so trust the binding — Wayland/X11
+    often omits modifier bits from ``event.state`` after the combo is matched.
+    """
+    _bump_pigeon_user_activity(event)
+    if not _PIGEON_EXT:
+        return None
+    if _widget_accepts_typing(event.widget):
+        return None
+    ks = (getattr(event, "keysym", "") or "").lower()
+    if ks not in ("x",):
+        return None
+    now_q = time.monotonic()
+    if now_q - _last_tmdb_quality_report_mono[0] < 0.15:
+        return "break"
+    _last_tmdb_quality_report_mono[0] = now_q
+    if tmdb_quality_error_flag[0]:
+        elapsed = now_q - float(tmdb_quality_flag_set_mono[0] or 0.0)
+        if elapsed <= TMDB_QUALITY_UNLOG_WINDOW_S:
+            _clear_tmdb_quality_flag(undo=True, show_overlay=True)
+            skip_cache[0] = None  # force redraw so undo X appears immediately
+            try:
+                sys.stderr.write(
+                    "pigeon: TMDb quality flag undone within 20s window (⌘⇧X).\n"
+                )
+                sys.stderr.flush()
+            except Exception:
+                pass
+            return "break"
+        _clear_tmdb_quality_flag(undo=False, show_overlay=False)
+    tmdb_quality_error_flag[0] = True
+    tmdb_quality_flag_set_mono[0] = now_q
+    _adjust_tmdb_quality_failure_delta(1)
+    _trigger_tmdb_quality_toggle_overlay("flag")
+    skip_cache[0] = None  # force redraw so confirmation X appears immediately
+    try:
+        _append_tmdb_quality_event_report_log(
+            outcome="FAILURE",
+            title_key=active_tmdb_title_key[0],
+            display_title=active_tmdb_display_title[0],
+            msg_m="user_flagged",
+        )
+    except Exception:
+        pass
+    # One full rule cycle only (auto-chained on failure in finish_tmdb).
+    tmdb_error_flag_retry_active[0] = True
+    tmdb_error_flag_retry_rule_idx[0] = 0
+    apple_tv_auto_state["tmdb_missing_art"] = False
+    apple_tv_auto_state["tmdb_exhausted_identity"] = None
+    _perform_tmdb_error_flag_retry()
+    _schedule_tmdb_quality_auto_expire()
+    try:
+        sys.stderr.write(
+            "pigeon: TMDb material quality issue flagged (⌘⇧X). "
+            "Logged immediately; retrying TMDb fetch; undo available for 20s.\n"
+        )
+        sys.stderr.flush()
+    except Exception:
+        pass
+    return "break"
+
+
+def _clear_tmdb_quality_flag(*, undo: bool, show_overlay: bool, _adjust_tmdb_quality_failure_delta, _cancel_tmdb_quality_auto_unlog_timer, _trigger_tmdb_quality_toggle_overlay, skip_cache, tmdb_quality_error_flag) -> None:
+    if tmdb_quality_error_flag[0] and undo:
+        _adjust_tmdb_quality_failure_delta(-1)
+    tmdb_quality_error_flag[0] = False
+    _cancel_tmdb_quality_auto_unlog_timer()
+    if show_overlay:
+        _trigger_tmdb_quality_toggle_overlay("undo")
+    skip_cache[0] = None

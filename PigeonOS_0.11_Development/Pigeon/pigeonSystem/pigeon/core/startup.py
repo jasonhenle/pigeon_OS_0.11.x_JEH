@@ -99,3 +99,16 @@ def _warm_view_one_under_splash(*, phase: str = "full-warm", _PIGEON_EXT, _enabl
         pass
     _splash_view_one_warm_done[0] = True
     _log_view_one_startup_phase(f"{phase} ({(time.monotonic() - t0) * 1000.0:.0f} ms)")
+
+
+def _splash_paint_view_one_under_overlay(*, _PIGEON_EXT, _warm_view_one_under_splash, render_once, root, skip_cache) -> None:
+    """First full View 1 paint after splash (helpers now exist)."""
+    if not _PIGEON_EXT:
+        return
+    _warm_view_one_under_splash()
+    skip_cache[0] = None
+    render_once()
+    try:
+        root.update_idletasks()
+    except tk.TclError:
+        pass
