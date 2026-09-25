@@ -836,6 +836,53 @@ def _metadata_with_app(atv, metadata: dict[str, object]) -> dict[str, object]:
     return out
 
 
+class _PlayingWithMediaType:
+    """Read-through view of a pyatv ``Playing`` with ``media_type`` replaced."""
+
+    def __init__(self, playing, media_type) -> None:
+        self._playing = playing
+        self.media_type = media_type
+
+    def __getattr__(self, name):
+        return getattr(self._playing, name)
+
+
+def _metadata_for_playing(atv, playing) -> dict[str, object]:
+    """``_playing_metadata`` + app info, with a wrong ``Music`` label from a video-only app corrected.
+
+    HBO Max (and potentially other video services) sometimes report
+    ``MediaType.Music`` for TV episodes, with the show in ``artist`` and the
+    episode in ``title`` -- exactly the shape of a song. Trusting that label
+    switches the whole screen to the music layout and searches TMDb for the
+    episode title instead of the show. For apps that only play video, rebuild
+    the metadata as ``MediaType.Unknown`` (what these apps normally send), and
+    keep the reported value in ``media_type_reported`` for diagnostics.
+    """
+    metadata = _metadata_with_app(atv, _playing_metadata(playing))
+    if not _media_type_is_music(metadata.get("media_type")):
+        return metadata
+    try:
+        from pigeon.streaming_service_badges import is_video_only_streaming_service
+
+        video_only = is_video_only_streaming_service(
+            str(metadata.get("app_name") or ""), str(metadata.get("app_id") or "")
+        )
+    except Exception:
+        video_only = False
+    if not video_only:
+        return metadata
+    try:
+        from pyatv.const import MediaType
+
+        unknown = MediaType.Unknown
+    except Exception:
+        return metadata
+    reported = metadata.get("media_type")
+    fixed = _metadata_with_app(atv, _playing_metadata(_PlayingWithMediaType(playing, unknown)))
+    fixed["media_type_reported"] = reported
+    return fixed
+
+
 def _playing_debug_summary(playing) -> str:
     """Best-effort one-line dump of relevant now-playing fields (for UI error messages)."""
     def g(name: str) -> str | None:
@@ -1574,7 +1621,7 @@ async def _async_fetch_now_playing_info_for_device(
             atv = await _connect_with_protocol(pyatv, conf, loop, storage, protocol)
             for _ in range(3):
                 playing = await atv.metadata.playing()
-                metadata = _metadata_with_app(atv, _playing_metadata(playing))
+                metadata = _metadata_for_playing(atv, playing)
                 try:
                     from pigeon.raw_title import resolve_metadata_tmdb_query
 

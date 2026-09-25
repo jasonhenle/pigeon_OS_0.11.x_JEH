@@ -122,6 +122,42 @@ def is_youtube_streaming_service(
     return "youtube" in blob
 
 
+# Services that only ever play video. When one of these reports pyatv
+# ``MediaType.Music`` (HBO Max does for some shows), the label is wrong, not the
+# content: treat it as video. Deliberately excludes apps that also play music
+# (YouTube, Apple TV app, AirPlay, Spotify, Apple Music).
+VIDEO_ONLY_SERVICES: frozenset[str] = frozenset(
+    {
+        "Disney+",
+        "Netflix",
+        "HBO Max",
+        "Max",
+        "Paramount+",
+        "Peacock",
+        "Hulu",
+        "Prime Video",
+        "Shudder",
+        "Discovery+",
+        "PBS Kids",
+    }
+)
+
+
+def streaming_service_label(app_name: str | None = None, app_id: str | None = None) -> str | None:
+    """Display label of the first matching service rule, or ``None`` when no rule matches."""
+    bid = (app_id or "").strip().lower()
+    an = (app_name or "").strip().lower()
+    for bfrag, nfrag, _stems, display, _legacy in _RULES:
+        if (bfrag and bfrag in bid) or (nfrag and nfrag in an):
+            return display
+    return None
+
+
+def is_video_only_streaming_service(app_name: str | None = None, app_id: str | None = None) -> bool:
+    """True when the foreground app only plays video (see :data:`VIDEO_ONLY_SERVICES`)."""
+    return streaming_service_label(app_name, app_id) in VIDEO_ONLY_SERVICES
+
+
 def resolve_streaming_badge_media(
     assets_dir: str | Path,
     *,
