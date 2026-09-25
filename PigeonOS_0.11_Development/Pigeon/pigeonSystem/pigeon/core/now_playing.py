@@ -1616,3 +1616,19 @@ def _enable_now_playing_screen(*, DisplayView, LANDING_DISPLAY_BRIGHTNESS, _PIGE
         md_sb if isinstance(md_sb, dict) else None
     )
     skip_cache[0] = None
+
+
+def _np_wants_live_audio(*, _clock_saver_for_compose, _view_one_uses_now_playing_screen, view_circles_widget_holder) -> bool:
+    if view_circles_widget_holder[0] is None:
+        return False
+    if not _view_one_uses_now_playing_screen():
+        return False
+    try:
+        if _clock_saver_for_compose(time.monotonic()):
+            return False
+    except Exception:
+        pass
+    try:
+        return bool(view_circles_widget_holder[0].wants_live_audio())
+    except Exception:
+        return False

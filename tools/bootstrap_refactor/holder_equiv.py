@@ -13,8 +13,12 @@ that shadows bootstrap()'s variable). Exit 1 on any difference.
 import ast
 import sys
 
-before, after, *names = sys.argv[1:]
-V = set(names)
+before, after, *specs = sys.argv[1:]
+REN = {}
+for sp in specs:
+    old, _, new = sp.partition(":")
+    REN[new or old] = old
+V = set(REN)
 
 
 class Undo(ast.NodeTransformer):
@@ -22,7 +26,7 @@ class Undo(ast.NodeTransformer):
         n = self.generic_visit(n)
         if (isinstance(n.value, ast.Name) and n.value.id in V
                 and isinstance(n.slice, ast.Constant) and n.slice.value == 0):
-            return ast.Name(id=n.value.id, ctx=n.ctx)
+            return ast.Name(id=REN[n.value.id], ctx=n.ctx)
         return n
 
     def visit_Assign(self, n):
@@ -30,6 +34,7 @@ class Undo(ast.NodeTransformer):
         if (len(n.targets) == 1 and isinstance(n.targets[0], ast.Name) and n.targets[0].id in V
                 and isinstance(n.value, ast.List) and len(n.value.elts) == 1):
             n.value = n.value.elts[0]
+            n.targets[0] = ast.Name(id=REN[n.targets[0].id], ctx=ast.Store())
         return n
 
     def visit_AnnAssign(self, n):
@@ -38,6 +43,7 @@ class Undo(ast.NodeTransformer):
                 and isinstance(n.value, ast.List) and len(n.value.elts) == 1):
             n.value = n.value.elts[0]
             n.annotation = n.annotation.slice
+            n.target = ast.Name(id=REN[n.target.id], ctx=ast.Store())
         return n
 
 
@@ -50,7 +56,7 @@ class DropNonlocal(ast.NodeTransformer):
                 out = []
                 for st in b:
                     if isinstance(st, ast.Nonlocal):
-                        st.names = [x for x in st.names if x not in V]
+                        st.names = [x for x in st.names if x not in V and x not in REN.values()]
                         if not st.names:
                             continue
                     out.append(st)

@@ -1880,3 +1880,25 @@ def _receiver_poll_tick(*, RECEIVER_POLL_MS, _PIGEON_EXT, _bind_receiver_volume_
             receiver_poll_busy["active"] = False
 
     threading.Thread(target=work_safe, daemon=True).start()
+
+
+def set_apple_tv_controls_enabled(enabled: bool, *, find_device_btn, purge_image_media_btn_holder, root, settings_footer_debug_holder, settings_footer_reset_holder, tmdb_adv_manual_btn_holder, tmdb_adv_report_btn_holder) -> None:
+    state = tk.NORMAL if enabled else tk.DISABLED
+    try:
+        find_device_btn.configure(state=state)
+        _m = tmdb_adv_manual_btn_holder[0]
+        if _m is not None:
+            _m.configure(state=state)
+        _r = tmdb_adv_report_btn_holder[0]
+        if _r is not None:
+            _r.configure(state=state)
+        purge_image_media_btn_holder[0].configure(state=state)
+        _fdb = settings_footer_debug_holder[0]
+        if _fdb is not None:
+            _fdb.configure(state=state)
+        _frb = settings_footer_reset_holder[0]
+        if _frb is not None:
+            _frb.configure(state=state)
+        root.configure(cursor="none")
+    except tk.TclError:
+        pass

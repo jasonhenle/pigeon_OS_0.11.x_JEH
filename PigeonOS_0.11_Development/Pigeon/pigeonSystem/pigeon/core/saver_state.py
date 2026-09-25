@@ -1000,3 +1000,54 @@ def _apply_auto_widget_policy(*, DevPhase, _auto_widget_signals, _paused_screen_
         dev_phase[0] = DevPhase.MAIN_SETTINGS
         skip_cache[0] = None
     return plan
+
+
+def _clock_saver_for_compose(now: float, *, DevPhase, DisplayView, _apply_auto_widget_policy, _clock_saver_active, _clock_startup_intro_opacity, _effective_display_view, _refresh_paused_row_stamp, _splash_reveal_clock, _tmdb_info_current_and_available, clock_saver_composite_bgra, clock_saver_force_on, dev_phase, scene_enabled, startup_ph) -> bool:
+    """True when the large saver time/date patches should be drawn (idle path)."""
+    if clock_saver_composite_bgra is None:
+        return False
+    if _clock_startup_intro_opacity(now) is not None:
+        if _tmdb_info_current_and_available():
+            return False
+        return True
+    if dev_phase[0] != DevPhase.OFF:
+        return False
+    # Splash overlay: keep underlay black until reveal frame, then paint clock under PNG alpha.
+    if startup_ph[0] is not None:
+        return bool(_splash_reveal_clock[0])
+    ev = _effective_display_view()
+    if ev == DisplayView.FOUR:
+        return False
+    # View ONE now-playing may run with scene off; still allow the idle saver.
+    if (not scene_enabled[0]) and ev != DisplayView.ONE:
+        return False
+    try:
+        plan = _apply_auto_widget_policy()
+        from pigeon.auto_widgets import (
+            LAYOUT_SETTINGS,
+            LAYOUT_ZONE6_CLOCKSAVER,
+            LAYOUT_ZONE6_PAUSESAVER,
+            LAYOUT_ZONE8_CLOCKSAVER,
+            LAYOUT_ZONE10_PAUSESAVER,
+        )
+
+        if plan.force_settings or plan.layout == LAYOUT_SETTINGS:
+            return False
+        if plan.layout == LAYOUT_ZONE8_CLOCKSAVER:
+            return True
+        if plan.layout in (
+            LAYOUT_ZONE6_PAUSESAVER,
+            LAYOUT_ZONE10_PAUSESAVER,
+        ):
+            from pigeon.clock_saver_policy import pausesaver_due_for_clocksaver
+
+            if pausesaver_due_for_clocksaver(_refresh_paused_row_stamp(now)):
+                return True
+            return False
+        if plan.layout == LAYOUT_ZONE6_CLOCKSAVER:
+            return False
+    except Exception:
+        pass
+    if clock_saver_force_on[0]:
+        return True
+    return _clock_saver_active(now)

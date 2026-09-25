@@ -177,3 +177,30 @@ Left in `bootstrap()`: 9 helpers that read Tk widgets created after them
 
 Removed: `last_device_interaction_mono` was written (receiver poll, and a lost
 local write in `_update_atv_interaction_from_poll_metadata`) but never read.
+
+## Pass 9: deferred holders -- bootstrap() has no nested helpers left
+
+The last helpers read Tk objects created after them. Instead of reordering
+startup, each such object gets a holder up front that is filled where the
+object has always been created:
+
+```bash
+python3 $T/holderize.py pigeon_0_9.py main_settings_widget:main_settings_widget_holder \
+    view_circles_widget:view_circles_widget_holder update_btn:update_btn_holder \
+    purge_image_media_btn:purge_image_media_btn_holder
+python3 $T/defer.py pigeon_0_9.py main_settings_widget_holder view_circles_widget_holder \
+    update_btn_holder purge_image_media_btn_holder scene_enabled
+```
+
+`NAME:NEW` makes the holder's name say it is a holder; bind sites that ran
+after construction pass the widget itself (`main_settings_widget=main_settings_widget_holder[0]`),
+so already-lifted helpers are unchanged. `defer.py` turns `H = [expr]` into
+`H[0] = expr` in place (same moment, same order) plus `H = [None]` at the top;
+code that runs earlier sees `None` instead of a `NameError`.
+`plan9.json` lifts the final 9 helpers.
+
+Known pre-existing issue (not changed here): functions defined directly in
+`main()` (`_note_zone3_volume_takeover`, `_clock_saver_volume_raw`,
+`_clock_saver_receiver_off`) read `view_circles_widget`,
+`receiver_overlay_state`, `receiver_standby_holder`, which only exist inside
+`bootstrap()`; the `NameError` is swallowed, so those reads never succeed.

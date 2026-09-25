@@ -4,6 +4,11 @@ Usage (from ``pigeonSystem``)::
 
     python3 holderize.py pigeon_0_9.py NAME [NAME ...]
     python3 holderize.py --main pigeon_0_9.py NAME [NAME ...]
+    python3 holderize.py pigeon_0_9.py NAME:NEW_NAME ...   # holder gets a new name
+
+With ``NAME:NEW_NAME`` every rewritten reference becomes ``NEW_NAME[0]`` and the
+initial binding binds ``NEW_NAME`` (e.g. ``main_settings_widget:main_settings_widget_holder``),
+so readers can tell a holder from the object it holds.
 
 For each NAME bound in ``bootstrap()`` (or, with ``--main``, in ``main()``
 itself) this rewrites, in place:
@@ -107,7 +112,13 @@ def main() -> None:
     in_main = args[0] == "--main"
     if in_main:
         args = args[1:]
-    path, names = args[0], args[1:]
+    path, specs = args[0], args[1:]
+    rename = {}
+    names = []
+    for sp in specs:
+        old, _, new = sp.partition(":")
+        names.append(old)
+        rename[old] = new or old
     src = open(path, encoding="utf-8").read()
     lines = src.splitlines(keepends=True)
     starts = [0]
@@ -179,7 +190,10 @@ def main() -> None:
         for r in refs:
             if r is init_target:
                 continue
-            edits.append((off(r.lineno, r.col_offset), off(r.end_lineno, r.end_col_offset), f"{name}[0]"))
+            edits.append((off(r.lineno, r.col_offset), off(r.end_lineno, r.end_col_offset), f"{rename[name]}[0]"))
+        if rename[name] != name:
+            s_, e_ = off(init_target.lineno, init_target.col_offset), off(init_target.end_lineno, init_target.end_col_offset)
+            edits.append((s_, e_, rename[name]))
         # wrap the initial value
         v = init.value
         vs, ve = off(v.lineno, v.col_offset), off(v.end_lineno, v.end_col_offset)

@@ -2229,3 +2229,365 @@ def _open_advanced_capability_matrix(*, _PIGEON_EXT, _advanced_feature_pipeline_
             }
         )
     open_advanced_capability_matrix(root, **adv_kw)
+
+
+def _sync_update_button_style(*, _match_neighbor_button_style, find_device_btn, update_btn_holder, update_check_state) -> None:
+    _match_neighbor_button_style(update_btn_holder[0], ref=find_device_btn)
+    if update_check_state.get("update_available"):
+        update_btn_holder[0].configure(
+            text="Updates ●",
+            state=tk.NORMAL,
+        )
+    else:
+        update_btn_holder[0].configure(
+            text="Updates",
+            state=tk.NORMAL,
+        )
+
+
+def _run_github_apply_worker(*, remote: str = "?", branch: str | None = None, _resolve_install_root_for_update, _sync_update_button_style, root, update_btn_holder, update_check_state) -> None:
+    install_root = _resolve_install_root_for_update()
+    progress = tk.Toplevel(root)
+    progress.title("Updating Pigeon")
+    progress.transient(root)
+    progress.grab_set()
+    status_var = tk.StringVar(value="Downloading from GitHub…")
+    tk.Label(progress, textvariable=status_var, padx=16, pady=16).pack()
+    update_check_state["applying"] = True
+    update_btn_holder[0].configure(state=tk.DISABLED)
+
+    def worker() -> None:
+        try:
+            from pigeon.github_update import apply_github_update
+
+            apply_branch = branch
+            if apply_branch is None:
+                cached = update_check_state.get("github_branch")
+                if isinstance(cached, str) and cached.strip():
+                    apply_branch = cached.strip()
+            result = apply_github_update(install_root, branch=apply_branch)
+        except Exception as e:
+            from pigeon.github_update import ApplyUpdateResult
+
+            result = ApplyUpdateResult(False, str(e))
+
+        def finish_apply() -> None:
+            update_check_state["applying"] = False
+            update_btn_holder[0].configure(state=tk.NORMAL)
+            if result.ok:
+                status_var.set("Update complete — restarting Pigeon…")
+                update_check_state["update_available"] = False
+                if result.remote_version:
+                    update_check_state["remote_version"] = result.remote_version
+                else:
+                    update_check_state["remote_version"] = remote
+                _sync_update_button_style()
+
+                def _restart_and_exit() -> None:
+                    try:
+                        progress.grab_release()
+                        progress.destroy()
+                    except tk.TclError:
+                        pass
+                    try:
+                        from pigeon.github_update import restart_pigeon_after_update
+
+                        restart_pigeon_after_update(
+                            install_root, parent_pid=os.getpid()
+                        )
+                    except Exception:
+                        pass
+                    try:
+                        root.destroy()
+                    except tk.TclError:
+                        pass
+                    os._exit(0)
+
+                root.after(400, _restart_and_exit)
+                return
+
+            try:
+                progress.grab_release()
+                progress.destroy()
+            except tk.TclError:
+                pass
+            messagebox.showerror(
+                "Update failed",
+                result.message,
+                parent=root,
+            )
+
+        root.after(0, finish_apply)
+
+    threading.Thread(target=worker, daemon=True).start()
+
+
+def _on_updates_button(*, _begin_apply_update, _finish_update_check, _linux_on_updates_button, root, update_btn_holder, update_check_state) -> None:
+    if sys.platform.startswith("linux"):
+        _linux_on_updates_button()
+        return
+    if update_check_state.get("applying") or update_check_state.get("checking"):
+        return
+
+    progress = tk.Toplevel(root)
+    progress.title("Updates")
+    progress.transient(root)
+    progress.grab_set()
+    status_var = tk.StringVar(value="Checking GitHub for updates…")
+    tk.Label(progress, textvariable=status_var, padx=16, pady=16).pack()
+    update_check_state["checking"] = True
+    update_btn_holder[0].configure(state=tk.DISABLED)
+
+    def worker() -> None:
+        try:
+            from pigeon.update_check import check_for_update
+
+            result = check_for_update(force=True)
+        except Exception as e:
+            from pigeon.update_check import UpdateCheckResult
+
+            result = UpdateCheckResult(
+                local_version=version_string(),
+                remote_version=None,
+                update_available=False,
+                error=str(e),
+            )
+
+        def finish_check() -> None:
+            update_check_state["checking"] = False
+            _finish_update_check(result)
+            try:
+                progress.grab_release()
+                progress.destroy()
+            except tk.TclError:
+                pass
+            update_btn_holder[0].configure(state=tk.NORMAL)
+
+            from pigeon.update_check import UpdateCheckResult
+
+            if not isinstance(result, UpdateCheckResult):
+                return
+            if result.error:
+                messagebox.showerror(
+                    "Updates",
+                    f"Could not check GitHub for updates.\n\n"
+                    f"Installed: {result.local_version}\n\n"
+                    f"{result.error}",
+                    parent=root,
+                )
+                return
+            if result.update_available:
+                _begin_apply_update(
+                    remote=str(result.remote_version or "?"),
+                    branch=result.github_branch,
+                )
+                return
+            remote = result.remote_version
+            if remote:
+                body = (
+                    f"You are on the latest version GitHub reports.\n\n"
+                    f"Installed: {result.local_version}\n"
+                    f"GitHub:    {remote}"
+                )
+            else:
+                body = (
+                    f"No update information from GitHub.\n\n"
+                    f"Installed: {result.local_version}\n\n"
+                    f"If the repo is private, set PIGEON_UPDATE_GITHUB_TOKEN "
+                    f"in the environment and try again."
+                )
+            messagebox.showinfo("Updates", body, parent=root)
+
+        root.after(0, finish_check)
+
+    threading.Thread(target=worker, daemon=True).start()
+
+
+def _settings_audio_led_listen(*, main_settings_widget_holder) -> bool:
+    """Keep ALSA open on settings_pigeon so the audio LED can follow signal."""
+    if main_settings_widget_holder[0] is None:
+        return False
+    try:
+        st = main_settings_widget_holder[0].state
+    except Exception:
+        return False
+    if not bool(getattr(st, "show_pigeon_settings", False)):
+        return False
+    if bool(getattr(st, "show_widgets", False)):
+        return False
+    if bool(getattr(st, "show_options", False)):
+        return False
+    if bool(getattr(st, "show_ui_color", False)):
+        return False
+    if bool(getattr(st, "show_preferences", False)):
+        return False
+    if bool(getattr(st, "show_metadata_debug", False)):
+        return False
+    return True
+
+
+def _maybe_exit_settings_menus_on_idle(now_mono: float | None = None, *, DevPhase, SETTINGS_MENU_IDLE_EXIT_S, dev_phase, last_pigeon_user_activity_mono, main_settings_widget_holder, skip_cache, sync_developer_chrome) -> bool:
+    """Close settings_main after ``SETTINGS_MENU_IDLE_EXIT_S`` without input.
+
+    Returns True when menus were closed (compose should show now-playing or
+    clock saver via the normal OFF-phase path).
+    """
+    if dev_phase[0] != DevPhase.MAIN_SETTINGS:
+        return False
+    now_i = float(now_mono if now_mono is not None else time.monotonic())
+    if (now_i - float(last_pigeon_user_activity_mono[0])) < float(
+        SETTINGS_MENU_IDLE_EXIT_S
+    ):
+        return False
+    if main_settings_widget_holder[0] is not None:
+        try:
+            if not bool(getattr(main_settings_widget_holder[0].state, "exit_enabled", True)):
+                return False
+        except Exception:
+            pass
+    if main_settings_widget_holder[0] is not None:
+        try:
+            st_ms = main_settings_widget_holder[0].state
+            if st_ms.keyboard_open:
+                st_ms.close_keyboard(commit=False)
+            st_ms.exit_pigeon_settings()
+            main_settings_widget_holder[0].invalidate()
+        except Exception:
+            pass
+    dev_phase[0] = DevPhase.OFF
+    skip_cache[0] = None
+    try:
+        sync_developer_chrome()
+    except Exception:
+        pass
+    return True
+
+
+def _sync_preferences_now_playing_progress(*, _active_tmdb_tt_src_bgra, _circles_poster_bgra, _format_hmmss, _playback_extrapolated_pair, _playback_progress_fraction_for_bar, _resolve_receiver_lines_for_now_playing, _vv_is_music, active_tmdb_display_title, active_tmdb_title_key, apple_tv_auto_state, apple_tv_playback_clock, main_settings_widget_holder, streaming_badge_state) -> None:
+    """Feed live NP content into prefs / widgets; idle keeps SVG demos."""
+    if main_settings_widget_holder[0] is None:
+        return
+    st_ms = main_settings_widget_holder[0].state
+    if not st_ms.show_preferences and not st_ms.show_widgets:
+        return
+
+    def _clear_prefs_live() -> None:
+        st_ms.preferences_live_content = False
+        st_ms.preferences_np_progress = None
+        st_ms.preferences_poster_bgra = None
+        st_ms.preferences_volume = None
+        st_ms.preferences_volume_fraction = None
+        st_ms.preferences_incoming = None
+        st_ms.preferences_config = None
+        st_ms.preferences_cast = None
+        st_ms.preferences_elapsed_text = None
+        st_ms.preferences_remaining_text = None
+        st_ms.preferences_service_name = None
+        st_ms.preferences_content_mode = None
+        st_ms.preferences_song_title = None
+        st_ms.preferences_album_title = None
+        st_ms.preferences_artist_title = None
+        st_ms.preferences_tt_bgra = None
+
+    try:
+        prog = _playback_progress_fraction_for_bar()
+    except Exception:
+        prog = None
+    clk = apple_tv_playback_clock
+    has_playback = bool(clk.get("has_sync") or clk.get("live_mode"))
+    poster = None
+    try:
+        poster = _circles_poster_bgra()
+    except Exception:
+        poster = None
+    live = bool(
+        has_playback
+        or prog is not None
+        or (poster is not None and getattr(poster, "size", 0) > 0)
+        or bool(str(active_tmdb_title_key[0] or "").strip())
+    )
+    if not live:
+        _clear_prefs_live()
+        return
+
+    st_ms.preferences_live_content = True
+    st_ms.preferences_np_progress = prog
+    st_ms.preferences_poster_bgra = poster
+    try:
+        inc, cfg, vol = _resolve_receiver_lines_for_now_playing()
+    except Exception:
+        inc, cfg, vol = "", "", ""
+    st_ms.preferences_incoming = inc
+    st_ms.preferences_config = cfg
+    st_ms.preferences_volume = vol
+    try:
+        from pigeon.widgets.playback_overlay import volume_fraction_from_display_line
+
+        st_ms.preferences_volume_fraction = float(
+            volume_fraction_from_display_line(vol)
+        )
+    except Exception:
+        st_ms.preferences_volume_fraction = 0.0
+
+    remaining_text = ""
+    played_text = ""
+    if clk.get("live_mode"):
+        remaining_text = "LIVE"
+        played_text = "LIVE"
+    else:
+        try:
+            pair = _playback_extrapolated_pair()
+        except Exception:
+            pair = None
+        if pair is not None:
+            played_text = _format_hmmss(int(pair[0]))
+            remaining_text = _format_hmmss(int(pair[1]))
+    st_ms.preferences_elapsed_text = played_text
+    st_ms.preferences_remaining_text = remaining_text
+
+    sb = streaming_badge_state
+    svc = str(sb.get("label") or "").strip()
+    if not svc:
+        lm_svc = apple_tv_auto_state.get("last_metadata")
+        if isinstance(lm_svc, dict):
+            svc = str(lm_svc.get("app_name") or "").strip()
+    st_ms.preferences_service_name = svc
+
+    is_music = bool(_vv_is_music())
+    st_ms.preferences_content_mode = "music" if is_music else "video"
+    if is_music:
+        lm_music = apple_tv_auto_state.get("last_metadata")
+        song_t = album_t = artist_t = ""
+        if isinstance(lm_music, dict):
+            song_t = str(lm_music.get("title") or "").strip()
+            album_t = str(lm_music.get("album") or "").strip()
+            artist_t = str(lm_music.get("artist") or "").strip()
+            if not song_t and album_t:
+                song_t, album_t = album_t, ""
+        st_ms.preferences_song_title = song_t
+        st_ms.preferences_album_title = album_t
+        st_ms.preferences_artist_title = artist_t
+        st_ms.preferences_cast = ()
+        st_ms.preferences_tt_bgra = poster
+    else:
+        st_ms.preferences_song_title = str(
+            active_tmdb_display_title[0] or ""
+        ).strip()
+        st_ms.preferences_album_title = ""
+        st_ms.preferences_artist_title = ""
+        cast_rows: list[tuple[str, str]] = []
+        try:
+            from pigeon.tmdb_poster import get_cached_tmdb_cast
+
+            tk = str(active_tmdb_title_key[0] or "").strip()
+            if tk:
+                cast_rows = list(get_cached_tmdb_cast(tk) or [])
+        except Exception:
+            cast_rows = []
+        st_ms.preferences_cast = tuple(
+            (str(a or ""), str(c or "")) for a, c in cast_rows[:9]
+        )
+        try:
+            st_ms.preferences_tt_bgra = _active_tmdb_tt_src_bgra()
+        except Exception:
+            st_ms.preferences_tt_bgra = None

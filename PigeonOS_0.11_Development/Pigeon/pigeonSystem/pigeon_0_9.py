@@ -1922,6 +1922,11 @@ def main() -> int:
     def bootstrap() -> None:
 
         # State created up front (hoisted; side-effect-free initialisers).
+        main_settings_widget_holder = [None]
+        view_circles_widget_holder = [None]
+        update_btn_holder = [None]
+        purge_image_media_btn_holder = [None]
+        scene_enabled = [None]
         apple_tv_auto_state: dict[str, object] = {
             "running": False,
             "content_key": None,
@@ -2169,170 +2174,33 @@ def main() -> int:
             last_pigeon_user_activity_mono=last_pigeon_user_activity_mono,
         )
 
-        def _maybe_exit_settings_menus_on_idle(now_mono: float | None = None) -> bool:
-            """Close settings_main after ``SETTINGS_MENU_IDLE_EXIT_S`` without input.
+        _maybe_exit_settings_menus_on_idle = _bind_deps(
+            _core_settings_ui._maybe_exit_settings_menus_on_idle,
+            DevPhase=DevPhase,
+            SETTINGS_MENU_IDLE_EXIT_S=SETTINGS_MENU_IDLE_EXIT_S,
+            dev_phase=dev_phase,
+            last_pigeon_user_activity_mono=last_pigeon_user_activity_mono,
+            main_settings_widget_holder=main_settings_widget_holder,
+            skip_cache=skip_cache,
+            sync_developer_chrome=_late(lambda: sync_developer_chrome, "sync_developer_chrome"),
+        )
 
-            Returns True when menus were closed (compose should show now-playing or
-            clock saver via the normal OFF-phase path).
-            """
-            if dev_phase[0] != DevPhase.MAIN_SETTINGS:
-                return False
-            now_i = float(now_mono if now_mono is not None else time.monotonic())
-            if (now_i - float(last_pigeon_user_activity_mono[0])) < float(
-                SETTINGS_MENU_IDLE_EXIT_S
-            ):
-                return False
-            if main_settings_widget is not None:
-                try:
-                    if not bool(getattr(main_settings_widget.state, "exit_enabled", True)):
-                        return False
-                except Exception:
-                    pass
-            if main_settings_widget is not None:
-                try:
-                    st_ms = main_settings_widget.state
-                    if st_ms.keyboard_open:
-                        st_ms.close_keyboard(commit=False)
-                    st_ms.exit_pigeon_settings()
-                    main_settings_widget.invalidate()
-                except Exception:
-                    pass
-            dev_phase[0] = DevPhase.OFF
-            skip_cache[0] = None
-            try:
-                sync_developer_chrome()
-            except Exception:
-                pass
-            return True
-
-        def _sync_preferences_now_playing_progress() -> None:
-            """Feed live NP content into prefs / widgets; idle keeps SVG demos."""
-            if main_settings_widget is None:
-                return
-            st_ms = main_settings_widget.state
-            if not st_ms.show_preferences and not st_ms.show_widgets:
-                return
-
-            def _clear_prefs_live() -> None:
-                st_ms.preferences_live_content = False
-                st_ms.preferences_np_progress = None
-                st_ms.preferences_poster_bgra = None
-                st_ms.preferences_volume = None
-                st_ms.preferences_volume_fraction = None
-                st_ms.preferences_incoming = None
-                st_ms.preferences_config = None
-                st_ms.preferences_cast = None
-                st_ms.preferences_elapsed_text = None
-                st_ms.preferences_remaining_text = None
-                st_ms.preferences_service_name = None
-                st_ms.preferences_content_mode = None
-                st_ms.preferences_song_title = None
-                st_ms.preferences_album_title = None
-                st_ms.preferences_artist_title = None
-                st_ms.preferences_tt_bgra = None
-
-            try:
-                prog = _playback_progress_fraction_for_bar()
-            except Exception:
-                prog = None
-            clk = apple_tv_playback_clock
-            has_playback = bool(clk.get("has_sync") or clk.get("live_mode"))
-            poster = None
-            try:
-                poster = _circles_poster_bgra()
-            except Exception:
-                poster = None
-            live = bool(
-                has_playback
-                or prog is not None
-                or (poster is not None and getattr(poster, "size", 0) > 0)
-                or bool(str(active_tmdb_title_key[0] or "").strip())
-            )
-            if not live:
-                _clear_prefs_live()
-                return
-
-            st_ms.preferences_live_content = True
-            st_ms.preferences_np_progress = prog
-            st_ms.preferences_poster_bgra = poster
-            try:
-                inc, cfg, vol = _resolve_receiver_lines_for_now_playing()
-            except Exception:
-                inc, cfg, vol = "", "", ""
-            st_ms.preferences_incoming = inc
-            st_ms.preferences_config = cfg
-            st_ms.preferences_volume = vol
-            try:
-                from pigeon.widgets.playback_overlay import volume_fraction_from_display_line
-
-                st_ms.preferences_volume_fraction = float(
-                    volume_fraction_from_display_line(vol)
-                )
-            except Exception:
-                st_ms.preferences_volume_fraction = 0.0
-
-            remaining_text = ""
-            played_text = ""
-            if clk.get("live_mode"):
-                remaining_text = "LIVE"
-                played_text = "LIVE"
-            else:
-                try:
-                    pair = _playback_extrapolated_pair()
-                except Exception:
-                    pair = None
-                if pair is not None:
-                    played_text = _format_hmmss(int(pair[0]))
-                    remaining_text = _format_hmmss(int(pair[1]))
-            st_ms.preferences_elapsed_text = played_text
-            st_ms.preferences_remaining_text = remaining_text
-
-            sb = streaming_badge_state
-            svc = str(sb.get("label") or "").strip()
-            if not svc:
-                lm_svc = apple_tv_auto_state.get("last_metadata")
-                if isinstance(lm_svc, dict):
-                    svc = str(lm_svc.get("app_name") or "").strip()
-            st_ms.preferences_service_name = svc
-
-            is_music = bool(_vv_is_music())
-            st_ms.preferences_content_mode = "music" if is_music else "video"
-            if is_music:
-                lm_music = apple_tv_auto_state.get("last_metadata")
-                song_t = album_t = artist_t = ""
-                if isinstance(lm_music, dict):
-                    song_t = str(lm_music.get("title") or "").strip()
-                    album_t = str(lm_music.get("album") or "").strip()
-                    artist_t = str(lm_music.get("artist") or "").strip()
-                    if not song_t and album_t:
-                        song_t, album_t = album_t, ""
-                st_ms.preferences_song_title = song_t
-                st_ms.preferences_album_title = album_t
-                st_ms.preferences_artist_title = artist_t
-                st_ms.preferences_cast = ()
-                st_ms.preferences_tt_bgra = poster
-            else:
-                st_ms.preferences_song_title = str(
-                    active_tmdb_display_title[0] or ""
-                ).strip()
-                st_ms.preferences_album_title = ""
-                st_ms.preferences_artist_title = ""
-                cast_rows: list[tuple[str, str]] = []
-                try:
-                    from pigeon.tmdb_poster import get_cached_tmdb_cast
-
-                    tk = str(active_tmdb_title_key[0] or "").strip()
-                    if tk:
-                        cast_rows = list(get_cached_tmdb_cast(tk) or [])
-                except Exception:
-                    cast_rows = []
-                st_ms.preferences_cast = tuple(
-                    (str(a or ""), str(c or "")) for a, c in cast_rows[:9]
-                )
-                try:
-                    st_ms.preferences_tt_bgra = _active_tmdb_tt_src_bgra()
-                except Exception:
-                    st_ms.preferences_tt_bgra = None
+        _sync_preferences_now_playing_progress = _bind_deps(
+            _core_settings_ui._sync_preferences_now_playing_progress,
+            _active_tmdb_tt_src_bgra=_late(lambda: _active_tmdb_tt_src_bgra, "_active_tmdb_tt_src_bgra"),
+            _circles_poster_bgra=_late(lambda: _circles_poster_bgra, "_circles_poster_bgra"),
+            _format_hmmss=_format_hmmss,
+            _playback_extrapolated_pair=_late(lambda: _playback_extrapolated_pair, "_playback_extrapolated_pair"),
+            _playback_progress_fraction_for_bar=_late(lambda: _playback_progress_fraction_for_bar, "_playback_progress_fraction_for_bar"),
+            _resolve_receiver_lines_for_now_playing=_late(lambda: _resolve_receiver_lines_for_now_playing, "_resolve_receiver_lines_for_now_playing"),
+            _vv_is_music=_late(lambda: _vv_is_music, "_vv_is_music"),
+            active_tmdb_display_title=active_tmdb_display_title,
+            active_tmdb_title_key=active_tmdb_title_key,
+            apple_tv_auto_state=apple_tv_auto_state,
+            apple_tv_playback_clock=apple_tv_playback_clock,
+            main_settings_widget_holder=main_settings_widget_holder,
+            streaming_badge_state=streaming_badge_state,
+        )
 
         _settings_wheel_target_should_ignore = _core_settings_ui._settings_wheel_target_should_ignore
 
@@ -2584,96 +2452,24 @@ def main() -> int:
 
         _match_neighbor_button_style = _core_settings_ui._match_neighbor_button_style
 
-        def _sync_update_button_style() -> None:
-            _match_neighbor_button_style(update_btn, ref=find_device_btn)
-            if update_check_state.get("update_available"):
-                update_btn.configure(
-                    text="Updates ●",
-                    state=tk.NORMAL,
-                )
-            else:
-                update_btn.configure(
-                    text="Updates",
-                    state=tk.NORMAL,
-                )
+        _sync_update_button_style = _bind_deps(
+            _core_settings_ui._sync_update_button_style,
+            _match_neighbor_button_style=_match_neighbor_button_style,
+            find_device_btn=find_device_btn,
+            update_btn_holder=update_btn_holder,
+            update_check_state=update_check_state,
+        )
 
         _resolve_install_root_for_update = _core_settings_ui._resolve_install_root_for_update
 
-        def _run_github_apply_worker(*, remote: str = "?", branch: str | None = None) -> None:
-            install_root = _resolve_install_root_for_update()
-            progress = tk.Toplevel(root)
-            progress.title("Updating Pigeon")
-            progress.transient(root)
-            progress.grab_set()
-            status_var = tk.StringVar(value="Downloading from GitHub…")
-            tk.Label(progress, textvariable=status_var, padx=16, pady=16).pack()
-            update_check_state["applying"] = True
-            update_btn.configure(state=tk.DISABLED)
-
-            def worker() -> None:
-                try:
-                    from pigeon.github_update import apply_github_update
-
-                    apply_branch = branch
-                    if apply_branch is None:
-                        cached = update_check_state.get("github_branch")
-                        if isinstance(cached, str) and cached.strip():
-                            apply_branch = cached.strip()
-                    result = apply_github_update(install_root, branch=apply_branch)
-                except Exception as e:
-                    from pigeon.github_update import ApplyUpdateResult
-
-                    result = ApplyUpdateResult(False, str(e))
-
-                def finish_apply() -> None:
-                    update_check_state["applying"] = False
-                    update_btn.configure(state=tk.NORMAL)
-                    if result.ok:
-                        status_var.set("Update complete — restarting Pigeon…")
-                        update_check_state["update_available"] = False
-                        if result.remote_version:
-                            update_check_state["remote_version"] = result.remote_version
-                        else:
-                            update_check_state["remote_version"] = remote
-                        _sync_update_button_style()
-
-                        def _restart_and_exit() -> None:
-                            try:
-                                progress.grab_release()
-                                progress.destroy()
-                            except tk.TclError:
-                                pass
-                            try:
-                                from pigeon.github_update import restart_pigeon_after_update
-
-                                restart_pigeon_after_update(
-                                    install_root, parent_pid=os.getpid()
-                                )
-                            except Exception:
-                                pass
-                            try:
-                                root.destroy()
-                            except tk.TclError:
-                                pass
-                            os._exit(0)
-
-                        root.after(400, _restart_and_exit)
-                        return
-
-                    try:
-                        progress.grab_release()
-                        progress.destroy()
-                    except tk.TclError:
-                        pass
-                    messagebox.showerror(
-                        "Update failed",
-                        result.message,
-                        parent=root,
-                    )
-
-                root.after(0, finish_apply)
-
-            threading.Thread(target=worker, daemon=True).start()
+        _run_github_apply_worker = _bind_deps(
+            _core_settings_ui._run_github_apply_worker,
+            _resolve_install_root_for_update=_resolve_install_root_for_update,
+            _sync_update_button_style=_sync_update_button_style,
+            root=root,
+            update_btn_holder=update_btn_holder,
+            update_check_state=update_check_state,
+        )
 
         _linux_on_updates_button = _bind_deps(
             _core_settings_ui._linux_on_updates_button,
@@ -2688,85 +2484,15 @@ def main() -> int:
             root=root,
         )
 
-        def _on_updates_button() -> None:
-            if sys.platform.startswith("linux"):
-                _linux_on_updates_button()
-                return
-            if update_check_state.get("applying") or update_check_state.get("checking"):
-                return
-
-            progress = tk.Toplevel(root)
-            progress.title("Updates")
-            progress.transient(root)
-            progress.grab_set()
-            status_var = tk.StringVar(value="Checking GitHub for updates…")
-            tk.Label(progress, textvariable=status_var, padx=16, pady=16).pack()
-            update_check_state["checking"] = True
-            update_btn.configure(state=tk.DISABLED)
-
-            def worker() -> None:
-                try:
-                    from pigeon.update_check import check_for_update
-
-                    result = check_for_update(force=True)
-                except Exception as e:
-                    from pigeon.update_check import UpdateCheckResult
-
-                    result = UpdateCheckResult(
-                        local_version=version_string(),
-                        remote_version=None,
-                        update_available=False,
-                        error=str(e),
-                    )
-
-                def finish_check() -> None:
-                    update_check_state["checking"] = False
-                    _finish_update_check(result)
-                    try:
-                        progress.grab_release()
-                        progress.destroy()
-                    except tk.TclError:
-                        pass
-                    update_btn.configure(state=tk.NORMAL)
-
-                    from pigeon.update_check import UpdateCheckResult
-
-                    if not isinstance(result, UpdateCheckResult):
-                        return
-                    if result.error:
-                        messagebox.showerror(
-                            "Updates",
-                            f"Could not check GitHub for updates.\n\n"
-                            f"Installed: {result.local_version}\n\n"
-                            f"{result.error}",
-                            parent=root,
-                        )
-                        return
-                    if result.update_available:
-                        _begin_apply_update(
-                            remote=str(result.remote_version or "?"),
-                            branch=result.github_branch,
-                        )
-                        return
-                    remote = result.remote_version
-                    if remote:
-                        body = (
-                            f"You are on the latest version GitHub reports.\n\n"
-                            f"Installed: {result.local_version}\n"
-                            f"GitHub:    {remote}"
-                        )
-                    else:
-                        body = (
-                            f"No update information from GitHub.\n\n"
-                            f"Installed: {result.local_version}\n\n"
-                            f"If the repo is private, set PIGEON_UPDATE_GITHUB_TOKEN "
-                            f"in the environment and try again."
-                        )
-                    messagebox.showinfo("Updates", body, parent=root)
-
-                root.after(0, finish_check)
-
-            threading.Thread(target=worker, daemon=True).start()
+        _on_updates_button = _bind_deps(
+            _core_settings_ui._on_updates_button,
+            _begin_apply_update=_begin_apply_update,
+            _finish_update_check=_late(lambda: _finish_update_check, "_finish_update_check"),
+            _linux_on_updates_button=_linux_on_updates_button,
+            root=root,
+            update_btn_holder=update_btn_holder,
+            update_check_state=update_check_state,
+        )
 
         _finish_update_check = _bind_deps(
             _core_settings_ui._finish_update_check,
@@ -2790,7 +2516,7 @@ def main() -> int:
             root=root,
         )
 
-        update_btn = tk.Button(
+        update_btn_holder[0] = tk.Button(
             devices_btn_row,
             text="Updates",
             command=_on_updates_button,
@@ -2798,7 +2524,7 @@ def main() -> int:
             padx=10,
             pady=4,
         )
-        update_btn.pack(side=tk.LEFT, padx=(10, 0))
+        update_btn_holder[0].pack(side=tk.LEFT, padx=(10, 0))
         _sync_update_button_style()
         root.after(4000, lambda: _check_for_updates(force=True))
         root.after(int(_UPDATE_CHECK_INTERVAL_S * 1000), _schedule_periodic_update_check)
@@ -3113,55 +2839,23 @@ def main() -> int:
             view_five_mode_holder=view_five_mode_holder,
         )
 
-        def _clock_saver_for_compose(now: float) -> bool:
-            """True when the large saver time/date patches should be drawn (idle path)."""
-            if clock_saver_composite_bgra is None:
-                return False
-            if _clock_startup_intro_opacity(now) is not None:
-                if _tmdb_info_current_and_available():
-                    return False
-                return True
-            if dev_phase[0] != DevPhase.OFF:
-                return False
-            # Splash overlay: keep underlay black until reveal frame, then paint clock under PNG alpha.
-            if startup_ph[0] is not None:
-                return bool(_splash_reveal_clock[0])
-            ev = _effective_display_view()
-            if ev == DisplayView.FOUR:
-                return False
-            # View ONE now-playing may run with scene off; still allow the idle saver.
-            if (not scene_enabled[0]) and ev != DisplayView.ONE:
-                return False
-            try:
-                plan = _apply_auto_widget_policy()
-                from pigeon.auto_widgets import (
-                    LAYOUT_SETTINGS,
-                    LAYOUT_ZONE6_CLOCKSAVER,
-                    LAYOUT_ZONE6_PAUSESAVER,
-                    LAYOUT_ZONE8_CLOCKSAVER,
-                    LAYOUT_ZONE10_PAUSESAVER,
-                )
-
-                if plan.force_settings or plan.layout == LAYOUT_SETTINGS:
-                    return False
-                if plan.layout == LAYOUT_ZONE8_CLOCKSAVER:
-                    return True
-                if plan.layout in (
-                    LAYOUT_ZONE6_PAUSESAVER,
-                    LAYOUT_ZONE10_PAUSESAVER,
-                ):
-                    from pigeon.clock_saver_policy import pausesaver_due_for_clocksaver
-
-                    if pausesaver_due_for_clocksaver(_refresh_paused_row_stamp(now)):
-                        return True
-                    return False
-                if plan.layout == LAYOUT_ZONE6_CLOCKSAVER:
-                    return False
-            except Exception:
-                pass
-            if clock_saver_force_on[0]:
-                return True
-            return _clock_saver_active(now)
+        _clock_saver_for_compose = _bind_deps(
+            _core_saver_state._clock_saver_for_compose,
+            DevPhase=DevPhase,
+            DisplayView=DisplayView,
+            _apply_auto_widget_policy=_late(lambda: _apply_auto_widget_policy, "_apply_auto_widget_policy"),
+            _clock_saver_active=_late(lambda: _clock_saver_active, "_clock_saver_active"),
+            _clock_startup_intro_opacity=_clock_startup_intro_opacity,
+            _effective_display_view=_late(lambda: _effective_display_view, "_effective_display_view"),
+            _refresh_paused_row_stamp=_refresh_paused_row_stamp,
+            _splash_reveal_clock=_splash_reveal_clock,
+            _tmdb_info_current_and_available=_tmdb_info_current_and_available,
+            clock_saver_composite_bgra=clock_saver_composite_bgra,
+            clock_saver_force_on=clock_saver_force_on,
+            dev_phase=dev_phase,
+            scene_enabled=scene_enabled,
+            startup_ph=startup_ph,
+        )
 
         _idle_saver_face_toggle_ok = _bind_deps(
             _core_saver_state._idle_saver_face_toggle_ok,
@@ -3193,42 +2887,17 @@ def main() -> int:
             _view_one_uses_now_playing_screen=_late(lambda: _view_one_uses_now_playing_screen, "_view_one_uses_now_playing_screen"),
         )
 
-        def _settings_audio_led_listen() -> bool:
-            """Keep ALSA open on settings_pigeon so the audio LED can follow signal."""
-            if main_settings_widget is None:
-                return False
-            try:
-                st = main_settings_widget.state
-            except Exception:
-                return False
-            if not bool(getattr(st, "show_pigeon_settings", False)):
-                return False
-            if bool(getattr(st, "show_widgets", False)):
-                return False
-            if bool(getattr(st, "show_options", False)):
-                return False
-            if bool(getattr(st, "show_ui_color", False)):
-                return False
-            if bool(getattr(st, "show_preferences", False)):
-                return False
-            if bool(getattr(st, "show_metadata_debug", False)):
-                return False
-            return True
+        _settings_audio_led_listen = _bind_deps(
+            _core_settings_ui._settings_audio_led_listen,
+            main_settings_widget_holder=main_settings_widget_holder,
+        )
 
-        def _np_wants_live_audio() -> bool:
-            if view_circles_widget is None:
-                return False
-            if not _view_one_uses_now_playing_screen():
-                return False
-            try:
-                if _clock_saver_for_compose(time.monotonic()):
-                    return False
-            except Exception:
-                pass
-            try:
-                return bool(view_circles_widget.wants_live_audio())
-            except Exception:
-                return False
+        _np_wants_live_audio = _bind_deps(
+            _core_now_playing._np_wants_live_audio,
+            _clock_saver_for_compose=_clock_saver_for_compose,
+            _view_one_uses_now_playing_screen=_late(lambda: _view_one_uses_now_playing_screen, "_view_one_uses_now_playing_screen"),
+            view_circles_widget_holder=view_circles_widget_holder,
+        )
 
         _audio_capture_wanted = _bind_deps(
             _core_saver_state._audio_capture_wanted,
@@ -3293,7 +2962,7 @@ def main() -> int:
 
         _nav_coalescer_holder: list[object] = [None]
         _nav_request: list[object] = [None]
-        scene_enabled = [_load_persisted_scene_enabled(True)]
+        scene_enabled[0] = _load_persisted_scene_enabled(True)
 
         _effective_display_view = _bind_deps(
             _core_stage_render._effective_display_view,
@@ -3559,12 +3228,12 @@ def main() -> int:
         )
 
         # Now-playing: five-zone circles skin only.
-        view_circles_widget = (
+        view_circles_widget_holder[0] = (
             ViewCirclesWidget(assets_dir=Path(_PROJECT_DIR) / "pigeonAssets")
             if _PIGEON_EXT and ViewCirclesWidget is not None
             else None
         )
-        if view_circles_widget is not None:
+        if view_circles_widget_holder[0] is not None:
             try:
                 from pigeon.widgets.preferences_settings import (
                     ensure_now_playing_layout_defaults,
@@ -3573,15 +3242,15 @@ def main() -> int:
                 ensure_now_playing_layout_defaults()
             except Exception:
                 pass
-        main_settings_widget = (
+        main_settings_widget_holder[0] = (
             MainSettingsWidget(assets_dir=Path(_PROJECT_DIR) / "pigeonAssets")
             if _PIGEON_EXT and MainSettingsWidget is not None
             else None
         )
-        if main_settings_widget is not None:
+        if main_settings_widget_holder[0] is not None:
             try:
-                main_settings_widget.state.version_string = version_string()
-                main_settings_widget.state.update_local_version = version_string()
+                main_settings_widget_holder[0].state.version_string = version_string()
+                main_settings_widget_holder[0].state.update_local_version = version_string()
             except Exception:
                 pass
 
@@ -3589,28 +3258,28 @@ def main() -> int:
             _core_view_one._view_one_uses_now_playing_screen,
             DisplayView=DisplayView,
             _effective_display_view=_effective_display_view,
-            view_circles_widget=view_circles_widget,
+            view_circles_widget=view_circles_widget_holder[0],
         )
 
         _np_drawing_live_audio = _bind_deps(
             _core_now_playing._np_drawing_live_audio,
             _clock_saver_for_compose=_clock_saver_for_compose,
             _view_one_uses_now_playing_screen=_view_one_uses_now_playing_screen,
-            view_circles_widget=view_circles_widget,
+            view_circles_widget=view_circles_widget_holder[0],
         )
 
         _settings_is_native_1280 = _bind_deps(
             _core_settings_ui._settings_is_native_1280,
             DevPhase=DevPhase,
             dev_phase=dev_phase,
-            main_settings_widget=main_settings_widget,
+            main_settings_widget=main_settings_widget_holder[0],
         )
 
         _settings_menu_is_static = _bind_deps(
             _core_settings_ui._settings_menu_is_static,
             DevPhase=DevPhase,
             dev_phase=dev_phase,
-            main_settings_widget=main_settings_widget,
+            main_settings_widget=main_settings_widget_holder[0],
         )
 
         _composite_settings_on_canvas = _bind_deps(
@@ -3621,8 +3290,8 @@ def main() -> int:
             _sync_now_playing_screen_state=_late(lambda: _sync_now_playing_screen_state, "_sync_now_playing_screen_state"),
             _sync_preferences_now_playing_progress=_sync_preferences_now_playing_progress,
             _sync_settings_zone2_tt=_late(lambda: _sync_settings_zone2_tt, "_sync_settings_zone2_tt"),
-            main_settings_widget=main_settings_widget,
-            view_circles_widget=view_circles_widget,
+            main_settings_widget=main_settings_widget_holder[0],
+            view_circles_widget=view_circles_widget_holder[0],
         )
 
         _sync_now_playing_screen_state = _bind_deps(
@@ -3654,19 +3323,19 @@ def main() -> int:
             receiver_standby_holder=receiver_standby_holder,
             skip_cache=skip_cache,
             streaming_badge_state=streaming_badge_state,
-            view_circles_widget=view_circles_widget,
+            view_circles_widget=view_circles_widget_holder[0],
         )
 
         _sync_now_playing_screen_state_for_frame = _bind_deps(
             _core_now_playing._sync_now_playing_screen_state_for_frame,
             _np_state_sync_mono=_np_state_sync_mono,
             _sync_now_playing_screen_state=_sync_now_playing_screen_state,
-            view_circles_widget=view_circles_widget,
+            view_circles_widget=view_circles_widget_holder[0],
         )
 
         _clear_now_playing_view_caches = _bind_deps(
             _core_now_playing._clear_now_playing_view_caches,
-            view_circles_widget=view_circles_widget,
+            view_circles_widget=view_circles_widget_holder[0],
         )
 
         _enable_now_playing_screen = _bind_deps(
@@ -3683,7 +3352,7 @@ def main() -> int:
             last_frame=last_frame,
             scene_enabled=scene_enabled,
             skip_cache=skip_cache,
-            view_circles_widget=view_circles_widget,
+            view_circles_widget=view_circles_widget_holder[0],
         )
 
         _activate_now_playing_after_splash = _bind_deps(
@@ -3710,7 +3379,7 @@ def main() -> int:
             _log_view_one_startup_phase=_log_view_one_startup_phase,
             display_view_holder=display_view_holder,
             root=root,
-            view_circles_widget=view_circles_widget,
+            view_circles_widget=view_circles_widget_holder[0],
         )
 
         root.after(150, lambda: _warm_view_one_splash_chrome_only(phase="chrome-early"))
@@ -3838,7 +3507,7 @@ def main() -> int:
             _splash_view_one_warm_done=_splash_view_one_warm_done,
             _warm_status_bar_blits=_warm_status_bar_blits,
             root=root,
-            view_circles_widget=view_circles_widget,
+            view_circles_widget=view_circles_widget_holder[0],
         )
 
         _set_playback_overlay_clock_saver_volume_flag = _bind_deps(
@@ -3923,7 +3592,7 @@ def main() -> int:
 
         _sync_settings_zone2_tt = _bind_deps(
             _core_settings_ui._sync_settings_zone2_tt,
-            main_settings_widget=main_settings_widget,
+            main_settings_widget=main_settings_widget_holder[0],
         )
 
         _clear_music_artwork_cache = _bind_deps(
@@ -4153,8 +3822,8 @@ def main() -> int:
             _program_audio_session=_program_audio_session,
             _refresh_paused_row_stamp=_refresh_paused_row_stamp,
             current_apple_tv=current_apple_tv,
-            main_settings_widget=main_settings_widget,
-            view_circles_widget=view_circles_widget,
+            main_settings_widget=main_settings_widget_holder[0],
+            view_circles_widget=view_circles_widget_holder[0],
         )
 
         _apply_auto_widget_policy = _bind_deps(
@@ -4165,7 +3834,7 @@ def main() -> int:
             active_tmdb_title_key=active_tmdb_title_key,
             apple_tv_auto_state=apple_tv_auto_state,
             dev_phase=dev_phase,
-            main_settings_widget=main_settings_widget,
+            main_settings_widget=main_settings_widget_holder[0],
             skip_cache=skip_cache,
         )
 
@@ -4281,7 +3950,7 @@ def main() -> int:
             display_dims=display_dims,
             location_toast_patch_bgra=location_toast_patch_bgra,
             location_toast_state=location_toast_state,
-            main_settings_widget=main_settings_widget,
+            main_settings_widget=main_settings_widget_holder[0],
             playback_lower_gradient_bgra=playback_lower_gradient_bgra,
             playback_overlay_blits=playback_overlay_blits,
             playback_overlay_flags=playback_overlay_flags,
@@ -4290,7 +3959,7 @@ def main() -> int:
             status_bar_blits=status_bar_blits,
             status_bar_widget=status_bar_widget,
             tmdb_tt_gradient_bgr_holder=tmdb_tt_gradient_bgr_holder,
-            view_circles_widget=view_circles_widget,
+            view_circles_widget=view_circles_widget_holder[0],
         )
 
         compose_display_from_source = _bind_deps(
@@ -4352,7 +4021,7 @@ def main() -> int:
             get_grid_geometry=get_grid_geometry,
             location_toast_patch_bgra=location_toast_patch_bgra,
             location_toast_state=location_toast_state,
-            main_settings_widget=main_settings_widget,
+            main_settings_widget=main_settings_widget_holder[0],
             playback_lower_gradient_bgra=playback_lower_gradient_bgra,
             playback_overlay_flags=playback_overlay_flags,
             playback_overlay_widget=playback_overlay_widget,
@@ -4361,7 +4030,7 @@ def main() -> int:
             startup_ph=startup_ph,
             status_bar_widget=status_bar_widget,
             tmdb_tt_gradient_bgr_holder=tmdb_tt_gradient_bgr_holder,
-            view_circles_widget=view_circles_widget,
+            view_circles_widget=view_circles_widget_holder[0],
         )
 
         _view_four_text_is_placeholder = _core_view_four._view_four_text_is_placeholder
@@ -4475,7 +4144,7 @@ def main() -> int:
             render_ui_music_text_patch_bgra=render_ui_music_text_patch_bgra,
             render_ui_text_patch_bgra=render_ui_text_patch_bgra,
             status_bar_widget=status_bar_widget,
-            view_circles_widget=view_circles_widget,
+            view_circles_widget=view_circles_widget_holder[0],
         )
 
         if _PIGEON_EXT:
@@ -4598,7 +4267,7 @@ def main() -> int:
             DevPhase=DevPhase,
             _bump_pigeon_user_activity=_bump_pigeon_user_activity,
             dev_phase=dev_phase,
-            main_settings_widget=main_settings_widget,
+            main_settings_widget=main_settings_widget_holder[0],
             render_once=_late(lambda: render_once, "render_once"),
             skip_cache=skip_cache,
             sync_developer_chrome=sync_developer_chrome,
@@ -4743,7 +4412,7 @@ def main() -> int:
             skip_cache=skip_cache,
             status_bar_widget=status_bar_widget,
             use_backdrop_scene=use_backdrop_scene,
-            view_circles_widget=view_circles_widget,
+            view_circles_widget=view_circles_widget_holder[0],
         )
 
         f10_cycle_scene_grid = _bind_deps(
@@ -5086,26 +4755,16 @@ def main() -> int:
             receiver_http_host=receiver_http_host,
         )
 
-        def set_apple_tv_controls_enabled(enabled: bool) -> None:
-            state = tk.NORMAL if enabled else tk.DISABLED
-            try:
-                find_device_btn.configure(state=state)
-                _m = tmdb_adv_manual_btn_holder[0]
-                if _m is not None:
-                    _m.configure(state=state)
-                _r = tmdb_adv_report_btn_holder[0]
-                if _r is not None:
-                    _r.configure(state=state)
-                purge_image_media_btn.configure(state=state)
-                _fdb = settings_footer_debug_holder[0]
-                if _fdb is not None:
-                    _fdb.configure(state=state)
-                _frb = settings_footer_reset_holder[0]
-                if _frb is not None:
-                    _frb.configure(state=state)
-                root.configure(cursor="none")
-            except tk.TclError:
-                pass
+        set_apple_tv_controls_enabled = _bind_deps(
+            _core_device_control.set_apple_tv_controls_enabled,
+            find_device_btn=find_device_btn,
+            purge_image_media_btn_holder=purge_image_media_btn_holder,
+            root=root,
+            settings_footer_debug_holder=settings_footer_debug_holder,
+            settings_footer_reset_holder=settings_footer_reset_holder,
+            tmdb_adv_manual_btn_holder=tmdb_adv_manual_btn_holder,
+            tmdb_adv_report_btn_holder=tmdb_adv_report_btn_holder,
+        )
 
         begin_apple_tv_operation = _bind_deps(
             _core_device_control.begin_apple_tv_operation,
@@ -5214,7 +4873,7 @@ def main() -> int:
             _schedule_refresh_pairing_leds=_late(lambda: _schedule_refresh_pairing_leds, "_schedule_refresh_pairing_leds"),
             apple_tv_busy=apple_tv_busy,
             apple_tv_dashboard_track=apple_tv_dashboard_track,
-            main_settings_widget=main_settings_widget,
+            main_settings_widget=main_settings_widget_holder[0],
             pair_led_busy=pair_led_busy,
             paired_ui_leds=paired_ui_leds,
             root=root,
@@ -5304,7 +4963,7 @@ def main() -> int:
             describe_current_apple_tv=describe_current_apple_tv,
             discovery_scan_cache=discovery_scan_cache,
             end_apple_tv_operation=end_apple_tv_operation,
-            main_settings_widget=main_settings_widget,
+            main_settings_widget=main_settings_widget_holder[0],
             pair_led_busy=pair_led_busy,
             receiver_http_host=receiver_http_host,
             root=root,
@@ -5770,7 +5429,7 @@ def main() -> int:
             tmdb_quality_flag_set_mono=tmdb_quality_flag_set_mono,
         )
 
-        purge_image_media_btn = tk.Button(
+        purge_image_media_btn_holder[0] = tk.Button(
             content_buttons_row,
             text="Purge Image Media",
             command=on_purge_image_media,
@@ -5778,7 +5437,7 @@ def main() -> int:
             padx=8,
             pady=4,
         )
-        purge_image_media_btn.pack(side=tk.LEFT, padx=(0, 8))
+        purge_image_media_btn_holder[0].pack(side=tk.LEFT, padx=(0, 8))
         if _PIGEON_EXT:
             _mq_glance = tk.Label(
                 content_buttons_row,
@@ -6018,7 +5677,7 @@ def main() -> int:
             _widget_accepts_typing=_widget_accepts_typing,
             apply_saved_tmdb_backdrop_to_display=apply_saved_tmdb_backdrop_to_display,
             dev_phase=dev_phase,
-            main_settings_widget=main_settings_widget,
+            main_settings_widget=main_settings_widget_holder[0],
             render_once=_late(lambda: render_once, "render_once"),
             saved_backdrop_master_bgr=saved_backdrop_master_bgr,
             skip_cache=skip_cache,
@@ -6047,13 +5706,13 @@ def main() -> int:
             _widget_accepts_typing=_widget_accepts_typing,
             dev_phase=dev_phase,
             display_view_holder=display_view_holder,
-            main_settings_widget=main_settings_widget,
+            main_settings_widget=main_settings_widget_holder[0],
             render_once=_late(lambda: render_once, "render_once"),
             skip_cache=skip_cache,
             sync_developer_chrome=sync_developer_chrome,
             toggle_audio_meter_face=toggle_audio_meter_face,
             variant_has_alternate=variant_has_alternate,
-            view_circles_widget=view_circles_widget,
+            view_circles_widget=view_circles_widget_holder[0],
             view_five_mode_holder=view_five_mode_holder,
             view_four_subview_holder=view_four_subview_holder,
             view_one_layout_holder=view_one_layout_holder,
@@ -6071,7 +5730,7 @@ def main() -> int:
             apple_tv_busy=apple_tv_busy,
             current_apple_tv=current_apple_tv,
             dev_phase=dev_phase,
-            main_settings_widget=main_settings_widget,
+            main_settings_widget=main_settings_widget_holder[0],
             render_once=_late(lambda: render_once, "render_once"),
             skip_cache=skip_cache,
             streaming_slot_holder=streaming_slot_holder,
@@ -6196,7 +5855,7 @@ def main() -> int:
             _core_settings_ui._enter_main_settings_for_rotary,
             DevPhase=DevPhase,
             dev_phase=dev_phase,
-            main_settings_widget=main_settings_widget,
+            main_settings_widget=main_settings_widget_holder[0],
             render_once=_late(lambda: render_once, "render_once"),
             skip_cache=skip_cache,
             sync_developer_chrome=sync_developer_chrome,
@@ -6210,7 +5869,7 @@ def main() -> int:
             _handle_main_settings_action=_handle_main_settings_action,
             _nav_request=_nav_request,
             dev_phase=dev_phase,
-            main_settings_widget=main_settings_widget,
+            main_settings_widget=main_settings_widget_holder[0],
             render_once=_late(lambda: render_once, "render_once"),
             root=root,
             skip_cache=skip_cache,
@@ -6393,7 +6052,7 @@ def main() -> int:
             latest_meter_cache_key=latest_meter_cache_key,
             latest_visualizer_cache_key=latest_visualizer_cache_key,
             lerp_bgr_red_monochrome=lerp_bgr_red_monochrome,
-            main_settings_widget=main_settings_widget,
+            main_settings_widget=main_settings_widget_holder[0],
             paused_interval_ms=paused_interval_ms,
             playback_overlay_flags=playback_overlay_flags,
             playing=playing,
@@ -6409,7 +6068,7 @@ def main() -> int:
             sync_audio_meter_capture=sync_audio_meter_capture,
             tmdb_quality_error_flag=tmdb_quality_error_flag,
             use_backdrop_scene=use_backdrop_scene,
-            view_circles_widget=view_circles_widget,
+            view_circles_widget=view_circles_widget_holder[0],
             view_five_mode_holder=view_five_mode_holder,
             view_four_subview_holder=view_four_subview_holder,
             view_one_layout_holder=view_one_layout_holder,
@@ -6445,7 +6104,7 @@ def main() -> int:
         _paint_coalesced_settings_nav = _bind_deps(
             _core_settings_ui._paint_coalesced_settings_nav,
             _nav_coalescer_holder=_nav_coalescer_holder,
-            main_settings_widget=main_settings_widget,
+            main_settings_widget=main_settings_widget_holder[0],
             render_once=render_once,
             skip_cache=skip_cache,
         )
@@ -6465,7 +6124,7 @@ def main() -> int:
         _request_settings_nav_paint = _bind_deps(
             _core_settings_ui._request_settings_nav_paint,
             _nav_coalescer_holder=_nav_coalescer_holder,
-            main_settings_widget=main_settings_widget,
+            main_settings_widget=main_settings_widget_holder[0],
             render_once=render_once,
             skip_cache=skip_cache,
         )
