@@ -1075,3 +1075,1173 @@ def cycle_dev_phase(_event=None, *, DevPhase, _bump_pigeon_user_activity, dev_ph
             pass
         render_once()
     return "break"
+
+
+def _refresh_clock_patch_bgra(*, _clock_patch_sig, clock_patch_bgra, clock_widget, info_cluster_clock_widget, status_bar_widget) -> None:
+    if clock_widget is None:
+        return
+    t = int(time.time())
+    if status_bar_widget is not None:
+        acc: tuple[int, int, int] | None = tuple(status_bar_widget.accent_bgr)
+        clock_widget.set_shadow_accent_bgr(acc)
+        if info_cluster_clock_widget is not None:
+            info_cluster_clock_widget.set_shadow_accent_bgr(acc)
+    else:
+        acc = None
+    if (
+        clock_patch_bgra[0] is not None
+        and t == _clock_patch_sig[0]
+        and acc == _clock_patch_sig[1]
+    ):
+        return
+    clock_patch_bgra[0] = clock_widget.bgra_patch().copy()
+    _clock_patch_sig[0] = t
+    _clock_patch_sig[1] = acc
+
+
+def toggle_play(_event=None, *, LANDING_DIM_BRIGHTNESS, LANDING_DISPLAY_BRIGHTNESS, _bump_pigeon_user_activity, brightness_current, brightness_duration_down_s, brightness_duration_s, brightness_duration_up_s, brightness_from, brightness_t0, brightness_target, last_frame, playing, scene_enabled, use_backdrop_scene) -> None:
+    _bump_pigeon_user_activity()
+    if not scene_enabled[0] or use_backdrop_scene[0] or last_frame[0] is None:
+        return
+    playing[0] = not playing[0]
+    brightness_from[0] = brightness_current[0]
+    # False → full brightness; True → slightly dimmed (inverse of old “video playing” semantics).
+    brightness_target[0] = LANDING_DIM_BRIGHTNESS if playing[0] else LANDING_DISPLAY_BRIGHTNESS
+    brightness_duration_s[0] = (
+        brightness_duration_up_s if brightness_target[0] > brightness_from[0] else brightness_duration_down_s
+    )
+    brightness_t0[0] = time.monotonic()
+
+
+def _open_landing_scene(*, _PIGEON_EXT, _default_render_fps, _disp_fit, backdrop_master_bgr, frame_interval_ms, landing_scene_design_bgr, last_frame, scaled_display, scaled_version, use_backdrop_scene) -> bool:
+    """Black landing page + centered logo; clears TMDb backdrop display flags."""
+    use_backdrop_scene[0] = False
+    backdrop_master_bgr[0] = None
+    last_frame[0] = landing_scene_design_bgr
+    frame_interval_ms[0] = max(1, int(round(1000.0 / _default_render_fps())))
+    if not _PIGEON_EXT:
+        scaled_display[0] = _disp_fit().scale_and_crop(last_frame[0])
+    else:
+        scaled_display[0] = None
+    scaled_version[0] += 1
+    return True
+
+
+def toggle_scene(_event=None, *, require_overlay: bool = True, _PIGEON_EXT, _apply_brightness, _bgr_to_tk_image, _black_screen_bgr, _bump_pigeon_user_activity, _compose_shown_frame, _design_grid_overlay_active, _open_landing_scene, _save_persisted_scene_enabled, _update_label_photo_from_bgr, backdrop_master_bgr, black_photo, brightness_current, label, label_live_photo, last_frame, playing, scaled_display, scene_enabled, skip_cache, use_backdrop_scene) -> None:
+    _bump_pigeon_user_activity()
+    if require_overlay and not _design_grid_overlay_active():
+        return
+
+    if scene_enabled[0]:
+        playing[0] = False
+        scene_enabled[0] = False
+        use_backdrop_scene[0] = False
+        backdrop_master_bgr[0] = None
+    else:
+        if not _open_landing_scene():
+            return
+        scene_enabled[0] = True
+
+    _save_persisted_scene_enabled(scene_enabled[0])
+    skip_cache[0] = None
+
+    if not scene_enabled[0]:
+        if _PIGEON_EXT:
+            out_bgr = _compose_shown_frame(None, 1.0)
+            _update_label_photo_from_bgr(label, out_bgr, label_live_photo)
+        else:
+            if black_photo[0] is None:
+                black_photo[0] = _bgr_to_tk_image(_black_screen_bgr())
+            label.configure(image=black_photo[0])
+            label.image = black_photo[0]
+    elif scaled_display[0] is not None:
+        if _PIGEON_EXT:
+            shown = _compose_shown_frame(last_frame[0], brightness_current[0])
+        else:
+            shown = _apply_brightness(scaled_display[0], brightness_current[0])
+        _update_label_photo_from_bgr(label, shown, label_live_photo)
+
+
+def _apply_shell_size(w: int, h: int, *, SceneFit, _PIGEON_EXT, _app_logo_clock_saver_style_now, backdrop_app_logo_letterbox_fit, backdrop_master_bgr, black_photo, display_dims, fit_holder, scaled_display, scaled_version, skip_cache, sync_developer_chrome, use_backdrop_scene) -> None:
+    if w < 32 or h < 32:
+        return
+    if display_dims[0] == w and display_dims[1] == h:
+        return
+    display_dims[0] = w
+    display_dims[1] = h
+    # Display geometry changed — re-resolve auto PAR next present.
+    try:
+        from pigeon.display_par import clear_auto_par_cache
+
+        clear_auto_par_cache()
+    except Exception:
+        pass
+    fit_holder[0] = SceneFit(target_w=w, target_h=h)
+    black_photo[0] = None
+    skip_cache[0] = None
+    if use_backdrop_scene[0] and backdrop_master_bgr[0] is not None and not _PIGEON_EXT:
+        from pigeon.image_ui_protocol import backdrop_scene_bgr_for_display
+
+        scaled_display[0] = backdrop_scene_bgr_for_display(
+            backdrop_master_bgr[0],
+            w,
+            h,
+            app_logo_letterbox_fit=backdrop_app_logo_letterbox_fit[0],
+            app_logo_clock_saver_style=_app_logo_clock_saver_style_now(),
+        )
+        scaled_version[0] += 1
+    sync_developer_chrome()
+
+
+def _warm_playback_overlay_blits(*, _set_playback_overlay_clock_saver_volume_flag, _show_paused_row_overlay, _view_one_streaming_logo_duplicate_fallback, _warm_info_cluster_blits, playback_overlay_blits, playback_overlay_flags, playback_overlay_widget) -> None:
+    if playback_overlay_widget is None:
+        playback_overlay_blits[0] = []
+    else:
+        try:
+            playback_overlay_flags["show_paused_row"] = _show_paused_row_overlay()
+            playback_overlay_flags["badge_live_instead_of_logo"] = (
+                _view_one_streaming_logo_duplicate_fallback()
+            )
+            _set_playback_overlay_clock_saver_volume_flag()
+            playback_overlay_blits[0] = list(playback_overlay_widget.design_blits())
+        except Exception as exc:
+            print(f"[pigeon] playback overlay blit warmup failed: {exc}", flush=True)
+            playback_overlay_blits[0] = []
+    try:
+        _warm_info_cluster_blits(time.monotonic())
+    except Exception as exc:
+        print(f"[pigeon] info cluster blit warmup failed: {exc}", flush=True)
+
+
+def compose_display_fast_no_grid(
+    frame_bgr: np.ndarray | None,
+    brightness: float,
+    *,
+    frame_is_display_sized: bool = False,
+    CLOCK_ANCHOR_COL, CLOCK_ANCHOR_ROW, DESIGN_H, DESIGN_W, DevPhase, DisplayView, PATCH_LAYER_RECEIVER_AUDIO, SceneFit, _PIGEON_EXT, _acquire_view1_canvas, _active_tmdb_logo_widget, _apply_auto_widget_policy, _apply_brightness, _backdrop_active_for_view, _blend_info_cluster_into_target, _blend_top_gradient_fast, _blit_saver_layers_design, _blit_saver_layers_target, _clock_saver_backdrop_brightness, _clock_saver_dim_overlay_bgra, _clock_saver_dim_pre_digit_canvas, _clock_saver_for_compose, _clock_saver_layer_opacity, _clock_saver_layers, _clock_startup_intro_opacity, _compose_paused_screen, _composite_cap_dims, _composite_settings_on_canvas, _design_rect_to_target, _disp_fit, _effective_display_view, _hitch_parts, _idle_audio_meter_active, _info_cluster_compose_active, _location_toast_alpha, _paused_screen_active, _playback_overlay_fast_sig, _present_frame_to_display, _refresh_clock_patch_bgra, _set_playback_overlay_clock_saver_volume_flag, _show_paused_row_overlay, _splash_reveal_clock, _sync_now_playing_screen_state_for_frame, _view_one_is_pigeon_poster, _view_one_uses_now_playing_screen, _view_one_video_content_a_tt_contain_rect_design, _vv_is_music, _warm_playback_overlay_blits, _warm_tmdb_logo_patch, active_tmdb_display_title, active_tmdb_title_key, alpha_blend_bgra_over_bgr, clock_patch_bgra, clock_saver_composite_bgra, clock_widget, dev_phase, display_dims, location_toast_patch_bgra, location_toast_state, main_settings_widget, playback_lower_gradient_bgra, playback_overlay_blits, playback_overlay_flags, playback_overlay_widget, startup_ph, status_bar_blits, status_bar_widget, tmdb_tt_gradient_bgr_holder, view_circles_widget,
+) -> np.ndarray:
+    """Video at display size + poster/clock blits (no full design canvas). Used when developer grid is off."""
+    assert _PIGEON_EXT
+    try:
+        _apply_auto_widget_policy()
+    except Exception:
+        pass
+    dw, dh = display_dims[0], display_dims[1]
+    cap_w, cap_h, use_cap = _composite_cap_dims(dw, dh)
+    if _paused_screen_active():
+        base_pause = _compose_paused_screen(cap_w, cap_h)
+        if use_cap:
+            return _present_frame_to_display(base_pause, dw, dh)
+        return base_pause
+    # View 1: 070326 now-playing screen only (no classic chrome / TMDB backdrop stack).
+    if _effective_display_view() == DisplayView.ONE:
+        now_cs = time.monotonic()
+        meter_v1 = _idle_audio_meter_active(now_cs)
+        if not meter_v1:
+            _set_playback_overlay_clock_saver_volume_flag()
+            _warm_tmdb_logo_patch()
+        canvas_np = _acquire_view1_canvas()
+        intro_op = _clock_startup_intro_opacity(now_cs)
+        cs_v1 = _clock_saver_for_compose(now_cs)
+        np_live = (
+            not meter_v1
+            and intro_op is None
+            and not (dev_phase[0] == DevPhase.MAIN_SETTINGS and main_settings_widget is not None)
+            and not cs_v1
+        )
+        if not meter_v1 and not np_live:
+            canvas_np[:] = (0, 0, 0)
+        # Pre-reveal splash: black underlay. From frame 90: full clock under PNG alpha.
+        if startup_ph[0] is not None and not _splash_reveal_clock[0]:
+            pass
+        elif intro_op is not None and clock_saver_composite_bgra is not None and alpha_blend_bgra_over_bgr is not None:
+            acc_cs = (
+                tuple(status_bar_widget.accent_bgr)
+                if status_bar_widget is not None
+                else None
+            )
+            (time_bgra, t_rect), (date_bgra, d_rect) = _clock_saver_layers(
+                shadow_bgr=acc_cs,
+                layer_opacity=float(intro_op),
+                time_layer_opacity=float(intro_op),
+                date_layer_opacity=float(intro_op),
+                date_anchor_row=CLOCK_ANCHOR_ROW,
+                date_anchor_col=CLOCK_ANCHOR_COL,
+            )
+            for cs_bgra, (sx, sy, sw, sh) in (
+                (date_bgra, d_rect),
+                (time_bgra, t_rect),
+            ):
+                roi2 = canvas_np[sy : sy + sh, sx : sx + sw]
+                roi2[:] = alpha_blend_bgra_over_bgr(roi2, cs_bgra)
+        elif dev_phase[0] == DevPhase.MAIN_SETTINGS and main_settings_widget is not None:
+            _composite_settings_on_canvas(canvas_np)
+        elif (
+            cs_v1
+            and clock_saver_composite_bgra is not None
+            and alpha_blend_bgra_over_bgr is not None
+        ):
+            # Idle / position-stall saver replaces circles / now-playing chrome.
+            acc_cs = (
+                tuple(status_bar_widget.accent_bgr)
+                if status_bar_widget is not None
+                else None
+            )
+            _cs_dim_v1 = _clock_saver_layer_opacity(now_cs)
+            _meter_face_v1 = meter_v1
+            if not _meter_face_v1:
+                _clock_saver_dim_pre_digit_canvas(canvas_np, _cs_dim_v1)
+            (time_bgra, t_rect), (date_bgra, d_rect) = _clock_saver_layers(
+                shadow_bgr=acc_cs,
+                layer_opacity=_cs_dim_v1,
+                time_layer_opacity=1.0,
+                date_layer_opacity=_cs_dim_v1,
+                date_anchor_row=CLOCK_ANCHOR_ROW,
+                date_anchor_col=CLOCK_ANCHOR_COL,
+                replace_with_meter=_meter_face_v1,
+            )
+            _blit_saver_layers_design(
+                canvas_np,
+                time_bgra,
+                t_rect,
+                date_bgra,
+                d_rect,
+                copy_full_bgr=_meter_face_v1,
+            )
+        else:
+            t_sync0 = time.perf_counter()
+            _sync_now_playing_screen_state_for_frame()
+            t_sync1 = time.perf_counter()
+            if view_circles_widget is not None:
+                view_circles_widget.render(canvas_np)
+            _hitch_parts[0] = (t_sync1 - t_sync0) * 1000.0
+            _hitch_parts[1] = (time.perf_counter() - t_sync1) * 1000.0
+        if (
+            int(cap_w) == int(DESIGN_W)
+            and int(cap_h) == int(DESIGN_H)
+        ):
+            base2 = canvas_np
+        else:
+            base2 = cv2.resize(
+                canvas_np,
+                (cap_w, cap_h),
+                interpolation=cv_resize_interp(
+                    int(DESIGN_W), int(DESIGN_H), cap_w, cap_h
+                ),
+            )
+        if use_cap:
+            return _present_frame_to_display(
+                base2,
+                dw,
+                dh,
+                native_now_playing=True,
+            )
+        return base2
+    _set_playback_overlay_clock_saver_volume_flag()
+    fast_sig = (
+        bool(_backdrop_active_for_view()),
+        _show_paused_row_overlay(),
+        bool(playback_overlay_flags["clock_saver_volume_only"]),
+        bool(playback_overlay_flags["clock_saver_netflix_full_overlay"]),
+        bool(playback_overlay_flags.get("badge_live_instead_of_logo")),
+    )
+    if playback_overlay_widget is not None and _playback_overlay_fast_sig[0] != fast_sig:
+        _playback_overlay_fast_sig[0] = fast_sig
+        _warm_playback_overlay_blits()
+    if frame_bgr is None or frame_bgr.size == 0:
+        sb, sg, sr = get_stage_bgr()
+        base = np.empty((cap_h, cap_w, 3), dtype=np.uint8)
+        base[:] = (sb, sg, sr)
+    else:
+        lit = _apply_brightness(frame_bgr, brightness)
+        if frame_is_display_sized:
+            if use_cap and (
+                int(lit.shape[1]) != cap_w or int(lit.shape[0]) != cap_h
+            ):
+                _lh, _lw = lit.shape[:2]
+                base = cv2.resize(
+                    lit,
+                    (cap_w, cap_h),
+                    interpolation=cv_resize_interp(_lw, _lh, cap_w, cap_h),
+                )
+            else:
+                base = lit
+        else:
+            fit = SceneFit(target_w=cap_w, target_h=cap_h) if use_cap else _disp_fit()
+            base = fit.scale_and_crop(lit)
+    now_cs = time.monotonic()
+    cs = _clock_saver_for_compose(now_cs)
+    intro_op = _clock_startup_intro_opacity(now_cs)
+    bdim = _clock_saver_backdrop_brightness(now_cs)
+    if intro_op is not None:
+        base[:] = 0
+    elif bdim < 1.0 - 1e-6:
+        base = (base.astype(np.float32) * bdim).astype(np.uint8)
+    # Composite order: clock saver / small clock / overlays sit above
+    # the bottom gradient.
+    if intro_op is None:
+        _blend_top_gradient_fast(base, cap_w, cap_h)
+    if cs:
+        if alpha_blend_bgra_over_bgr is not None:
+            acc_cs = (
+                tuple(status_bar_widget.accent_bgr)
+                if status_bar_widget is not None
+                else None
+            )
+            _cs_dim = _clock_saver_layer_opacity(now_cs)
+            _meter_face = _idle_audio_meter_active(now_cs)
+            if intro_op is None and not _meter_face:
+                _clock_saver_dim_pre_digit_canvas(base, _cs_dim)
+            _time_op = float(intro_op) if intro_op is not None else 1.0
+            _date_op = float(intro_op) if intro_op is not None else _cs_dim
+            (time_bgra, t_rect), (date_bgra, d_rect) = _clock_saver_layers(
+                shadow_bgr=acc_cs,
+                layer_opacity=_cs_dim,
+                time_layer_opacity=_time_op,
+                date_layer_opacity=_date_op,
+                date_anchor_row=CLOCK_ANCHOR_ROW,
+                date_anchor_col=CLOCK_ANCHOR_COL,
+                replace_with_meter=_meter_face,
+            )
+            _blit_saver_layers_target(
+                base,
+                time_bgra,
+                t_rect,
+                date_bgra,
+                d_rect,
+                cap_w,
+                cap_h,
+                copy_full_bgr=_meter_face,
+            )
+            if (
+                (
+                    playback_overlay_flags.get("clock_saver_volume_only")
+                    or playback_overlay_flags.get("clock_saver_netflix_full_overlay")
+                )
+                and playback_overlay_blits[0]
+                and alpha_blend_bgra_over_bgr is not None
+            ):
+                for pb in playback_overlay_blits[0]:
+                    x0, y0, ww, wh = int(pb.x), int(pb.y), int(pb.w), int(pb.h)
+                    x, y, rw, rh = _design_rect_to_target(x0, y0, ww, wh, cap_w, cap_h)
+                    _ph, _pw = pb.bgra.shape[:2]
+                    patch = cv2.resize(
+                        _clock_saver_dim_overlay_bgra(pb.bgra, _cs_dim),
+                        (rw, rh),
+                        interpolation=cv_resize_interp(_pw, _ph, rw, rh),
+                    )
+                    sub = base[y : y + rh, x : x + rw]
+                    sub[:] = alpha_blend_bgra_over_bgr(sub, patch)
+    else:
+        if (
+            playback_lower_gradient_bgra is not None
+            and alpha_blend_bgra_over_bgr is not None
+            and not _vv_is_music()
+        ):
+            gx, gy, gw, gh, grad_bgra = playback_lower_gradient_bgra(
+                gradient_bgr=tmdb_tt_gradient_bgr_holder[0]
+            )
+            x, y, rw, rh = _design_rect_to_target(gx, gy, gw, gh, cap_w, cap_h)
+            _gh, _gw = grad_bgra.shape[:2]
+            patch = cv2.resize(
+                grad_bgra, (rw, rh), interpolation=cv_resize_interp(_gw, _gh, rw, rh)
+            )
+            sub = base[y : y + rh, x : x + rw]
+            sub[:] = alpha_blend_bgra_over_bgr(sub, patch)
+        if _effective_display_view() != DisplayView.FOUR:
+            if _info_cluster_compose_active(now_cs):
+                _blend_info_cluster_into_target(base, cap_w, cap_h, now_cs)
+            else:
+                _refresh_clock_patch_bgra()
+                if (
+                    clock_patch_bgra[0] is not None
+                    and clock_widget is not None
+                    and alpha_blend_bgra_over_bgr is not None
+                ):
+                    dr = getattr(clock_widget, "design_rect", None)
+                    wx, wy, ww, wh = dr() if callable(dr) else (0, 0, 0, 0)
+                    if ww >= 1 and wh >= 1:
+                        x, y, rw, rh = _design_rect_to_target(wx, wy, ww, wh, cap_w, cap_h)
+                        _kh, _kw = clock_patch_bgra[0].shape[:2]
+                        patch = cv2.resize(
+                            clock_patch_bgra[0],
+                            (rw, rh),
+                            interpolation=cv_resize_interp(_kw, _kh, rw, rh),
+                        )
+                        sub = base[y : y + rh, x : x + rw]
+                        sub[:] = alpha_blend_bgra_over_bgr(sub, patch)
+        if status_bar_blits[0] and alpha_blend_bgra_over_bgr is not None:
+            for sb in status_bar_blits[0]:
+                x0, y0, ww, wh = int(sb.x), int(sb.y), int(sb.w), int(sb.h)
+                x, y, rw, rh = _design_rect_to_target(x0, y0, ww, wh, cap_w, cap_h)
+                _bh, _bw = sb.bgra.shape[:2]
+                patch = cv2.resize(
+                    sb.bgra,
+                    (rw, rh),
+                    interpolation=cv_resize_interp(_bw, _bh, rw, rh),
+                )
+                sub = base[y : y + rh, x : x + rw]
+                sub[:] = alpha_blend_bgra_over_bgr(sub, patch)
+        if playback_overlay_blits[0] and alpha_blend_bgra_over_bgr is not None:
+            for pb in playback_overlay_blits[0]:
+                if (
+                    _info_cluster_compose_active(now_cs)
+                    and getattr(pb, "layer", "") == PATCH_LAYER_RECEIVER_AUDIO
+                ):
+                    continue
+                x0, y0, ww, wh = int(pb.x), int(pb.y), int(pb.w), int(pb.h)
+                x, y, rw, rh = _design_rect_to_target(x0, y0, ww, wh, cap_w, cap_h)
+                _ph, _pw = pb.bgra.shape[:2]
+                patch = cv2.resize(
+                    pb.bgra,
+                    (rw, rh),
+                    interpolation=cv_resize_interp(_pw, _ph, rw, rh),
+                )
+                sub = base[y : y + rh, x : x + rw]
+                sub[:] = alpha_blend_bgra_over_bgr(sub, patch)
+        if (
+            dev_phase[0] == DevPhase.OFF
+            and location_toast_patch_bgra is not None
+            and alpha_blend_bgra_over_bgr is not None
+            and (
+                not _info_cluster_compose_active(now_cs)
+                or bool(location_toast_state.get("startup_top_left"))
+            )
+        ):
+            now_lt = time.monotonic()
+            ta = _location_toast_alpha(now_lt)
+            if ta > 1e-6:
+                acc = (
+                    tuple(status_bar_widget.accent_bgr)
+                    if status_bar_widget is not None
+                    else None
+                )
+                patch_lt, (lwx, lwy, lww, lwh) = location_toast_patch_bgra(
+                    str(location_toast_state["text"]),
+                    alpha=ta,
+                    shadow_bgr=acc,
+                    col_right_offset_cells=0.0,
+                    row_offset_cells=0.0,
+                    startup_top_left=bool(
+                        location_toast_state.get("startup_top_left")
+                    ),
+                )
+                if patch_lt is not None:
+                    x, y, rw, rh = _design_rect_to_target(lwx, lwy, lww, lwh, cap_w, cap_h)
+                    _th, _tw = patch_lt.shape[:2]
+                    patch = cv2.resize(
+                        patch_lt,
+                        (rw, rh),
+                        interpolation=cv_resize_interp(_tw, _th, rw, rh),
+                    )
+                    sub = base[y : y + rh, x : x + rw]
+                    sub[:] = alpha_blend_bgra_over_bgr(sub, patch)
+        if (
+            _effective_display_view() not in (DisplayView.FOUR, DisplayView.TWO)
+            and (_logo_w := _active_tmdb_logo_widget()) is not None
+            and active_tmdb_title_key[0]
+            and alpha_blend_bgra_over_bgr is not None
+            and not _view_one_uses_now_playing_screen()
+        ):
+            if (
+                _effective_display_view() == DisplayView.ONE
+                and not _view_one_is_pigeon_poster()
+            ):
+                dwx, dwy, dww, dwh = _view_one_video_content_a_tt_contain_rect_design()
+            else:
+                dwx, dwy, dww, dwh = _logo_w.design_rect()
+            x, y, rw, rh = _design_rect_to_target(dwx, dwy, dww, dwh, cap_w, cap_h)
+            _logo_patch = _logo_w.bgra_patch_for_title(
+                active_tmdb_title_key[0],
+                display_title=active_tmdb_display_title[0],
+                patch_wh=(int(dww), int(dwh)),
+            )
+            _ph, _pw = int(_logo_patch.shape[0]), int(_logo_patch.shape[1])
+            if _pw >= 1 and _ph >= 1 and rw >= 1 and rh >= 1:
+                _sc = min(rw / float(_pw), rh / float(_ph))
+                _nw = max(1, int(round(_pw * _sc)))
+                _nh = max(1, int(round(_ph * _sc)))
+                patch = cv2.resize(
+                    _logo_patch,
+                    (_nw, _nh),
+                    interpolation=cv_resize_interp(_pw, _ph, _nw, _nh),
+                )
+                _ox = x + (rw - _nw) // 2
+                _oy = y + (rh - _nh) // 2
+                _dx0 = max(0, _ox)
+                _dy0 = max(0, _oy)
+                _dx1 = min(cap_w, _ox + _nw)
+                _dy1 = min(cap_h, _oy + _nh)
+                if _dx1 > _dx0 and _dy1 > _dy0:
+                    _sx0 = _dx0 - _ox
+                    _sy0 = _dy0 - _oy
+                    _cw = _dx1 - _dx0
+                    _ch = _dy1 - _dy0
+                    _crop = patch[_sy0 : _sy0 + _ch, _sx0 : _sx0 + _cw]
+                    sub = base[_dy0:_dy1, _dx0:_dx1]
+                    sub[:] = alpha_blend_bgra_over_bgr(sub, _crop)
+    if use_cap:
+        return _present_frame_to_display(base, dw, dh)
+    return base
+
+
+def f10_cycle_scene_grid(*, LANDING_DISPLAY_BRIGHTNESS, _bump_pigeon_user_activity, _open_landing_scene, _save_persisted_scene_enabled, apply_saved_tmdb_backdrop_to_display, backdrop_master_bgr, brightness_current, brightness_from, brightness_t0, brightness_target, last_frame, playing, render_once, saved_backdrop_master_bgr, scaled_display, scene_enabled, skip_cache, use_backdrop_scene) -> None:
+    """
+    Developer grid only: F10 cycles display on (landing) → off → backdrop (if saved) → landing.
+    """
+
+    _bump_pigeon_user_activity()
+    landing_on = scene_enabled[0] and (not use_backdrop_scene[0]) and last_frame[0] is not None
+
+    if use_backdrop_scene[0] and backdrop_master_bgr[0] is not None:
+        if not _open_landing_scene():
+            scene_enabled[0] = False
+            _save_persisted_scene_enabled(False)
+            skip_cache[0] = None
+            render_once()
+            return
+        scene_enabled[0] = True
+        playing[0] = False
+        brightness_current[0] = brightness_from[0] = brightness_target[0] = LANDING_DISPLAY_BRIGHTNESS
+        brightness_t0[0] = time.monotonic()
+        _save_persisted_scene_enabled(True)
+        skip_cache[0] = None
+        render_once()
+        return
+
+    if landing_on:
+        playing[0] = False
+        scene_enabled[0] = False
+        use_backdrop_scene[0] = False
+        backdrop_master_bgr[0] = None
+        last_frame[0] = None
+        scaled_display[0] = None
+        _save_persisted_scene_enabled(False)
+        skip_cache[0] = None
+        render_once()
+        return
+
+    if saved_backdrop_master_bgr[0] is not None:
+        apply_saved_tmdb_backdrop_to_display()
+        return
+
+    if not _open_landing_scene():
+        scene_enabled[0] = False
+        _save_persisted_scene_enabled(False)
+        skip_cache[0] = None
+        render_once()
+        return
+    scene_enabled[0] = True
+    _save_persisted_scene_enabled(True)
+    skip_cache[0] = None
+    render_once()
+
+
+def render_once(*, BACKDROP_BRIGHTNESS, DevPhase, DisplayView, SKIP_POST_SPLASH_STARTUP_TRANSITION, STARTUP_AUTO_RESTORE_SAVED_BACKDROP, STARTUP_PIGEON_WORDMARK_MAX_S, THEATER_IDLE_DIM_ENABLED, _PIGEON_EXT, _apply_brightness, _atv_idle_monochrome_active, _audio_capture_wanted, _backdrop_active_for_view, _bgr_to_tk_image, _black_screen_bgr, _blend_tmdb_quality_flag_badge, _blend_tmdb_quality_toggle_overlay, _blend_view_four_debug, _capture_splash_underlay, _clock_saver_for_compose, _clock_saver_volume_raw, _clock_startup_intro_opacity, _compose_idle_strength_holder, _compose_shown_frame, _effective_display_view, _idle_audio_listen, _idle_audio_meter_active, _location_toast_alpha, _maybe_exit_settings_menus_on_idle, _np_drawing_live_audio, _np_wants_live_audio, _record_live_audio_timing, _render_after_id, _schedule_render_oneshot, _set_playback_overlay_clock_saver_volume_flag, _settings_audio_led_listen, _settings_menu_is_static, _show_paused_row_overlay, _startup_splash_complete, _tmdb_quality_toggle_overlay_state, _update_idle_dim_strength, _update_label_photo_from_bgr, _view_one_uses_now_playing_screen, _volume_lines, _warm_playback_overlay_blits, _warm_status_bar_blits, apply_saved_tmdb_backdrop_to_display, backdrop_master_bgr, black_photo, brightness_current, brightness_duration_s, brightness_from, brightness_t0, brightness_target, clock_saver_peek_until_mono, dev_phase, display_dims, display_view_holder, frame_interval_ms, label, label_live_photo, last_frame, latest_meter_cache_key, latest_visualizer_cache_key, lerp_bgr_red_monochrome, main_settings_widget, paused_interval_ms, playback_overlay_flags, playing, post_splash_mono, receiver_overlay_state, root, saved_backdrop_master_bgr, scaled_display, scaled_version, scene_enabled, skip_cache, status_bar_widget, sync_audio_meter_capture, tmdb_quality_error_flag, use_backdrop_scene, view_circles_widget, view_five_mode_holder, view_four_subview_holder, view_one_layout_holder) -> None:
+
+    if _render_after_id[0] is not None:
+        try:
+            root.after_cancel(_render_after_id[0])
+        except tk.TclError:
+            pass
+        _render_after_id[0] = None
+
+    _render_tick_t0 = time.perf_counter()
+    now = time.monotonic()
+    _intro_mono = post_splash_mono[0]
+    if sync_audio_meter_capture is not None:
+        try:
+            sync_audio_meter_capture(_audio_capture_wanted(now))
+        except Exception:
+            pass
+    if _maybe_exit_settings_menus_on_idle(now):
+        # Fall through to OFF-phase compose (now-playing or clock saver).
+        pass
+
+    def _schedule_next_render() -> None:
+        elapsed_ms = int((time.perf_counter() - _render_tick_t0) * 1000.0)
+        interval = _next_render_ms()
+        if _PIGEON_EXT and (
+            _idle_audio_meter_active()
+            or _np_drawing_live_audio()
+            or _np_wants_live_audio()
+        ):
+            # Aim at *interval* wall time, not compose-duration + interval.
+            delay = max(1, interval - elapsed_ms)
+        else:
+            delay = max(interval, elapsed_ms + 1)
+        _schedule_render_oneshot(delay)
+
+    def _next_render_ms() -> int:
+        # Settings must beat the video cadence. ATV "playing" used to keep
+        # 12 Hz PhotoImage uploads running under the menus.
+        live_audio = _PIGEON_EXT and (
+            _idle_audio_meter_active()
+            or _np_drawing_live_audio()
+            or _np_wants_live_audio()
+        )
+        if (
+            _settings_menu_is_static()
+            and sys.platform.startswith("linux")
+            and not live_audio
+        ):
+            if _settings_audio_led_listen():
+                return 100
+            return 500
+        # Meter face needs a tight cadence even if ATV still reports playing.
+        if _PIGEON_EXT and _idle_audio_meter_active():
+            return 16
+        if live_audio:
+            return 33
+        if _PIGEON_EXT and _idle_audio_listen():
+            return 100
+        if playing[0]:
+            return frame_interval_ms[0]
+        # Post-splash clock fade-up needs a smooth cadence.
+        if _PIGEON_EXT and _clock_startup_intro_opacity(time.monotonic()) is not None:
+            return 33
+        # WiFi / box scan spinner: keep responsive without 60 FPS full-frame uploads on Pi.
+        if (
+            dev_phase[0] == DevPhase.MAIN_SETTINGS
+            and main_settings_widget is not None
+            and (
+                main_settings_widget.state.wifi_scanning
+                or main_settings_widget.state.wifi_connecting
+                or main_settings_widget.state.box2_devices.scanning
+                or main_settings_widget.state.box3_devices.scanning
+                or main_settings_widget.state.location_switching
+            )
+        ):
+            return 50 if sys.platform.startswith("linux") else 16
+        # Circles loading shimmer while TMDb / artwork is in flight.
+        if (
+            _view_one_uses_now_playing_screen()
+            and view_circles_widget is not None
+            and view_circles_widget.searching
+        ):
+            return 33 if sys.platform.startswith("linux") else 16
+        try:
+            if _volume_lines.fading():
+                return 50
+        except Exception:
+            pass
+        if (
+            _PIGEON_EXT
+            and view_circles_widget is not None
+            and _view_one_uses_now_playing_screen()
+        ):
+            try:
+                if view_circles_widget.volume_takeover_active():
+                    return 100
+            except Exception:
+                pass
+        return paused_interval_ms
+
+    # With ext + splash, only count this window **after** splash removal.
+    _startup_elapsed = -1.0
+    if _PIGEON_EXT:
+        _startup_elapsed = (now - _intro_mono) if _intro_mono is not None else -1.0
+    if (
+        _PIGEON_EXT
+        and not _startup_splash_complete[0]
+        and _intro_mono is not None
+        and (
+            SKIP_POST_SPLASH_STARTUP_TRANSITION
+            or _startup_elapsed >= STARTUP_PIGEON_WORDMARK_MAX_S
+        )
+    ):
+        _startup_splash_complete[0] = True
+        if (
+            STARTUP_AUTO_RESTORE_SAVED_BACKDROP
+            and saved_backdrop_master_bgr[0] is not None
+            and scene_enabled[0]
+            and not use_backdrop_scene[0]
+        ):
+            apply_saved_tmdb_backdrop_to_display()
+            # Inner ``render_once`` schedules the loop, but guarantee a timer if that path returns early.
+            _schedule_next_render()
+            return
+        skip_cache[0] = None
+        _warm_playback_overlay_blits()
+
+    if _PIGEON_EXT:
+        _compose_idle_strength_holder[0] = _update_idle_dim_strength(now)
+    else:
+        _compose_idle_strength_holder[0] = 0.0
+    t = (now - brightness_t0[0]) / brightness_duration_s[0] if brightness_duration_s[0] > 0 else 1.0
+    if t <= 0.0:
+        brightness_current[0] = brightness_from[0]
+    elif t >= 1.0:
+        brightness_current[0] = brightness_target[0]
+    else:
+        brightness_current[0] = brightness_from[0] + (brightness_target[0] - brightness_from[0]) * t
+
+    if not scene_enabled[0]:
+        if _PIGEON_EXT:
+            settings_tok = (
+                main_settings_widget.frame_cache_token()
+                if (
+                    dev_phase[0] == DevPhase.MAIN_SETTINGS
+                    and main_settings_widget is not None
+                )
+                else ()
+            )
+            (
+                _tmdb_x_bgr_off,
+                _tmdb_x_alpha_off,
+                _tmdb_x_caption_off,
+                _tmdb_x_phase_off,
+            ) = _tmdb_quality_toggle_overlay_state(now)
+            tmdb_x_animating_off = _tmdb_x_alpha_off > 1e-6
+            tmdb_flag_badge_on_off = bool(tmdb_quality_error_flag[0])
+            tmdb_x_cache_key_off = (
+                int(round(_tmdb_x_alpha_off * 1000.0))
+                + (int(_tmdb_x_phase_off) * 2000)
+                + (1 if tuple(_tmdb_x_bgr_off) == (0, 0, 255) else 0)
+            )
+            no_anim = True
+            if (
+                dev_phase[0] == DevPhase.MAIN_SETTINGS
+                and main_settings_widget is not None
+            ):
+                st_ms = main_settings_widget.state
+                no_anim = not (
+                    st_ms.wifi_scanning
+                    or st_ms.wifi_connecting
+                    or st_ms.box2_devices.scanning
+                    or st_ms.box3_devices.scanning
+                    or st_ms.location_switching
+                )
+            if (
+                no_anim
+                and view_circles_widget is not None
+                and view_circles_widget.searching
+            ):
+                no_anim = False
+            if tmdb_x_animating_off or tmdb_flag_badge_on_off:
+                no_anim = False
+            # Must re-evaluate every second: circles clock digits + metadata-idle saver.
+            # A static scene_off_key previously froze the UI after the first frame and
+            # prevented the 2-minute clock saver from ever arming when scene was off.
+            tick_key_off = (
+                main_settings_widget.frame_cache_token()
+                if (
+                    dev_phase[0] == DevPhase.MAIN_SETTINGS
+                    and main_settings_widget is not None
+                )
+                else int(time.time())
+            )
+            clock_saver_off = 1 if _clock_saver_for_compose(now) else 0
+            meter_off_key = 0
+            meter_active_off = _PIGEON_EXT and _idle_audio_meter_active(now)
+            if meter_active_off and latest_meter_cache_key is not None:
+                meter_off_key = int(latest_meter_cache_key())
+            if clock_saver_off:
+                if meter_active_off:
+                    # Meter face has no second-hand clock; skip identical fills.
+                    no_anim = True
+                    tick_key_off = 0
+                else:
+                    # Digital clock needs ~1 Hz. Forcing no_anim=False plus a
+                    # 1 ms catch-up delay spun the saver at full CPU.
+                    no_anim = True
+                    tick_key_off = int(time.time())
+            live_audio_off = False
+            if (
+                not meter_active_off
+                and not clock_saver_off
+                and latest_visualizer_cache_key is not None
+                and (
+                    _np_drawing_live_audio()
+                    or _np_wants_live_audio()
+                )
+            ):
+                # NP keeps scene off; wall-clock tick_key_off was 1 Hz.
+                live_audio_off = True
+                meter_off_key = int(latest_visualizer_cache_key())
+                tick_key_off = 0
+            _np_vol_sig = ""
+            if view_circles_widget is not None:
+                try:
+                    _np_vol_sig = (
+                        f"{view_circles_widget._state.volume!s}\x1f"
+                        f"{round(float(view_circles_widget._state.volume_fraction), 4)}\x1f"
+                        f"{int(view_circles_widget.volume_takeover_active())}"
+                    )
+                except Exception:
+                    _np_vol_sig = ""
+            scene_off_key = (
+                int(dev_phase[0]),
+                settings_tok,
+                display_dims[0],
+                display_dims[1],
+                bool(
+                    view_circles_widget is not None
+                    and view_circles_widget.searching
+                ),
+                tmdb_x_cache_key_off,
+                1 if tmdb_flag_badge_on_off else 0,
+                tick_key_off,
+                clock_saver_off,
+                meter_off_key,
+                int(display_view_holder[0]),
+                _np_vol_sig,
+            )
+            if no_anim and skip_cache[0] == scene_off_key:
+                _schedule_next_render()
+                return
+            t_compose0 = time.perf_counter()
+            out_bgr = _compose_shown_frame(None, 1.0)
+            out_bgr = _blend_view_four_debug(out_bgr)
+            sm_off = 0.0
+            if lerp_bgr_red_monochrome is not None:
+                sm_off = max(0.0, min(1.0, _compose_idle_strength_holder[0]))
+                if (
+                    sm_off > 1e-6
+                    and not meter_active_off
+                    and _effective_display_view() != DisplayView.FOUR
+                ):
+                    out_bgr = lerp_bgr_red_monochrome(out_bgr, sm_off)
+            if tmdb_x_animating_off:
+                _blend_tmdb_quality_toggle_overlay(
+                    out_bgr,
+                    color_bgr=_tmdb_x_bgr_off,
+                    alpha=_tmdb_x_alpha_off,
+                    caption=_tmdb_x_caption_off,
+                )
+            if tmdb_flag_badge_on_off:
+                _blend_tmdb_quality_flag_badge(out_bgr)
+            t_compose1 = time.perf_counter()
+            _update_label_photo_from_bgr(label, out_bgr, label_live_photo)
+            t_compose2 = time.perf_counter()
+            if meter_active_off or live_audio_off:
+                _record_live_audio_timing(t_compose0, t_compose1, t_compose2)
+            skip_cache[0] = scene_off_key
+        else:
+            if black_photo[0] is None:
+                black_photo[0] = _bgr_to_tk_image(_black_screen_bgr())
+            label.configure(image=black_photo[0])
+            label.image = black_photo[0]
+        if _PIGEON_EXT and not meter_active_off:
+            try:
+                _capture_splash_underlay(out_bgr)
+            except NameError:
+                pass
+            except Exception:
+                pass
+        _schedule_next_render()
+        return
+
+    if _backdrop_active_for_view():
+        if backdrop_master_bgr[0] is None:
+            use_backdrop_scene[0] = False
+    if not _backdrop_active_for_view():
+        _static_compose_without_video = (
+            _PIGEON_EXT
+            and (
+                (
+                    view_circles_widget is not None
+                    and _effective_display_view() == DisplayView.ONE
+                )
+                or not scene_enabled[0]
+                or _effective_display_view() in (
+                    DisplayView.TWO,
+                    DisplayView.THREE,
+                    DisplayView.FOUR,
+                    DisplayView.FIVE,
+                    DisplayView.SIX,
+                )
+            )
+        )
+        if last_frame[0] is None and not _static_compose_without_video:
+            _schedule_next_render()
+            return
+        if not _PIGEON_EXT and scaled_display[0] is None:
+            _schedule_next_render()
+            return
+
+    brightness_animating = abs(brightness_current[0] - brightness_target[0]) > 1e-4
+    # TMDb backdrop: fixed level; paused video uses 0.3.
+    _backdrop_active = _backdrop_active_for_view()
+    b_scene = BACKDROP_BRIGHTNESS if _backdrop_active else brightness_current[0]
+    b_key = round(float(b_scene), 4)
+    # Clock text changes every second; include wall time when widgets are active.
+    # Main settings has no clock — use its frame token so static UI can skip uploads.
+    if (
+        _PIGEON_EXT
+        and dev_phase[0] == DevPhase.MAIN_SETTINGS
+        and main_settings_widget is not None
+    ):
+        tick_key = main_settings_widget.frame_cache_token()
+    elif _PIGEON_EXT and _idle_audio_meter_active(now):
+        tick_key = 0
+    elif _PIGEON_EXT and _idle_audio_listen(now):
+        tick_key = int(now * 5)
+    else:
+        tick_key = int(time.time()) if _PIGEON_EXT else 0
+    idle_s_here = (
+        max(0.0, min(1.0, _compose_idle_strength_holder[0])) if _PIGEON_EXT else 0.0
+    )
+    idle_want_here = (
+        (1.0 if _atv_idle_monochrome_active() else 0.0)
+        if THEATER_IDLE_DIM_ENABLED
+        else 0.0
+    )
+    # While easing toward dim or back to full bright, always composite (skip-cache can quantize away steps).
+    idle_dim_animating = _PIGEON_EXT and abs(idle_s_here - idle_want_here) > 1e-4
+    idle_cache_key = int(round(idle_s_here * 500)) if _PIGEON_EXT else 0
+    ta_toast = _location_toast_alpha(now) if _PIGEON_EXT else 0.0
+    location_toast_animating = _PIGEON_EXT and 0.0 < ta_toast < 1.0
+    location_toast_cache_key = int(round(ta_toast * 1000)) if _PIGEON_EXT else 0
+    clock_saver_cache_key = 1 if (_PIGEON_EXT and _clock_saver_for_compose(now)) else 0
+    clock_intro_op = _clock_startup_intro_opacity(now) if _PIGEON_EXT else None
+    clock_intro_cache_key = (
+        int(round(float(clock_intro_op) * 1000.0)) if clock_intro_op is not None else -1
+    )
+    clock_intro_animating = clock_intro_op is not None
+    clock_saver_peek_cache_key = (
+        1 if (_PIGEON_EXT and now < clock_saver_peek_until_mono[0]) else 0
+    )
+    startup_wm_cache_key = 0
+    paused_row_cache_key = 1 if (_PIGEON_EXT and _show_paused_row_overlay()) else 0
+    mic_viz_cache_key = 0
+    meter_face_active = False
+    live_audio_widgets = False
+    if _PIGEON_EXT and _idle_audio_meter_active(now) and latest_meter_cache_key is not None:
+        mic_viz_cache_key = int(latest_meter_cache_key())
+        meter_face_active = True
+    elif _PIGEON_EXT and latest_visualizer_cache_key is not None and (
+        _np_drawing_live_audio()
+        or _np_wants_live_audio()
+    ):
+        mic_viz_cache_key = int(latest_visualizer_cache_key())
+        live_audio_widgets = True
+    meter_skip_ok = (
+        (not playing[0] or _settings_menu_is_static())
+        or meter_face_active
+        or live_audio_widgets
+    )
+    if _PIGEON_EXT and status_bar_widget is not None:
+        if status_bar_widget.set_theater_dim_suppressed(idle_s_here >= 0.5):
+            _warm_status_bar_blits()
+    theater_dim_key = (
+        1
+        if (
+            _PIGEON_EXT
+            and status_bar_widget is not None
+            and status_bar_widget.theater_dim_suppressed
+        )
+        else 0
+    )
+    # Receiver overlay text must bust skip-cache when paused/backdrop.
+    receiver_overlay_skip_sig = ""
+    if _PIGEON_EXT:
+        _set_playback_overlay_clock_saver_volume_flag()
+        receiver_overlay_skip_sig = "\x1e".join(
+            str(receiver_overlay_state.get(k, ""))
+            for k in ("incoming", "config", "volume", "input")
+        )
+        _vol_line_key = 0
+        try:
+            _vol_line_key = int(round(float(_volume_lines.opacity()) * 20.0))
+        except Exception:
+            _vol_line_key = 0
+        receiver_overlay_skip_sig += "\x1e" + (
+            f"{int(bool(playback_overlay_flags.get('clock_saver_volume_only')))}"
+            f"{int(bool(playback_overlay_flags.get('clock_saver_netflix_full_overlay')))}"
+            f"{int(bool(playback_overlay_flags.get('badge_live_instead_of_logo')))}"
+            f"\x1e{_clock_saver_volume_raw()}"
+            f"\x1e{_vol_line_key}"
+        )
+    (_tmdb_x_bgr, _tmdb_x_alpha, _tmdb_x_caption, _tmdb_x_phase) = _tmdb_quality_toggle_overlay_state(now)
+    tmdb_x_animating = _tmdb_x_alpha > 1e-6
+    tmdb_x_cache_key = (
+        int(round(_tmdb_x_alpha * 1000.0))
+        + (int(_tmdb_x_phase) * 2000)
+        + (1 if tuple(_tmdb_x_bgr) == (0, 0, 255) else 0)
+    )
+    tmdb_flag_badge_on = bool(tmdb_quality_error_flag[0])
+    tmdb_flag_badge_cache_key = 1 if tmdb_flag_badge_on else 0
+
+    if (
+        meter_skip_ok
+        and not brightness_animating
+        and not idle_dim_animating
+        and not location_toast_animating
+        and not tmdb_x_animating
+        and not clock_intro_animating
+        and skip_cache[0]
+        == (
+            scaled_version[0],
+            b_key,
+            int(dev_phase[0]),
+            int(display_view_holder[0]),
+            int(_effective_display_view()),
+            int(view_five_mode_holder[0]),
+            int(view_one_layout_holder[0]),
+            int(view_four_subview_holder[0]),
+            tick_key,
+            display_dims[0],
+            display_dims[1],
+            1 if _backdrop_active else 0,
+            idle_cache_key,
+            location_toast_cache_key,
+            clock_saver_cache_key,
+            clock_saver_peek_cache_key,
+            startup_wm_cache_key,
+            paused_row_cache_key,
+            receiver_overlay_skip_sig,
+            theater_dim_key,
+            mic_viz_cache_key,
+            tmdb_x_cache_key,
+            tmdb_flag_badge_cache_key,
+            clock_intro_cache_key,
+        )
+    ):
+        _schedule_next_render()
+        return
+
+    t_compose0 = time.perf_counter()
+    if _PIGEON_EXT:
+        shown = _compose_shown_frame(
+            last_frame[0] if not _backdrop_active else None, b_scene
+        )
+        shown = _blend_view_four_debug(shown)
+        if (
+            lerp_bgr_red_monochrome is not None
+            and _effective_display_view() != DisplayView.FOUR
+            and not meter_face_active
+        ):
+            sm = max(0.0, min(1.0, _compose_idle_strength_holder[0]))
+            if sm > 1e-6:
+                shown = lerp_bgr_red_monochrome(shown, sm)
+    else:
+        shown = _apply_brightness(scaled_display[0], b_scene)
+    if tmdb_x_animating:
+        _blend_tmdb_quality_toggle_overlay(
+            shown,
+            color_bgr=_tmdb_x_bgr,
+            alpha=_tmdb_x_alpha,
+            caption=_tmdb_x_caption,
+        )
+    if tmdb_flag_badge_on:
+        _blend_tmdb_quality_flag_badge(shown)
+    t_compose1 = time.perf_counter()
+    _update_label_photo_from_bgr(label, shown, label_live_photo)
+    t_compose2 = time.perf_counter()
+    if _PIGEON_EXT and (meter_face_active or live_audio_widgets):
+        _record_live_audio_timing(t_compose0, t_compose1, t_compose2)
+    if _PIGEON_EXT and not meter_face_active:
+        try:
+            _capture_splash_underlay(shown)
+        except NameError:
+            pass
+        except Exception:
+            pass
+
+    if (
+        meter_skip_ok
+        and not brightness_animating
+        and not idle_dim_animating
+        and not location_toast_animating
+        and not tmdb_x_animating
+        and not clock_intro_animating
+    ):
+        skip_cache[0] = (
+            scaled_version[0],
+            b_key,
+            int(dev_phase[0]),
+            int(display_view_holder[0]),
+            int(_effective_display_view()),
+            int(view_five_mode_holder[0]),
+            int(view_one_layout_holder[0]),
+            int(view_four_subview_holder[0]),
+            tick_key,
+            display_dims[0],
+            display_dims[1],
+            1 if _backdrop_active else 0,
+            idle_cache_key,
+            location_toast_cache_key,
+            clock_saver_cache_key,
+            clock_saver_peek_cache_key,
+            startup_wm_cache_key,
+            paused_row_cache_key,
+            receiver_overlay_skip_sig,
+            theater_dim_key,
+            mic_viz_cache_key,
+            tmdb_x_cache_key,
+            tmdb_flag_badge_cache_key,
+            clock_intro_cache_key,
+        )
+    else:
+        skip_cache[0] = None
+
+    _schedule_next_render()
+
+
+def _apply_netflix_backdrop_when_running(*, BACKDROP_BRIGHTNESS, _backdrop_master_from_streaming_app_logo, _playback_is_netflix_stream, _save_persisted_scene_enabled, _warm_status_bar_blits, _warm_tmdb_logo_patch, active_tmdb_display_title, active_tmdb_title_key, backdrop_app_logo_letterbox_fit, backdrop_master_bgr, brightness_current, brightness_from, brightness_t0, brightness_target, cap, current_apple_tv, last_frame, playing, saved_backdrop_app_logo_letterbox_fit, saved_backdrop_master_bgr, scaled_display, scaled_version, scene_enabled, skip_cache, status_bar_widget, streaming_badge_state, tmdb_logo_app_fallback_active, tmdb_logo_patch_bgra, tmdb_logo_widget, tmdb_logo_widget_view_six, use_backdrop_scene) -> bool:
+    """Netflix foreground: letterbox Netflix logo as backdrop (swap if scene exists, else open scene)."""
+    if not _playback_is_netflix_stream():
+        return False
+    logo_bd = _backdrop_master_from_streaming_app_logo()
+    if logo_bd is None:
+        return False
+
+    fn_sb = str(streaming_badge_state.get("filename") or "").lower()
+    if use_backdrop_scene[0] and backdrop_master_bgr[0] is not None:
+        if backdrop_app_logo_letterbox_fit[0] and "netflix" in fn_sb:
+            return False
+        backdrop_master_bgr[0] = logo_bd
+        saved_backdrop_master_bgr[0] = np.asarray(logo_bd, dtype=np.uint8).copy()
+        saved_backdrop_app_logo_letterbox_fit[0] = True
+        backdrop_app_logo_letterbox_fit[0] = True
+        scaled_display[0] = None
+        scaled_version[0] += 1
+        skip_cache[0] = None
+        if status_bar_widget is not None:
+            bd_arr = np.asarray(logo_bd, dtype=np.uint8)
+            if status_bar_widget.set_accent_from_backdrop_bgr(bd_arr):
+                _warm_status_bar_blits()
+                skip_cache[0] = None
+        return True
+
+    if not scene_enabled[0]:
+        return False
+    if not str(current_apple_tv.get("identifier") or "").strip():
+        return False
+
+    active_tmdb_title_key[0] = None
+    active_tmdb_display_title[0] = None
+    tmdb_logo_app_fallback_active[0] = False
+    if tmdb_logo_widget is not None:
+        tmdb_logo_widget.clear_cache()
+    if tmdb_logo_widget_view_six is not None:
+        tmdb_logo_widget_view_six.clear_cache()
+    _warm_tmdb_logo_patch()
+    tmdb_logo_patch_bgra[0] = None
+    if cap[0] is not None:
+        try:
+            cap[0].release()
+        except Exception:
+            pass
+        cap[0] = None
+    backdrop_master_bgr[0] = logo_bd
+    saved_backdrop_master_bgr[0] = np.asarray(logo_bd, dtype=np.uint8).copy()
+    saved_backdrop_app_logo_letterbox_fit[0] = True
+    backdrop_app_logo_letterbox_fit[0] = True
+    use_backdrop_scene[0] = True
+    scene_enabled[0] = True
+    playing[0] = False
+    last_frame[0] = None
+    scaled_display[0] = None
+    scaled_version[0] += 1
+    _save_persisted_scene_enabled(True)
+    brightness_current[0] = brightness_from[0] = brightness_target[0] = BACKDROP_BRIGHTNESS
+    brightness_t0[0] = time.monotonic()
+    skip_cache[0] = None
+    if status_bar_widget is not None:
+        bd_arr = np.asarray(logo_bd, dtype=np.uint8)
+        if status_bar_widget.set_accent_from_backdrop_bgr(bd_arr):
+            _warm_status_bar_blits()
+            skip_cache[0] = None
+    return True

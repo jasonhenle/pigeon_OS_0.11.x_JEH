@@ -112,3 +112,11 @@ def _splash_paint_view_one_under_overlay(*, _PIGEON_EXT, _warm_view_one_under_sp
         root.update_idletasks()
     except tk.TclError:
         pass
+
+
+def _activate_now_playing_after_splash(*, _enable_now_playing_screen, _startup_splash_complete, render_once, skip_cache) -> None:
+    """Splash lifted — now-playing should already be live under the overlay."""
+    _enable_now_playing_screen()
+    _startup_splash_complete[0] = True
+    skip_cache[0] = None
+    render_once()

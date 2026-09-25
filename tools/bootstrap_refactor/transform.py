@@ -98,6 +98,15 @@ for mod, names in PLAN.items():
         chk.args.kwonlyargs = chk.args.kwonlyargs[: len(chk.args.kwonlyargs) - k]
         chk.args.kw_defaults = chk.args.kw_defaults[: len(chk.args.kw_defaults) - k]
         assert norm(chk) == norm(fn), f"AST mismatch {name}"
+        # Names used only in the def's annotations (e.g. ``np.ndarray``, ``tk.Event``)
+        # never show up as free variables; import them too so the module is lint-clean.
+        ann = set()
+        for a in fn.args.posonlyargs + fn.args.args + fn.args.kwonlyargs + [x for x in (fn.args.vararg, fn.args.kwarg) if x]:
+            if a.annotation is not None:
+                ann |= {x.id for x in ast.walk(a.annotation) if isinstance(x, ast.Name)}
+        if fn.returns is not None:
+            ann |= {x.id for x in ast.walk(fn.returns) if isinstance(x, ast.Name)}
+        imps = list(set(imps) | {x for x in ann if x in direct})
         modules_out.setdefault(mod, []).append((name, new, set(r["imps"]) | set(imps)))
         if deps:
             late = set(r.get("late", ()))

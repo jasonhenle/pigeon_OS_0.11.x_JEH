@@ -23,6 +23,11 @@ from pigeon.app_state import append_delegation_log_lines
 from pigeon.app_state import read_current_location_id
 from pigeon.app_state import read_saved_streaming_devices_all
 from pigeon.clock_saver_policy import tmdb_should_skip_refetch_on_resume
+from pigeon.app_state import clear_last_apple_tv
+from pigeon.app_state import clear_last_receiver
+from pigeon.app_state import read_saved_streaming_device
+from pigeon.app_state import write_saved_av_receiver
+import tkinter as tk
 
 
 def _seed_current_apple_tv_from_streaming_slot(*, current_apple_tv, streaming_slot_holder) -> None:
@@ -1249,3 +1254,631 @@ def _receiver_volume_poll_tick(*, RECEIVER_VOLUME_POLL_MS, _PIGEON_EXT, _bind_re
         return
     _bind_receiver_volume_hub(str(receiver_http_host.get("host") or "").strip())
     _quick_receiver_volume_poll()
+
+
+def _apple_tv_is_off(*, apple_tv_auto_state, apple_tv_dashboard_track, current_apple_tv) -> bool:
+    """True when the selected Apple TV is powered off or has gone unreachable."""
+    if not current_apple_tv.get("identifier"):
+        return False
+    md = apple_tv_auto_state.get("last_metadata")
+    md_dict = md if isinstance(md, dict) else None
+    try:
+        from pigeon.apple_tv_now_playing import apple_tv_should_show_idle_clock
+
+        cf = int(apple_tv_dashboard_track.get("consecutive_fail", 0) or 0)
+        return bool(apple_tv_should_show_idle_clock(md_dict, consecutive_fail=cf))
+    except Exception:
+        raw = str((md_dict or {}).get("power_state") or "").lower()
+        return raw == "off" or raw.endswith(".off")
+
+
+def _update_atv_interaction_from_poll_metadata(metadata: dict[str, object], *, _atv_ix_extrap_playing, _atv_ix_pos, _atv_ix_pos_mono, _atv_ix_prev_idle, _atv_ix_sig_ck, _atv_ix_sig_ds, _atv_metadata_is_content_idle, _content_key_from_metadata, current_apple_tv, last_atv_interaction_mono) -> None:
+    """Approximate Siri Remote / UI use from pyatv poll deltas (not plain playback time)."""
+    if not current_apple_tv.get("identifier"):
+        return
+    now = time.monotonic()
+    ds = str(metadata.get("device_state") or "")
+    ck = _content_key_from_metadata(metadata)
+    idle_now = _atv_metadata_is_content_idle(metadata)
+    pos_raw = metadata.get("position")
+    try:
+        pos = float(pos_raw) if pos_raw is not None else None
+    except (TypeError, ValueError):
+        pos = None
+
+    bump = False
+    if _atv_ix_sig_ds[0] and ds != _atv_ix_sig_ds[0]:
+        bump = True
+    if ck != _atv_ix_sig_ck[0] and (ck or _atv_ix_sig_ck[0]):
+        bump = True
+    if not idle_now and _atv_ix_prev_idle[0]:
+        bump = True
+    if (
+        pos is not None
+        and _atv_ix_pos[0] is not None
+        and 0 < (now - _atv_ix_pos_mono[0]) < 60.0
+    ):
+        dt = now - _atv_ix_pos_mono[0]
+        expected = _atv_ix_pos[0] + (dt if _atv_ix_extrap_playing[0] else 0.0)
+        if abs(pos - expected) > 3.0:
+            bump = True
+
+    if bump:
+        last_atv_interaction_mono[0] = now
+        last_device_interaction_mono = now
+
+    _atv_ix_sig_ds[0] = ds
+    _atv_ix_sig_ck[0] = ck
+    _atv_ix_prev_idle[0] = idle_now
+    if pos is not None:
+        _atv_ix_pos[0] = pos
+        _atv_ix_pos_mono[0] = now
+    _atv_ix_extrap_playing[0] = "Playing" in ds
+
+
+def set_current_apple_tv(row: dict[str, str], *, persist: bool, _atv_ix_extrap_playing, _atv_ix_pos, _atv_ix_pos_mono, _atv_ix_prev_idle, _atv_ix_sig_ck, _atv_ix_sig_ds, _clear_reported_position_stall_stamp, _rebuild_paired_devices_panel, _reset_clock_saver_device_signal_baseline, _schedule_refresh_pairing_leds, _sync_status_bar_visibility_for_playback, apple_tv_auto_state, apple_tv_dashboard_track, apple_tv_playback_clock, current_apple_tv, describe_current_apple_tv, last_atv_interaction_mono) -> None:
+    current_apple_tv.clear()
+    current_apple_tv.update(
+        {
+            "identifier": row.get("identifier", ""),
+            "address": row.get("address", ""),
+            "name": row.get("name", ""),
+            "label": row.get("label", ""),
+        }
+    )
+    if persist:
+        write_last_apple_tv(
+            identifier=row.get("identifier", ""),
+            address=row.get("address", ""),
+            name=row.get("name"),
+            label=row.get("label"),
+        )
+    apple_tv_auto_state["content_key"] = None
+    apple_tv_auto_state["tmdb_key"] = None
+    apple_tv_auto_state["query"] = None
+    apple_tv_auto_state["last_metadata"] = None
+    apple_tv_auto_state["last_tmdb_fetch_input"] = None
+    apple_tv_auto_state["last_tmdb_fetch_refined"] = None
+    apple_tv_auto_state["last_tmdb_fetch_prefer"] = None
+    apple_tv_playback_clock.clear()
+    apple_tv_playback_clock.update(
+        {
+            "has_sync": False,
+            "sync_mono": 0.0,
+            "sync_position": 0.0,
+            "live_mode": False,
+            "playing": False,
+            "latched_total": None,
+            "latched_content_key": None,
+            "last_reported_total": None,
+            "display_played_sec": None,
+            "trt_next_fire_mono": None,
+        }
+    )
+    _clear_reported_position_stall_stamp()
+    apple_tv_dashboard_track["last_poll_ok"] = None
+    apple_tv_dashboard_track["consecutive_fail"] = 0
+    last_atv_interaction_mono[0] = 0.0
+    _atv_ix_sig_ds[0] = ""
+    _atv_ix_sig_ck[0] = None
+    _atv_ix_pos[0] = None
+    _atv_ix_pos_mono[0] = time.monotonic()
+    _atv_ix_extrap_playing[0] = False
+    _atv_ix_prev_idle[0] = True
+    _reset_clock_saver_device_signal_baseline()
+    _sync_status_bar_visibility_for_playback(None)
+    describe_current_apple_tv()
+    _rebuild_paired_devices_panel()
+    _schedule_refresh_pairing_leds()
+
+
+def _apply_persisted_location_to_runtime(*, _atv_ix_extrap_playing, _atv_ix_pos, _atv_ix_pos_mono, _atv_ix_prev_idle, _atv_ix_sig_ck, _atv_ix_sig_ds, _clear_reported_position_stall_stamp, _rebuild_paired_devices_panel, _reset_clock_saver_device_signal_baseline, _schedule_refresh_pairing_leds, _start_location_toast, _sync_status_bar_visibility_for_playback, _warm_playback_overlay_blits, apple_tv_auto_state, apple_tv_dashboard_track, apple_tv_playback_clock, avr_slot_holder, current_apple_tv, describe_current_apple_tv, last_atv_interaction_mono, playback_overlay_widget, receiver_http_host, render_once, skip_cache, streaming_slot_holder) -> None:
+    """Reload holders and runtime targets from the persisted current location."""
+    streaming_slot_holder[0] = read_saved_streaming_device()
+    avr_slot_holder[0] = read_saved_av_receiver()
+    st2 = streaming_slot_holder[0]
+    av2 = avr_slot_holder[0]
+    if st2:
+        current_apple_tv.clear()
+        current_apple_tv.update(
+            {
+                "identifier": st2.get("identifier", ""),
+                "address": st2.get("address", ""),
+                "name": st2.get("name", ""),
+                "label": st2.get("label", ""),
+            }
+        )
+        write_last_apple_tv(
+            identifier=st2.get("identifier", ""),
+            address=st2.get("address", ""),
+            name=st2.get("name"),
+            label=st2.get("label"),
+        )
+    else:
+        clear_last_apple_tv()
+        current_apple_tv.clear()
+        current_apple_tv.update({"identifier": "", "address": "", "name": "", "label": ""})
+    apple_tv_auto_state["content_key"] = None
+    apple_tv_auto_state["tmdb_key"] = None
+    apple_tv_auto_state["query"] = None
+    apple_tv_auto_state["last_metadata"] = None
+    apple_tv_auto_state["last_tmdb_fetch_input"] = None
+    apple_tv_auto_state["last_tmdb_fetch_refined"] = None
+    apple_tv_auto_state["last_tmdb_fetch_prefer"] = None
+    apple_tv_playback_clock.clear()
+    apple_tv_playback_clock.update(
+        {
+            "has_sync": False,
+            "sync_mono": 0.0,
+            "sync_position": 0.0,
+            "live_mode": False,
+            "playing": False,
+            "latched_total": None,
+            "latched_content_key": None,
+            "last_reported_total": None,
+            "display_played_sec": None,
+            "trt_next_fire_mono": None,
+        }
+    )
+    _clear_reported_position_stall_stamp()
+    apple_tv_dashboard_track["last_poll_ok"] = None
+    apple_tv_dashboard_track["consecutive_fail"] = 0
+    last_atv_interaction_mono[0] = 0.0
+    _atv_ix_sig_ds[0] = ""
+    _atv_ix_sig_ck[0] = None
+    _atv_ix_pos[0] = None
+    _atv_ix_pos_mono[0] = time.monotonic()
+    _atv_ix_extrap_playing[0] = False
+    _atv_ix_prev_idle[0] = True
+    _reset_clock_saver_device_signal_baseline()
+    if av2:
+        adr = str(av2.get("address") or "").strip()
+        if adr:
+            write_last_receiver(
+                host=adr,
+                name=str(av2.get("name") or "").strip() or None,
+                label=str(av2.get("label") or "").strip() or None,
+                device_id=str(av2.get("identifier") or "").strip() or None,
+            )
+            receiver_http_host["host"] = adr
+    else:
+        clear_last_receiver()
+        receiver_http_host["host"] = ""
+    if playback_overlay_widget is not None:
+        playback_overlay_widget.clear_cache()
+    try:
+        _warm_playback_overlay_blits()
+    except Exception:
+        pass
+    skip_cache[0] = None
+    _start_location_toast()
+    _sync_status_bar_visibility_for_playback(None)
+    try:
+        render_once()
+    except Exception:
+        pass
+    describe_current_apple_tv()
+    _rebuild_paired_devices_panel()
+    _schedule_refresh_pairing_leds()
+
+
+def _receiver_poll_tick(*, RECEIVER_POLL_MS, _PIGEON_EXT, _bind_receiver_volume_hub, _bump_clock_saver_significant_device, _clock_saver_for_compose, _clock_saver_receiver_off, _clock_saver_volume, _denon_telnet_audio_fallback, _idle_audio_meter_active, _note_volume_graphics, _note_volume_source_lines, _paint_boolean_led, _quick_receiver_volume_poll, _receiver_poll_tick, _refresh_observed_pairing_led_rows, _remember_clock_saver_volume, _sync_now_playing_screen_state, _sync_streaming_badge_from_playback_sources, _view_one_uses_now_playing_screen, _warm_playback_overlay_blits, apple_tv_auto_state, avr_slot_holder, clock_saver_force_on, denon_vol_cache, last_device_interaction_mono, receiver_http_host, receiver_overlay_state, receiver_panel_led_holder, receiver_poll_busy, receiver_power_on_pending, receiver_power_on_until, receiver_standby_holder, receiver_telnet_debug_holder, receiver_volume_cmd_busy, render_once, root, skip_cache, streaming_slot_holder) -> None:
+    root.after(RECEIVER_POLL_MS, _receiver_poll_tick)
+    if not _PIGEON_EXT:
+        return
+    if receiver_poll_busy["active"]:
+        _quick_receiver_volume_poll()
+        return
+
+    # Keep poll host aligned with the saved AV slot (not a stale last_receiver).
+    # Re-read from disk so an updated AVR IP (DHCP/move) applies without restart.
+    try:
+        _av_disk = read_saved_av_receiver()
+    except Exception:
+        _av_disk = None
+    if _av_disk:
+        avr_slot_holder[0] = _av_disk
+    _av_row = avr_slot_holder[0]
+    if _av_row:
+        _slot_adr = str(_av_row.get("address") or "").strip()
+        _cur_host = str(receiver_http_host.get("host") or "").strip()
+        if _slot_adr and _slot_adr != _cur_host:
+            bound = str(denon_vol_cache.get("bound_host") or "")
+            if bound and bound != _slot_adr:
+                denon_vol_cache["effective"] = ""
+                denon_vol_cache["np_hold"] = ""
+                denon_vol_cache["mono_usable"] = 0.0
+                receiver_overlay_state["volume"] = ""
+            receiver_http_host["host"] = _slot_adr
+            denon_vol_cache["bound_host"] = _slot_adr
+    host = str(receiver_http_host.get("host") or "").strip()
+    if not host:
+        return
+    _bind_receiver_volume_hub(host)
+
+    def apply_overlay(
+        incoming: str,
+        config: str,
+        volume: str,
+        input_label: str | None = None,
+    ) -> None:
+        from pigeon.widgets.playback_overlay import _looks_like_receiver_debug_blob
+
+        receiver_poll_busy["active"] = False
+        old_vol_raw = str(receiver_overlay_state.get("volume", ""))
+        old_in = str(receiver_overlay_state.get("incoming", ""))
+        old_cf = str(receiver_overlay_state.get("config", ""))
+        old_lab = str(receiver_overlay_state.get("input", ""))
+        new_in = "" if _looks_like_receiver_debug_blob(incoming) else str(incoming or "")
+        new_cf = "" if _looks_like_receiver_debug_blob(config) else str(config or "")
+        new_vol = str(volume or "")
+        overlay_unchanged = (
+            old_in == new_in and old_cf == new_cf and old_vol_raw == new_vol
+        )
+        if input_label is not None:
+            new_lab = str(input_label or "").strip()
+            overlay_unchanged = overlay_unchanged and old_lab == new_lab
+            receiver_overlay_state["input"] = new_lab
+        receiver_overlay_state["incoming"] = new_in
+        receiver_overlay_state["config"] = new_cf
+        saver_up = bool(_clock_saver_for_compose(time.monotonic()) or clock_saver_force_on[0])
+        stale_poll = _clock_saver_volume.is_stale_poll(new_vol)
+        if (new_vol or not saver_up) and not stale_poll:
+            receiver_overlay_state["volume"] = new_vol
+        if not stale_poll:
+            if new_vol:
+                _note_volume_graphics(new_vol)
+            shown_cs = ""
+            try:
+                shown_cs = str(_clock_saver_volume.display_line() or "").strip()
+            except Exception:
+                shown_cs = str(getattr(_clock_saver_volume, "hold", "") or "")
+            # Do not stamp a stale overlay readout over a newer saver hold
+            # (that is what left the Digital-7 number frozen while the
+            # volume arms still revealed).
+            from pigeon.widgets.clock_saver import _volume_levels_match
+
+            if new_vol and (
+                not shown_cs or _volume_levels_match(new_vol, shown_cs)
+            ):
+                _remember_clock_saver_volume(new_vol, source="poll")
+        if overlay_unchanged:
+            if _view_one_uses_now_playing_screen() and not saver_up:
+                _sync_now_playing_screen_state()
+            if saver_up and _clock_saver_receiver_off() and not _idle_audio_meter_active():
+                skip_cache[0] = None
+                render_once()
+            return
+        last_device_interaction_mono[0] = time.monotonic()
+        if old_vol_raw != new_vol and not saver_up:
+            _bump_clock_saver_significant_device()
+        if _idle_audio_meter_active():
+            return
+        _warm_playback_overlay_blits()
+        skip_cache[0] = None
+        if _view_one_uses_now_playing_screen() and not saver_up:
+            _sync_now_playing_screen_state()
+        render_once()
+
+    receiver_poll_busy["active"] = True
+
+    def work() -> None:
+        nonlocal host
+        from pigeon.widgets.playback_overlay import (
+            _receiver_volume_display_line,
+            choose_poll_overlay_volume,
+            compose_playback_volume_widget_line,
+        )
+
+        r = None
+        healed_host = ""
+        if host:
+            try:
+                from pigeon.receiver_denon import poll_denon_like_receiver
+
+                skip_tn = bool(
+                    receiver_power_on_pending[0]
+                    or receiver_volume_cmd_busy[0]
+                )
+                # Fat telnet holds the one-client socket for ~2s and
+                # starves MVUP plus the live volume poll. Metadata
+                # telnet is occasional; volume uses a short MV? query.
+                now_tn = time.monotonic()
+                due_meta = now_tn - float(
+                    denon_vol_cache.get("telnet_meta_mono") or 0.0
+                ) >= 8.0
+                use_tn = (not skip_tn) and due_meta
+                r = poll_denon_like_receiver(
+                    host, timeout=5.0, include_telnet=use_tn
+                )
+                if use_tn:
+                    denon_vol_cache["telnet_meta_mono"] = now_tn
+                if r is None or not r.ok:
+                    now_h = time.monotonic()
+                    quick_due = now_h - float(
+                        denon_vol_cache.get("heal_quick_mono") or 0.0
+                    ) >= 15.0
+                    sweep_due = now_h - float(
+                        denon_vol_cache.get("heal_sweep_mono") or 0.0
+                    ) >= 90.0
+                    if quick_due or sweep_due:
+                        if quick_due:
+                            denon_vol_cache["heal_quick_mono"] = now_h
+                        if sweep_due:
+                            denon_vol_cache["heal_sweep_mono"] = now_h
+                        from pigeon.receiver_denon import (
+                            resolve_paired_receiver_host,
+                        )
+
+                        found = str(
+                            resolve_paired_receiver_host(
+                                avr_slot_holder[0],
+                                extra_hosts=[host],
+                                subnet_sweep=sweep_due,
+                            )
+                            or ""
+                        ).strip()
+                        if found and found != host:
+                            healed_host = found
+                            host = found
+                            r = poll_denon_like_receiver(
+                                host, timeout=5.0, include_telnet=use_tn
+                            )
+            except Exception:
+                r = None
+
+        roku_line = ""
+        roku_vol_pct = ""
+        roku_app_name = ""
+        try:
+            from pigeon.roku_ecp import (
+                fetch_roku_active_app_name,
+                fetch_roku_playback_line,
+                resolve_roku_ecp_base_url,
+                resolve_roku_ecp_base_url_for_row,
+            )
+
+            row_r = streaming_slot_holder[0]
+            rbase_line = ""
+            if row_r and not row_is_playback_apple_tv(row_r):
+                rbase_line = str(resolve_roku_ecp_base_url_for_row(row_r) or "").strip()
+            if not rbase_line:
+                rbase_line = str(resolve_roku_ecp_base_url() or "").strip()
+            if rbase_line:
+                rl, rv = fetch_roku_playback_line(rbase_line, timeout=3.0)
+                roku_line = rl or ""
+                roku_vol_pct = str(rv or "").strip()
+                # Keep all Roku ECP I/O off the Tk thread; this call can block on socket connect.
+                try:
+                    apnm_w = fetch_roku_active_app_name(rbase_line)
+                    if apnm_w:
+                        roku_app_name = str(apnm_w).strip()
+                except Exception:
+                    roku_app_name = ""
+        except Exception:
+            roku_line = ""
+            roku_vol_pct = ""
+            roku_app_name = ""
+
+        denon_vol_raw = ""
+        if r is not None and r.ok:
+            denon_vol_raw = str(r.volume or "").strip()
+        from pigeon.receiver_denon import (
+            _volume_fields_line,
+            coalesce_receiver_volume_read,
+        )
+
+        tn_line = ""
+        if r is not None:
+            tn_line = _volume_fields_line(
+                getattr(r, "telnet_debug", None) or {}
+            )
+        denon_vol_picked, denon_vol_src = coalesce_receiver_volume_read(
+            telnet_line=tn_line,
+            http_line=denon_vol_raw,
+            last_http=str(denon_vol_cache.get("last_appcommand") or ""),
+            last_telnet=str(denon_vol_cache.get("last_telnet") or ""),
+            held=str(
+                denon_vol_cache.get("effective")
+                or denon_vol_cache.get("np_hold")
+                or ""
+            ),
+            last_http_mono=float(
+                denon_vol_cache.get("last_appcommand_mono") or 0.0
+            ),
+            last_telnet_mono=float(
+                denon_vol_cache.get("last_telnet_mono") or 0.0
+            ),
+        )
+        _note_volume_source_lines(telnet_line=tn_line, http_line=denon_vol_raw)
+        denon_vol_effective = (
+            denon_vol_picked
+            if _receiver_volume_display_line(denon_vol_picked)
+            else ""
+        )
+        merged_volume = compose_playback_volume_widget_line(
+            stream_row=streaming_slot_holder[0],
+            apple_tv_last_metadata=apple_tv_auto_state.get("last_metadata"),
+            denon_vol_effective=denon_vol_effective,
+            roku_tv_volume_percent=roku_vol_pct,
+        )
+
+        def apply() -> None:
+            rpl = receiver_panel_led_holder[0]
+            try:
+                _apply_body(rpl)
+            except tk.TclError:
+                pass
+            finally:
+                # Never leave the poll loop stuck if anything above threw.
+                receiver_poll_busy["active"] = False
+
+        def _apply_body(rpl: object) -> None:
+            if healed_host:
+                receiver_http_host["host"] = healed_host
+                denon_vol_cache["bound_host"] = healed_host
+                try:
+                    row_h = dict(avr_slot_holder[0] or {})
+                    if not row_h:
+                        row_h = dict(read_saved_av_receiver() or {})
+                    if row_h:
+                        row_h["address"] = healed_host
+                        write_saved_av_receiver(row_h)
+                        avr_slot_holder[0] = read_saved_av_receiver()
+                except Exception:
+                    pass
+            denon_ok = r is not None and r.ok
+            if denon_ok and host:
+                denon_vol_cache["bound_host"] = host
+            raw_standby = bool(r is not None and getattr(r, "standby", False))
+            if (
+                receiver_power_on_pending[0]
+                and time.monotonic() > float(receiver_power_on_until[0] or 0.0)
+            ):
+                receiver_power_on_pending[0] = False
+            denon_standby = raw_standby and not receiver_power_on_pending[0]
+            receiver_standby_holder[0] = denon_standby
+            accept_vol = True
+            try:
+                # Only ignore a poll that is still the pre-knob level.
+                # A new AVR readout (remote, knob, or HEOS) always wins.
+                accept_vol = not _clock_saver_volume.is_stale_poll(
+                    denon_vol_effective
+                )
+            except Exception:
+                accept_vol = True
+            tn_dbg = getattr(r, "telnet_debug", None) or {}
+            live_mv = bool(
+                tn_dbg.get("MV") or tn_dbg.get("MV_DB") or tn_dbg.get("MU")
+            )
+            if accept_vol and denon_vol_effective and (live_mv or denon_ok):
+                if denon_standby:
+                    denon_vol_cache["effective"] = denon_vol_effective
+                    denon_vol_cache["np_hold"] = denon_vol_effective
+                    denon_vol_cache["mono_usable"] = 0.0
+                elif denon_ok:
+                    denon_vol_cache["effective"] = denon_vol_effective
+                    denon_vol_cache["mono_usable"] = time.monotonic()
+                    denon_vol_cache["np_hold"] = denon_vol_effective
+            elif denon_standby:
+                denon_vol_cache["mono_usable"] = 0.0
+            if denon_ok and not raw_standby:
+                receiver_power_on_pending[0] = False
+            try:
+                from pigeon.runtime_state import update_receiver_runtime
+
+                update_receiver_runtime(
+                    host=host,
+                    reachable=bool(denon_ok and not denon_standby),
+                    standby=denon_standby,
+                    muted=str(denon_vol_effective).strip().lower()
+                    in ("mute", "muted"),
+                )
+            except Exception:
+                pass
+            try:
+                from pigeon.app_state import (
+                    read_current_location_id,
+                    read_saved_av_receiver,
+                )
+                from pigeon.observed_capability import (
+                    update_observed_capabilities_from_receiver_poll,
+                )
+
+                update_observed_capabilities_from_receiver_poll(
+                    str(read_current_location_id() or ""),
+                    read_saved_av_receiver(),
+                    denon_reachable=denon_ok and not denon_standby,
+                    denon_volume_usable=bool(denon_vol_effective),
+                    denon_has_incoming=bool(
+                        r is not None
+                        and not denon_standby
+                        and str(r.incoming or "").strip()
+                    ),
+                    denon_has_config=bool(
+                        r is not None
+                        and not denon_standby
+                        and str(r.config or "").strip()
+                    ),
+                )
+            except Exception:
+                pass
+            _refresh_observed_pairing_led_rows()
+            overlay_vol = choose_poll_overlay_volume(
+                merged_volume=merged_volume,
+                accept_vol=accept_vol,
+                cache_effective=str(denon_vol_cache.get("effective") or ""),
+                cache_hold=str(denon_vol_cache.get("np_hold") or ""),
+                saver_hold=str(getattr(_clock_saver_volume, "hold", "") or ""),
+            )
+            if overlay_vol:
+                _note_volume_graphics(overlay_vol)
+            if denon_standby:
+                receiver_telnet_debug_holder[0] = dict(
+                    getattr(r, "telnet_debug", {}) or {}
+                ) if r is not None else {}
+                apply_overlay(
+                    "",
+                    "",
+                    overlay_vol or str(denon_vol_cache.get("np_hold") or ""),
+                    input_label="",
+                )
+                if rpl is not None:
+                    _paint_boolean_led(rpl, False)
+            elif r is not None and r.ok:
+                receiver_telnet_debug_holder[0] = dict(
+                    getattr(r, "telnet_debug", {}) or {}
+                )
+                poll_inc = str(r.incoming or "").strip()
+                poll_cfg = str(r.config or "").strip()
+                if not poll_inc and not poll_cfg:
+                    poll_inc, poll_cfg = _denon_telnet_audio_fallback()
+                poll_input = str(getattr(r, "input_label", "") or "").strip()
+                if not poll_input:
+                    try:
+                        from pigeon.receiver_denon import pick_receiver_input_label
+
+                        poll_input = pick_receiver_input_label(
+                            receiver_telnet_debug_holder[0]
+                        )
+                    except Exception:
+                        poll_input = ""
+                apply_overlay(
+                    poll_inc,
+                    poll_cfg,
+                    overlay_vol,
+                    input_label=poll_input or None,
+                )
+                if rpl is not None:
+                    _paint_boolean_led(rpl, True)
+            elif overlay_vol:
+                receiver_telnet_debug_holder[0] = {}
+                apply_overlay("", "", overlay_vol)
+                if rpl is not None:
+                    _paint_boolean_led(rpl, False)
+            else:
+                receiver_telnet_debug_holder[0] = {}
+                keep_vol = str(
+                    receiver_overlay_state.get("volume")
+                    or denon_vol_cache.get("np_hold")
+                    or ""
+                ).strip()
+                apply_overlay("", "", keep_vol)
+                if rpl is not None:
+                    _paint_boolean_led(rpl, False)
+            if roku_app_name:
+                _sync_streaming_badge_from_playback_sources(
+                    None,
+                    roku_app_name=roku_app_name,
+                )
+
+        root.after(0, apply)
+
+    def work_safe() -> None:
+        try:
+            work()
+        except Exception:
+            # Worker died before scheduling apply(); unblock future polls.
+            receiver_poll_busy["active"] = False
+
+    threading.Thread(target=work_safe, daemon=True).start()

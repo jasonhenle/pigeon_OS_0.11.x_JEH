@@ -2195,3 +2195,37 @@ def _enter_main_settings_for_rotary(*, DevPhase, dev_phase, main_settings_widget
     sync_developer_chrome()
     render_once()
     return True
+
+
+def _open_advanced_capability_matrix(*, _PIGEON_EXT, _advanced_feature_pipeline_ok, _force_advanced_feature_try, _on_advanced_matrix_closed, _perform_tmdb_artwork_retry, _prepend_hotkey_bindtag, _register_tmdb_adv_widgets, _tmdb_retry_log_read_tail, _unregister_tmdb_adv_widgets, advanced_matrix_close_skip, on_apple_tv_selected_then_tmdb, root) -> None:
+    try:
+        from settings_advanced_matrix import open_advanced_capability_matrix
+    except ImportError as e:
+        messagebox.showerror("Advanced", f"Could not open capability matrix:\n{e}", parent=root)
+        return
+    adv_kw: dict[str, object] = {
+        "playback_content_ok": _advanced_feature_pipeline_ok,
+        "on_closed": _on_advanced_matrix_closed,
+        "close_skip_once": advanced_matrix_close_skip,
+        "feature_force_try": _force_advanced_feature_try,
+    }
+    if _PIGEON_EXT:
+        adv_kw.update(
+            {
+                "tmdb_manual_fetch": on_apple_tv_selected_then_tmdb,
+                "tmdb_report_failure": _perform_tmdb_artwork_retry,
+                "tmdb_read_log_tail": _tmdb_retry_log_read_tail,
+                "tmdb_register_widgets": _register_tmdb_adv_widgets,
+                "tmdb_unregister_widgets": _unregister_tmdb_adv_widgets,
+                "prepend_hotkey_bindtag": _prepend_hotkey_bindtag,
+                "tmdb_quality_stats_read": lambda: {
+                    "successes": int(
+                        read_app_state().get("tmdb_quality_successes", 0) or 0
+                    ),
+                    "failures": int(
+                        read_app_state().get("tmdb_quality_failures", 0) or 0
+                    ),
+                },
+            }
+        )
+    open_advanced_capability_matrix(root, **adv_kw)

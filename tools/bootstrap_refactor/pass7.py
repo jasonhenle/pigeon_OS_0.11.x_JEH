@@ -9,9 +9,14 @@ A helper qualifies when every blocker in its pass-2 row is ``forward:X`` or
 
 - is bound exactly once at bootstrap()'s top level, by a ``def`` or by
   ``X = _bind_deps(...)`` / ``X = _core_<mod>.X`` (an already-lifted helper);
-- is only *called* or *passed as a call argument* inside the helper (never
-  compared, stored, returned or used as an attribute base), so a forwarding
-  callable behaves identically.
+- is only *called*, *passed as a call argument*, or placed in a dict / list /
+  tuple display (a callback table) inside the helper -- never compared,
+  assigned, returned or used as an attribute base -- so a forwarding callable
+  behaves identically.
+
+A ``nonlocal`` inside the helper is accepted when every such name is bound
+inside the helper (by the helper itself or an inner function) (an inner closure updating the helper's own variable);
+that moves with the helper unchanged.
 
 Such names are bound at the helper's original ``def`` site as
 ``X=_late(lambda: X, "X")`` (see ``pigeon.core.binding.late``), which looks
@@ -66,9 +71,37 @@ def uses_ok(fn, name):
                 continue
             if isinstance(p, ast.keyword) and p.value is n:
                 continue
+            if isinstance(p, ast.Dict) and any(v is n for v in p.values):
+                continue
+            if isinstance(p, (ast.List, ast.Tuple)) and n in p.elts:
+                continue
             return False
         if isinstance(n, ast.Name) and n.id == name and not isinstance(n.ctx, ast.Load):
             return False
+    return True
+
+
+import symtable
+_st = symtable.symtable(open(src_path).read(), src_path, "exec")
+_mt = next(c for c in _st.get_children() if c.get_name() == "main")
+_bt = next(c for c in _mt.get_children() if c.get_name() == "bootstrap")
+_helper_tables = {c.get_name(): c for c in _bt.get_children()}
+
+
+def internal_nonlocal_only(fn):
+    """Every ``nonlocal`` in ``fn`` refers to a local of ``fn`` itself."""
+    t = _helper_tables.get(fn.name)
+    if t is None:
+        return False
+    for n in ast.walk(fn):
+        if isinstance(n, (ast.Nonlocal, ast.Global)):
+            if isinstance(n, ast.Global):
+                return False
+            for nm in n.names:
+                # Bound inside the helper (itself or an inner function) iff it is
+                # not one of the helper's free variables.
+                if nm in t.get_frees():
+                    return False
     return True
 
 
@@ -85,6 +118,8 @@ for r in rows:
             late.append(x)
         elif kind == "recursive":
             late.append(r["name"])
+        elif kind == "nonlocal" and internal_nonlocal_only(defs[r["name"]]):
+            pass
         else:
             ok = False
     if not ok:

@@ -147,3 +147,33 @@ freed by the skip_cache fix), incl. `render`-adjacent code such as
 Remaining blockers: forward references to *values* bound later (holders and
 widgets such as `dev_phase`, `main_settings_widget`, `update_btn`), and more
 rebound state (`brightness_*`, `last_frame`, `scaled_*`, `_atv_ix_*`, …).
+
+## Pass 8: hoisting, the last shared state, and deeper smoke checks
+
+- `hoist.py` moves side-effect-free initialisers (holders like `[None]`,
+  literal dicts; only literals / module globals / pure constructors allowed)
+  to the top of `bootstrap()`, so helpers defined earlier can depend on them.
+  Proof: module and `main()` ASTs unchanged, `bootstrap()` has the same
+  statements, only reordered; `verify_order.py` clean.
+- Holderized 25 more: `last_frame`, `scaled_display`, `scaled_version`,
+  `playing`, `brightness_*`, `saved_backdrop_*`, `tmdb_logo_app_fallback_active`,
+  `_atv_ix_*`, idle-dim animation state, `playback_overlay_blits`,
+  `clock_patch_bgra`, `last_device_interaction_mono`.
+  `_clock_patch_sig` was already a list only mutated in place; its needless
+  `nonlocal` was dropped instead.
+- `pass7.py` also accepts callbacks placed in dict/list displays, and
+  `nonlocal`s that refer to names bound inside the helper itself.
+- `transform.py` imports names used only in annotations (`np`, `tk`).
+- `SMOKE_TICKS=1 smoke_bootstrap.py` runs every callback `bootstrap()`
+  schedules (render, polls, splash, playback tick) once; results are identical
+  to the unrefactored `main`.
+
+Plans: `plan8.json`, `plan8b.json`, `plan8c.json` (35 helpers, incl.
+`render_once`, `spawn_tmdb_poster_fetch`, `_receiver_poll_tick`).
+
+Left in `bootstrap()`: 9 helpers that read Tk widgets created after them
+(`main_settings_widget`, `view_circles_widget`, `update_btn`,
+`purge_image_media_btn`) or `scene_enabled`.
+
+Known quirk (unchanged): `_update_atv_interaction_from_poll_metadata` sets
+`last_device_interaction_mono = now` without `nonlocal`, so that update is lost.

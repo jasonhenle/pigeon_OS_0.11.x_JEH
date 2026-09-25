@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import time
 import numpy as np
+import tkinter as tk
 from pigeon.clock_saver_policy import pausesaver_hold_from_metadata_class
 from pigeon.clock_saver_policy import player_reports_playing
 from pigeon.clock_saver_policy import tick_pause_hold
@@ -670,3 +671,332 @@ def _nudge_clock_saver_volume(action: str, *, _clock_saver_for_compose, _clock_s
         render_once()
     except Exception:
         pass
+
+
+def _update_idle_dim_strength(now: float, *, ATV_IDLE_MONO_ANIM_S, THEATER_IDLE_DIM_ENABLED, _atv_idle_monochrome_active, _idle_dim_anim_from, _idle_dim_anim_goal, _idle_dim_anim_t0, idle_dim_anim_strength) -> float:
+    """0 = full color, 1 = red luma-mono; eases in/out over ATV_IDLE_MONO_ANIM_S when combined idle state changes."""
+    if not THEATER_IDLE_DIM_ENABLED:
+        if idle_dim_anim_strength[0] != 0.0 or _idle_dim_anim_goal[0] != 0.0:
+            idle_dim_anim_strength[0] = 0.0
+            _idle_dim_anim_goal[0] = 0.0
+            _idle_dim_anim_from[0] = 0.0
+            _idle_dim_anim_t0[0] = now
+        return 0.0
+    want = 1.0 if _atv_idle_monochrome_active() else 0.0
+    if want != _idle_dim_anim_goal[0]:
+        _idle_dim_anim_goal[0] = want
+        _idle_dim_anim_from[0] = idle_dim_anim_strength[0]
+        _idle_dim_anim_t0[0] = now
+    dur = float(ATV_IDLE_MONO_ANIM_S)
+    t = min(1.0, (now - _idle_dim_anim_t0[0]) / dur) if dur > 0 else 1.0
+    idle_dim_anim_strength[0] = _idle_dim_anim_from[0] + (_idle_dim_anim_goal[0] - _idle_dim_anim_from[0]) * t
+    return idle_dim_anim_strength[0]
+
+
+def _paused_screen_backdrop_bgr(*, _circles_poster_bgra, _paused_screen_artwork_bgr, _stable_bgr_from_bgra, _vv_is_music, backdrop_app_logo_letterbox_fit, backdrop_master_bgr, saved_backdrop_app_logo_letterbox_fit, saved_backdrop_master_bgr) -> np.ndarray | None:
+    """Full-screen paused still: TMDb backdrop, else poster / YouTube thumb."""
+    if _vv_is_music():
+        art = _paused_screen_artwork_bgr()
+        if art is not None:
+            return art
+    if backdrop_master_bgr[0] is not None and not backdrop_app_logo_letterbox_fit[0]:
+        return backdrop_master_bgr[0]
+    if (
+        saved_backdrop_master_bgr[0] is not None
+        and not saved_backdrop_app_logo_letterbox_fit[0]
+    ):
+        return saved_backdrop_master_bgr[0]
+    try:
+        poster = _circles_poster_bgra()
+    except Exception:
+        poster = None
+    return _stable_bgr_from_bgra(poster)
+
+
+def _toggle_clock_saver_force(event: tk.Event | None = None, *, _PIGEON_EXT, _boot_clock_saver_until_playback, _bump_clock_saver_significant_device, _bump_pigeon_user_activity, _clock_saver_for_compose, _note_metadata_activity, _widget_accepts_typing, clock_saver_composite_bgra, clock_saver_force_on, render_once, skip_cache) -> str | None:
+    """Shift+2: force clock saver on/off."""
+    if event is not None and _widget_accepts_typing(event.widget):
+        return None
+    if not _PIGEON_EXT or clock_saver_composite_bgra is None:
+        return None
+    now = time.monotonic()
+    showing = bool(_clock_saver_for_compose(now))
+    if showing or clock_saver_force_on[0]:
+        clock_saver_force_on[0] = False
+        _boot_clock_saver_until_playback[0] = False
+        _bump_pigeon_user_activity(event)
+        _note_metadata_activity(now)
+        _bump_clock_saver_significant_device()
+    else:
+        clock_saver_force_on[0] = True
+        if event is not None:
+            _bump_pigeon_user_activity(event)
+    skip_cache[0] = None
+    try:
+        render_once()
+    except Exception:
+        pass
+    return "break"
+
+
+def _return_to_landing_if_atv_idle(metadata: dict[str, object], *, _PIGEON_EXT, _atv_metadata_is_content_idle, _clear_playback_artwork_caches, _disp_fit, _program_audio_session, _refresh_content_indicator, _resolve_receiver_lines_for_now_playing, _sync_now_playing_screen_state, _sync_status_bar_visibility_for_playback, _view_one_uses_now_playing_screen, _warm_status_bar_blits, _warm_tmdb_logo_patch, active_tmdb_display_title, active_tmdb_title_key, apple_tv_auto_state, apple_tv_playback_clock, backdrop_app_logo_letterbox_fit, backdrop_master_bgr, landing_scene_design_bgr, last_frame, playing, receiver_standby_holder, render_once, scaled_display, scaled_version, scene_enabled, skip_cache, status_bar_widget, tmdb_logo_app_fallback_active, tmdb_logo_patch_bgra, tmdb_logo_widget, tmdb_logo_widget_view_six, use_backdrop_scene) -> None:
+    """When Apple TV reports no playback, drop TMDb backdrop and show the static landing page."""
+    if not _atv_metadata_is_content_idle(metadata):
+        return
+    try:
+        from pigeon.display_confidence import (
+            identity_displayable,
+            metadata_has_holdable_identity,
+            player_metadata_adequate,
+        )
+
+        if (
+            identity_displayable(metadata)
+            or player_metadata_adequate(metadata)
+            or metadata_has_holdable_identity(metadata)
+        ):
+            return
+        lm_hold = apple_tv_auto_state.get("last_metadata")
+        if isinstance(lm_hold, dict) and (
+            identity_displayable(lm_hold)
+            or player_metadata_adequate(lm_hold)
+            or metadata_has_holdable_identity(lm_hold)
+        ):
+            return
+    except Exception:
+        pass
+    if _view_one_uses_now_playing_screen():
+        if _program_audio_session():
+            # Incoming audio is still holding NP through quiet scenes.
+            return
+        try:
+            _inc_idle, _cfg_idle, _vol_idle = _resolve_receiver_lines_for_now_playing()
+        except Exception:
+            _inc_idle, _cfg_idle = "", ""
+        if (not bool(receiver_standby_holder[0])) and (
+            str(_inc_idle or "").strip() or str(_cfg_idle or "").strip()
+        ):
+            return
+        # Keep displayed TMDB art through brief idle polls, but clear the spawn
+        # identity so the next title is not suppressed as "same tmdb_key".
+        apple_tv_auto_state["tmdb_key"] = None
+        apple_tv_auto_state["pending_tmdb"] = None
+        _clear_playback_artwork_caches()
+        clk = apple_tv_playback_clock
+        clk["has_sync"] = False
+        clk["playing"] = False
+        clk["live_mode"] = False
+        clk["latched_content_key"] = None
+        clk["latched_total"] = None
+        clk["display_played_sec"] = None
+        clk["trt_next_fire_mono"] = None
+        clk["sync_position"] = 0.0
+        clk["sync_mono"] = time.monotonic()
+        _sync_status_bar_visibility_for_playback(metadata)
+        _sync_now_playing_screen_state()
+        skip_cache[0] = None
+        render_once()
+        return
+    apple_tv_auto_state["content_key"] = None
+    apple_tv_auto_state["tmdb_key"] = None
+    apple_tv_auto_state["query"] = None
+    apple_tv_auto_state["prefer"] = "auto"
+    apple_tv_auto_state["pending_tmdb"] = None
+    apple_tv_auto_state["last_tmdb_fetch_input"] = None
+    apple_tv_auto_state["last_tmdb_fetch_refined"] = None
+    apple_tv_auto_state["last_tmdb_fetch_prefer"] = None
+    _clear_playback_artwork_caches()
+    lm = apple_tv_auto_state.get("last_metadata")
+    if isinstance(lm, dict):
+        lm["query"] = ""
+        lm["content_key"] = None
+
+    had_art = bool(use_backdrop_scene[0] or backdrop_master_bgr[0] is not None or active_tmdb_title_key[0])
+
+    use_backdrop_scene[0] = False
+    backdrop_master_bgr[0] = None
+    try:
+        from pigeon.paused_screen import set_pausesaver_backdrop
+
+        set_pausesaver_backdrop(None, clear=True)
+    except Exception:
+        pass
+    backdrop_app_logo_letterbox_fit[0] = False
+    playing[0] = False
+    active_tmdb_title_key[0] = None
+    active_tmdb_display_title[0] = None
+    tmdb_logo_app_fallback_active[0] = False
+    if tmdb_logo_widget is not None:
+        tmdb_logo_widget.clear_cache()
+    if tmdb_logo_widget_view_six is not None:
+        tmdb_logo_widget_view_six.clear_cache()
+    tmdb_logo_patch_bgra[0] = None
+    _warm_tmdb_logo_patch()
+
+    clk = apple_tv_playback_clock
+    clk["has_sync"] = False
+    clk["playing"] = False
+    clk["live_mode"] = False
+    clk["latched_content_key"] = None
+    clk["latched_total"] = None
+    clk["display_played_sec"] = None
+    clk["trt_next_fire_mono"] = None
+    clk["sync_position"] = 0.0
+    clk["sync_mono"] = time.monotonic()
+
+    if status_bar_widget is not None and status_bar_widget.set_accent_from_backdrop_bgr(None):
+        _warm_status_bar_blits()
+
+    _sync_status_bar_visibility_for_playback(metadata)
+
+    if scene_enabled[0]:
+        last_frame[0] = landing_scene_design_bgr
+        if not _PIGEON_EXT:
+            scaled_display[0] = _disp_fit().scale_and_crop(last_frame[0])
+        else:
+            scaled_display[0] = None
+    scaled_version[0] += 1
+    skip_cache[0] = None
+    _refresh_content_indicator()
+
+    if had_art:
+        render_once()
+
+
+def _auto_widget_signals(*, _apple_tv_is_off, _clock_saver_receiver_off, _paused_screen_backdrop_bgr, _player_metadata_class, _program_audio_session, _refresh_paused_row_stamp, current_apple_tv, main_settings_widget, view_circles_widget):
+    from pigeon.auto_widgets import (
+        AutoWidgetSignals,
+        note_wan_status,
+        reliable_clock_now,
+        room_is_renamed,
+    )
+
+    wan_ok = False
+    room_name = ""
+    if main_settings_widget is not None:
+        try:
+            st_aw = main_settings_widget.state
+            wan_ok = bool(st_aw.wifi_configured)
+            room_name = str(st_aw.location_name or "").strip()
+        except Exception:
+            pass
+    if not wan_ok:
+        try:
+            from pigeon.wifi_scan import current_connected_ssid
+
+            wan_ok = bool(str(current_connected_ssid() or "").strip())
+        except Exception:
+            pass
+    wan_boot = note_wan_status(wan_ok)
+    receiver_off = _clock_saver_receiver_off()
+    recv_name = ""
+    try:
+        from pigeon.runtime_state import core_state
+
+        recv_name = str(getattr(core_state().receiver, "name", "") or "").strip()
+    except Exception:
+        pass
+    if not recv_name:
+        try:
+            stc = getattr(view_circles_widget, "_state", None)
+            recv_name = str(getattr(stc, "receiver_name", "") or "").strip()
+        except Exception:
+            pass
+    player_ok = False
+    try:
+        player_ok = bool(current_apple_tv.get("identifier")) and (
+            not _apple_tv_is_off()
+        )
+    except Exception:
+        player_ok = not _apple_tv_is_off()
+    audio = False
+    try:
+        from pigeon.widgets.audio_meter_saver import program_audio_present
+
+        audio = bool(program_audio_present())
+    except Exception:
+        audio = bool(_program_audio_session())
+    if not room_name:
+        try:
+            from pigeon.app_state import read_current_location_name
+
+            room_name = str(read_current_location_name() or "").strip()
+        except Exception:
+            pass
+    renamed = room_is_renamed(room_name)
+    paused_for = 0.0
+    try:
+        paused_for = _refresh_paused_row_stamp(time.monotonic())
+    except Exception:
+        paused_for = 0.0
+    pausesaver_art = False
+    try:
+        from pigeon.paused_screen import pausesaver_art_usable, pausesaver_backdrop
+
+        src = _paused_screen_backdrop_bgr()
+        pausesaver_art = pausesaver_art_usable(src) or pausesaver_art_usable(
+            pausesaver_backdrop()
+        )
+    except Exception:
+        pausesaver_art = False
+    return AutoWidgetSignals(
+        wan_ok=wan_ok,
+        wan_ok_at_startup=wan_boot,
+        lan_ok=bool(player_ok or (not receiver_off)),
+        reliable_clock=reliable_clock_now(),
+        receiver_ok=not receiver_off,
+        receiver_name=recv_name,
+        player_metadata=_player_metadata_class(),
+        audio_levels=audio,
+        audio_identification=False,
+        room_renamed=renamed,
+        room_name=room_name if renamed else "",
+        paused_for_s=paused_for,
+        pausesaver_art=pausesaver_art,
+    )
+
+
+def _apply_auto_widget_policy(*, DevPhase, _auto_widget_signals, _paused_screen_backdrop_bgr, active_tmdb_title_key, apple_tv_auto_state, dev_phase, main_settings_widget, skip_cache):
+    from pigeon.auto_widgets import resolve_auto_widgets, set_live_plan
+    from pigeon.paused_screen import set_pausesaver_backdrop
+
+    plan = resolve_auto_widgets(_auto_widget_signals())
+    set_live_plan(plan)
+    try:
+        src = _paused_screen_backdrop_bgr()
+        key = str(active_tmdb_title_key[0] or "").strip()
+        if not key:
+            md_bd = apple_tv_auto_state.get("last_metadata")
+            if isinstance(md_bd, dict):
+                key = str(
+                    md_bd.get("content_key")
+                    or md_bd.get("title")
+                    or md_bd.get("query")
+                    or ""
+                ).strip()
+        set_pausesaver_backdrop(src, content_key=key)
+    except NameError:
+        pass
+    except Exception:
+        pass
+    if main_settings_widget is not None:
+        try:
+            st_aw = main_settings_widget.state
+            want = bool(plan.settings_exit_enabled)
+            if bool(st_aw.exit_enabled) != want:
+                st_aw.exit_enabled = want
+                st_aw.ensure_focus_ring()
+                main_settings_widget.invalidate()
+        except Exception:
+            pass
+    if plan.force_settings and dev_phase[0] != DevPhase.MAIN_SETTINGS:
+        if main_settings_widget is not None:
+            try:
+                if main_settings_widget.state.keyboard_open:
+                    main_settings_widget.state.close_keyboard(commit=False)
+                main_settings_widget.prefetch_scans_for_settings()
+            except Exception:
+                pass
+        dev_phase[0] = DevPhase.MAIN_SETTINGS
+        skip_cache[0] = None
+    return plan

@@ -6,6 +6,7 @@ for m in ["tkinter","tkinter.font","tkinter.messagebox","tkinter.scrolledtext","
     sys.modules[m] = mock.MagicMock(name=m)
 import tkinter
 reached = {"boot": False}
+scheduled = []
 class FakeTk(mock.MagicMock):
     pass
 def make_root(*a, **k):
@@ -18,6 +19,8 @@ def make_root(*a, **k):
     def after(ms, fn=None, *args):
         if fn is not None and getattr(fn, "__name__", "") in ("bootstrap", "_bootstrap_after_splash"):
             calls.append(fn)
+        elif fn is not None:
+            scheduled.append((fn, args))
         return "after#1"
     r.after.side_effect = after
     r.after_idle.side_effect = lambda fn=None, *a: after(0, fn)
@@ -29,6 +32,20 @@ def make_root(*a, **k):
         print("SMOKE: running bootstrap", flush=True)
         fn()
         print("SMOKE: bootstrap returned", flush=True)
+        if os.environ.get("SMOKE_TICKS"):
+            # Run every callback bootstrap() scheduled, once, and report the errors.
+            # Mocked Tk makes many fail for boring reasons; compare runs to spot new ones.
+            seen = set()
+            for cb, cargs in list(scheduled):
+                nm = getattr(cb, "__name__", repr(cb))
+                if nm in seen:
+                    continue
+                seen.add(nm)
+                try:
+                    cb(*cargs)
+                    print(f"TICK ok {nm}", flush=True)
+                except BaseException as e:
+                    print(f"TICK err {nm}: {type(e).__name__}: {str(e)[:120]}", flush=True)
     r.mainloop.side_effect = mainloop
     return r
 tkinter.Tk = make_root

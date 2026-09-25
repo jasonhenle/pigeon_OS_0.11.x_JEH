@@ -673,3 +673,39 @@ def _on_rotary_action(action: str, *, DevPhase, _bump_pigeon_user_activity, _ent
             _handle_main_settings_action(ms_action)
             skip_cache[0] = None
             render_once()
+
+
+def on_space_play(event: tk.Event, *, DevPhase, _bump_pigeon_user_activity, _handle_main_settings_action, _last_space_mono, _send_player_play_pause_hotkey, _widget_accepts_typing, apply_saved_tmdb_backdrop_to_display, dev_phase, main_settings_widget, render_once, saved_backdrop_master_bgr, skip_cache, sync_developer_chrome, toggle_play, use_backdrop_scene) -> str | None:
+    if _widget_accepts_typing(event.widget):
+        return None
+    _bump_pigeon_user_activity(event)
+    now = time.monotonic()
+    if now - _last_space_mono[0] < 0.12:
+        return "break"
+    _last_space_mono[0] = now
+    if dev_phase[0] == DevPhase.MAIN_SETTINGS and main_settings_widget is not None:
+        action = main_settings_widget.activate()
+        if action == "exit":
+            if main_settings_widget is not None and not bool(
+                getattr(main_settings_widget.state, "exit_enabled", True)
+            ):
+                skip_cache[0] = None
+                render_once()
+            else:
+                dev_phase[0] = DevPhase.OFF
+                skip_cache[0] = None
+                sync_developer_chrome()
+                render_once()
+        else:
+            _handle_main_settings_action(action)
+            skip_cache[0] = None
+            render_once()
+        return "break"
+    if _send_player_play_pause_hotkey():
+        return "break"
+    # After a TMDb fetch, bring backdrop + title logo to the screen (toggle_play often no-ops here).
+    if saved_backdrop_master_bgr[0] is not None and not use_backdrop_scene[0]:
+        apply_saved_tmdb_backdrop_to_display()
+        return "break"
+    toggle_play()
+    return "break"

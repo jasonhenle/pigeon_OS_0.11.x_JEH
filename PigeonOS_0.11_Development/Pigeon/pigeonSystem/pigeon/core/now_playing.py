@@ -1599,3 +1599,20 @@ def _metadata_debug_provider(*, _content_indicator_ok, _tmdb_info_current_and_av
         "player_active": player_active,
         "hdmi_active": hdmi_active,
     }
+
+
+def _enable_now_playing_screen(*, DisplayView, LANDING_DISPLAY_BRIGHTNESS, _PIGEON_EXT, _sync_status_bar_visibility_for_playback, apple_tv_auto_state, brightness_current, brightness_from, brightness_target, display_view_holder, last_frame, scene_enabled, skip_cache, view_circles_widget) -> None:
+    """Show View 1 now-playing chrome (circles skin). Idempotent."""
+    if not _PIGEON_EXT or view_circles_widget is None:
+        return
+    display_view_holder[0] = DisplayView.ONE
+    # View 1 chrome composites without a video ``last_frame``; keep scene off so
+    # ``render_once`` does not early-return before painting the now-playing screen.
+    scene_enabled[0] = False
+    last_frame[0] = None
+    brightness_current[0] = brightness_from[0] = brightness_target[0] = LANDING_DISPLAY_BRIGHTNESS
+    md_sb = apple_tv_auto_state.get("last_metadata")
+    _sync_status_bar_visibility_for_playback(
+        md_sb if isinstance(md_sb, dict) else None
+    )
+    skip_cache[0] = None

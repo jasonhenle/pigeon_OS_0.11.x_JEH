@@ -7,6 +7,7 @@ takes the app state it used to close over as keyword-only arguments;
 
 from __future__ import annotations
 import cv2
+import numpy as np
 import re
 
 
@@ -475,3 +476,110 @@ def _view_four_has_value(v: object, *, _view_four_has_value, _view_four_text_is_
     if isinstance(v, float) and v != v:
         return False
     return True
+
+
+def _blend_view_four_debug(bgr: np.ndarray, *, DisplayView, _collect_view_four_playback_lines, _collect_view_four_raw_title_lines, _collect_view_four_source_lines, _effective_display_view, view_four_subview_holder) -> np.ndarray:
+    if _effective_display_view() != DisplayView.FOUR:
+        return bgr
+    out = bgr.copy()
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    mx = 10
+    my_top = 12
+    my_bot = 10
+    H, W = int(out.shape[0]), int(out.shape[1])
+    max_w = max(24, W - 2 * mx)
+    sub_i = max(0, min(2, int(view_four_subview_holder[0])))
+    sub_titles = ("Title Info", "Source Info", "Playback Info")
+    if sub_i == 0:
+        raw_debug_lines = [(f"View 4 — {sub_titles[sub_i]}", True)] + _collect_view_four_raw_title_lines()
+    elif sub_i == 1:
+        raw_debug_lines = [(f"View 4 — {sub_titles[sub_i]}", True)] + _collect_view_four_source_lines()
+    else:
+        raw_debug_lines = [(f"View 4 — {sub_titles[sub_i]}", True)] + _collect_view_four_playback_lines()
+    _any_bold = bool(raw_debug_lines)
+    rows = [
+        (str(raw).strip(), is_bold)
+        for raw, is_bold in raw_debug_lines
+        if str(raw).strip()
+    ]
+    if not rows:
+        rows = [("(no rawTitle lines yet)", False)]
+
+    def _vf_thick(sc: float) -> int:
+        return 2 if sc >= 0.48 else 1
+
+    def _vf_metrics(sc: float) -> tuple[int, int, int, int]:
+        thick_n = _vf_thick(sc)
+        thick_b = max(thick_n + 2, 3) if _any_bold else thick_n
+        (_rw, th), bl = cv2.getTextSize("|pqgy", font, sc, thick_b)
+        line_step = max(th + 8, int(th + bl * 0.5) + 6)
+        return thick_n, thick_b, th, line_step
+
+    def _vf_row_width(text: str, sc: float, is_bold: bool) -> int:
+        thick_n, thick_b, _th, _ls = _vf_metrics(sc)
+        return int(cv2.getTextSize(text, font, sc, thick_b if is_bold else thick_n)[0][0])
+
+    def _vf_wrap(text: str, sc: float, is_bold: bool) -> list[str]:
+        """Keep short fields on one line; wrap only when the row is too wide."""
+        if _vf_row_width(text, sc, is_bold) <= max_w:
+            return [text]
+        parts = text.split(" ")
+        lines: list[str] = []
+        cur = ""
+
+        def _flush() -> None:
+            nonlocal cur
+            if cur:
+                lines.append(cur)
+                cur = ""
+
+        def _append_token(token: str) -> None:
+            nonlocal cur
+            trial = token if not cur else f"{cur} {token}"
+            if _vf_row_width(trial, sc, is_bold) <= max_w:
+                cur = trial
+                return
+            _flush()
+            if _vf_row_width(token, sc, is_bold) <= max_w:
+                cur = token
+                return
+            chunk = ""
+            for ch in token:
+                next_chunk = chunk + ch
+                if chunk and _vf_row_width(next_chunk, sc, is_bold) > max_w:
+                    lines.append(chunk)
+                    chunk = ch
+                else:
+                    chunk = next_chunk
+            cur = chunk
+
+        for part in parts:
+            _append_token(part)
+        _flush()
+        return lines or [text]
+
+    # One readable size for every View 4 row. Long values wrap.
+    sc = 0.64
+    if H < 800:
+        sc = 0.56
+    elif H > 1400:
+        sc = 0.72
+
+    thick_n, _thick_b, th, line_step = _vf_metrics(sc)
+    y = my_top + th
+    color_dim = (220, 228, 238)
+    color_bold = (255, 255, 255)
+    y_limit = H - my_bot
+    for raw, is_bold in rows:
+        t_draw = max(thick_n + 2, 3) if is_bold else thick_n
+        c = color_bold if is_bold else color_dim
+        for piece in raw.splitlines() or [raw]:
+            piece = piece.rstrip()
+            if not piece:
+                continue
+            for row in _vf_wrap(piece, sc, is_bold):
+                if y > y_limit:
+                    return out
+                cv2.putText(out, row, (mx, y), font, sc, c, t_draw, cv2.LINE_AA)
+                y += line_step
+    return out

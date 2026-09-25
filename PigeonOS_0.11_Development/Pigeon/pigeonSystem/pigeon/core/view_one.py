@@ -268,3 +268,19 @@ def _view_one_video_content_a_tt_contain_rect_design(*, DESIGN_H, DESIGN_W, PATC
             int(_rh),
         )
     return (x0, y0, rw, rh)
+
+
+def _view_one_layout_effective(*, DevPhase, DisplayView, _PIGEON_EXT, dev_phase, display_view_holder, last_view_one_layout_snapshot, view_one_layout_holder) -> int:
+    if _PIGEON_EXT and (
+        dev_phase[0] == DevPhase.GRID or display_view_holder[0] == DisplayView.FIVE
+    ):
+        return int(last_view_one_layout_snapshot[0])
+    return int(view_one_layout_holder[0])
+
+
+def _stage_is_view_one_video_layout(*, DevPhase, DisplayView, _PIGEON_EXT, dev_phase, display_view_holder) -> bool:
+    if not _PIGEON_EXT:
+        return False
+    if dev_phase[0] == DevPhase.GRID or display_view_holder[0] == DisplayView.FIVE:
+        return True
+    return display_view_holder[0] == DisplayView.ONE
