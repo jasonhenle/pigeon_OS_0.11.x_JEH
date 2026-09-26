@@ -82,6 +82,7 @@ from pigeon.stage_background import bgr_to_tk_hex, get_stage_bgr
 from pigeon.tmdb_tt_contrast import GRADIENT_BGR_DARK
 from pigeon.version import version_string
 from pigeon.core.binding import bind_deps as _bind_deps
+from pigeon.core.binding import bind_method_deps as _bind_method_deps
 from pigeon.core.binding import late as _late
 from pigeon.core import settings_ui as _core_settings_ui
 from pigeon.core import saver_state as _core_saver_state
@@ -1148,32 +1149,13 @@ def main() -> int:
         view_circles_widget_holder=view_circles_widget_holder,
     )
 
-    def _clock_saver_layers(**kwargs):
-        try:
-            from pigeon.auto_widgets import live_plan
-
-            plan = live_plan()
-        except Exception:
-            plan = None
-        if plan is not None:
-            kwargs.setdefault("include_weather", not bool(plan.blank_weather))
-            if plan.blank_volume:
-                kwargs["volume"] = ""
-                kwargs["line_opacity"] = 0.0
-        if "volume" not in kwargs:
-            kwargs["volume"] = _clock_saver_volume_raw()
-        if "line_opacity" not in kwargs:
-            try:
-                kwargs["line_opacity"] = _volume_lines.opacity()
-            except Exception:
-                kwargs["line_opacity"] = 0.0
-        replace = bool(kwargs.pop("replace_with_meter", False))
-        if replace and render_audio_meter_composite_bgra is not None:
-            op = kwargs.get("time_layer_opacity")
-            if op is None:
-                op = kwargs.get("layer_opacity", 1.0)
-            return render_audio_meter_composite_bgra(layer_opacity=float(op))
-        return clock_saver_composite_bgra(**kwargs)
+    _clock_saver_layers = _bind_deps(
+        _core_saver_state._clock_saver_layers,
+        _clock_saver_volume_raw=_clock_saver_volume_raw,
+        _volume_lines=_volume_lines,
+        clock_saver_composite_bgra=clock_saver_composite_bgra,
+        render_audio_meter_composite_bgra=render_audio_meter_composite_bgra,
+    )
 
     _rasterize_clock_saver_window_bgr = _bind_deps(
         _core_saver_state._rasterize_clock_saver_window_bgr,
@@ -1214,43 +1196,31 @@ def main() -> int:
         _splash_post_hook_ran=_splash_post_hook_ran,
     )
 
-    def _try_remove_splash_overlay() -> None:
-        """Destroy splash the instant the sequence ends (no bootstrap wait)."""
-        if not _PIGEON_EXT:
-            return
-        if not splash_anim_done[0]:
-            return
-        w = startup_ph[0]
-        if w is None:
-            return
-        # Clock must already be on the bridge underlay before the overlay disappears.
-        _reveal_clock_under_splash(refresh=False)
-        if bootstrap_done[0]:
-            _finish_post_splash_startup_transition()
-        try:
-            w.destroy()
-        except tk.TclError:
-            pass
-        startup_ph[0] = None
-        try:
-            sys.stderr.write(
-                f"pigeon: splash overlay lifted +{time.monotonic() - _app_startup_mono:.3f}s\n"
-            )
-            sys.stderr.flush()
-        except Exception:
-            pass
-        # Splash frames can hold tens of MB (full-window RGB/BGRA per frame);
-        # release them now that the overlay is gone. NameError guard: the caches
-        # only exist when the ext splash path ran.
-        try:
-            _splash_rgb_cache.clear()
-            _splash_bgra_cache.clear()
-            _splash_photo_cache.clear()
-            splash_photo[0] = None
-        except NameError:
-            pass
-        if post_splash_mono[0] is None:
-            post_splash_mono[0] = time.monotonic()
+    # Splash caches, bound up front (were inside ``if _PIGEON_EXT:``) so helpers
+    # defined before that block can take them as dependencies.
+    splash_photo: list[ImageTk.PhotoImage | None] = [None]
+    # Two parallel caches keyed by frame index:
+    #   * _splash_rgb_cache: opaque RGB over black for pre-reveal frames.
+    #   * _splash_bgra_cache: keep alpha for reveal frames so they composite over a live clock.
+    _splash_rgb_cache: dict[int, np.ndarray] = {}
+    _splash_bgra_cache: dict[int, np.ndarray] = {}
+    _splash_photo_cache: dict[int, ImageTk.PhotoImage] = {}
+
+    _try_remove_splash_overlay = _bind_deps(
+        _core_startup._try_remove_splash_overlay,
+        _PIGEON_EXT=_PIGEON_EXT,
+        _app_startup_mono=_app_startup_mono,
+        _finish_post_splash_startup_transition=_finish_post_splash_startup_transition,
+        _reveal_clock_under_splash=_reveal_clock_under_splash,
+        _splash_bgra_cache=_splash_bgra_cache,
+        _splash_photo_cache=_splash_photo_cache,
+        _splash_rgb_cache=_splash_rgb_cache,
+        bootstrap_done=bootstrap_done,
+        post_splash_mono=post_splash_mono,
+        splash_anim_done=splash_anim_done,
+        splash_photo=splash_photo,
+        startup_ph=startup_ph,
+    )
 
     _live_clock_until_compose = _bind_deps(
         _core_startup._live_clock_until_compose,
@@ -1280,20 +1250,23 @@ def main() -> int:
         splash_anim_done=splash_anim_done,
     )
 
-    def _pack_patched(self: tk.Misc, *args: object, **kwargs: object) -> object | None:
-        r = _tk_pack_orig(self, *args, **kwargs)
-        _splash_pump_maybe()
-        return r
+    _pack_patched = _bind_method_deps(
+        _core_startup._pack_patched,
+        _splash_pump_maybe=_splash_pump_maybe,
+        _tk_pack_orig=_tk_pack_orig,
+    )
 
-    def _grid_patched(self: tk.Misc, *args: object, **kwargs: object) -> object | None:
-        r = _tk_grid_orig(self, *args, **kwargs)
-        _splash_pump_maybe()
-        return r
+    _grid_patched = _bind_method_deps(
+        _core_startup._grid_patched,
+        _splash_pump_maybe=_splash_pump_maybe,
+        _tk_grid_orig=_tk_grid_orig,
+    )
 
-    def _place_patched(self: tk.Misc, *args: object, **kwargs: object) -> object | None:
-        r = _tk_place_orig(self, *args, **kwargs)
-        _splash_pump_maybe()
-        return r
+    _place_patched = _bind_method_deps(
+        _core_startup._place_patched,
+        _splash_pump_maybe=_splash_pump_maybe,
+        _tk_place_orig=_tk_place_orig,
+    )
 
     if _PIGEON_EXT:
         # Stay a direct child of ``shell`` (placed full-size). Do **not** pack into ``video_area`` after
@@ -1313,7 +1286,6 @@ def main() -> int:
         # Opaque black label: splash frames are always composited to RGB (never Tk alpha punch-through).
         splash_label = tk.Label(splash_overlay, bg="#000", bd=0, cursor="none")
         splash_label.pack(expand=True, fill="both")
-        splash_photo: list[ImageTk.PhotoImage | None] = [None]
         splash_idx = [0]
         # Set after a lead buffer is baked so the Pi does not skip/hitch on PNG decode.
         splash_t0: list[float | None] = [None]
@@ -1420,12 +1392,6 @@ def main() -> int:
         )
         _splash_reveal_i = int(SPLASH_CLOCK_REVEAL_FRAME)
 
-        # Two parallel caches keyed by frame index:
-        #   * _splash_rgb_cache: opaque RGB over black for pre-reveal frames.
-        #   * _splash_bgra_cache: keep alpha for reveal frames so they composite over a live clock.
-        _splash_rgb_cache: dict[int, np.ndarray] = {}
-        _splash_bgra_cache: dict[int, np.ndarray] = {}
-        _splash_photo_cache: dict[int, ImageTk.PhotoImage] = {}
         _splash_prebake_done = [False]
 
         def _splash_photo_from_rgb(rgb: np.ndarray) -> ImageTk.PhotoImage:

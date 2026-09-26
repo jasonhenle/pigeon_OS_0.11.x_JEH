@@ -49,6 +49,16 @@ def add_kwonly(text, fn, deps):
         if depth >= 1 and tk.type not in (tokenize.NL, tokenize.NEWLINE, tokenize.COMMENT, tokenize.INDENT, tokenize.DEDENT):
             last_sig = tk
     a = fn.args
+    if a.kwarg:
+        # pass 11: deps go right before ``**kwargs`` so kwargs keeps the same keys
+        tl = text.splitlines(keepends=True)
+        dstar = next(tk for tk in toks if tk.type == tokenize.OP and tk.string == "**")
+        ins = ", ".join(deps) + ", "
+        if not (a.vararg or a.kwonlyargs):
+            ins = "*, " + ins
+        r, c = dstar.start
+        tl[r - 1] = tl[r - 1][:c] + ins + tl[r - 1][c:]
+        return "".join(tl)
     has_params = bool(a.posonlyargs or a.args or a.vararg or a.kwonlyargs)
     star_present = bool(a.vararg or a.kwonlyargs)
     trailing_comma = last_sig is not None and last_sig.string == "," and has_params
@@ -118,8 +128,9 @@ for mod, names in PLAN.items():
         if deps:
             late = set(r.get("late", ()))
             val = lambda d: f'_late(lambda: {d}, "{d}")' if d in late else d
-            b = f"{IND}{name} = _bind_deps(\n{IND}    _core_{mod}.{name},\n" + "".join(f"{IND}    {d}={val(d)},\n" for d in deps) + f"{IND})\n"
-            one = f"{IND}{name} = _bind_deps(_core_{mod}.{name}, " + ", ".join(f"{d}={val(d)}" for d in deps) + ")\n"
+            bind = "_bind_method_deps" if r.get("method") else "_bind_deps"
+            b = f"{IND}{name} = {bind}(\n{IND}    _core_{mod}.{name},\n" + "".join(f"{IND}    {d}={val(d)},\n" for d in deps) + f"{IND})\n"
+            one = f"{IND}{name} = {bind}(_core_{mod}.{name}, " + ", ".join(f"{d}={val(d)}" for d in deps) + ")\n"
             if len(one) <= 100: b = one
         else:
             b = f"{IND}{name} = _core_{mod}.{name}\n"
@@ -168,6 +179,11 @@ if any(ROWS[n].get("late") for names in PLAN.values() for n in names):
     if imp not in src2:
         anchor = "from pigeon.core.binding import bind_deps as _bind_deps\n"
         assert anchor in src2
+        src2 = src2.replace(anchor, anchor + imp, 1)
+if any(ROWS[n].get("method") for names in PLAN.values() for n in names):
+    imp = "from pigeon.core.binding import bind_method_deps as _bind_method_deps\n"
+    if imp not in src2:
+        anchor = "from pigeon.core.binding import bind_deps as _bind_deps\n"
         src2 = src2.replace(anchor, anchor + imp, 1)
 for mod in PLAN:
     imp = f"from pigeon.core import {mod} as _core_{mod}\n"

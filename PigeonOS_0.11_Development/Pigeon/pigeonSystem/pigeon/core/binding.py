@@ -34,3 +34,20 @@ def late(get, name):
 
     call.__name__ = call.__qualname__ = name
     return call
+
+
+def bind_method_deps(fn, /, **deps):
+    """Like :func:`bind_deps`, but returns a plain function so it works as a method.
+
+    ``functools.partial`` is not a descriptor: stored on a class
+    (``tk.Widget.pack = ...``) it would be called without ``self``. The wrapper
+    returned here is an ordinary function, so attribute lookup binds ``self``
+    as it did for the original nested ``def``. Keyword handling matches
+    ``partial``: explicit caller keywords win over ``deps``.
+    """
+
+    @functools.wraps(fn)
+    def method(*args, **kwargs):
+        return fn(*args, **{**deps, **kwargs})
+
+    return method

@@ -1,0 +1,4 @@
+{
+ "saver_state": ["_clock_saver_layers"],
+ "startup": ["_try_remove_splash_overlay", "_pack_patched", "_grid_patched", "_place_patched"]
+}

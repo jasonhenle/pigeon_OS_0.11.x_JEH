@@ -1181,3 +1181,31 @@ def _rasterize_clock_saver_window_bgr(*, DESIGN_H, DESIGN_W, UI_TARGET_H, UI_TAR
         )
     except Exception:
         return None
+
+
+def _clock_saver_layers(*, _clock_saver_volume_raw, _volume_lines, clock_saver_composite_bgra, render_audio_meter_composite_bgra, **kwargs):
+    try:
+        from pigeon.auto_widgets import live_plan
+
+        plan = live_plan()
+    except Exception:
+        plan = None
+    if plan is not None:
+        kwargs.setdefault("include_weather", not bool(plan.blank_weather))
+        if plan.blank_volume:
+            kwargs["volume"] = ""
+            kwargs["line_opacity"] = 0.0
+    if "volume" not in kwargs:
+        kwargs["volume"] = _clock_saver_volume_raw()
+    if "line_opacity" not in kwargs:
+        try:
+            kwargs["line_opacity"] = _volume_lines.opacity()
+        except Exception:
+            kwargs["line_opacity"] = 0.0
+    replace = bool(kwargs.pop("replace_with_meter", False))
+    if replace and render_audio_meter_composite_bgra is not None:
+        op = kwargs.get("time_layer_opacity")
+        if op is None:
+            op = kwargs.get("layer_opacity", 1.0)
+        return render_audio_meter_composite_bgra(layer_opacity=float(op))
+    return clock_saver_composite_bgra(**kwargs)

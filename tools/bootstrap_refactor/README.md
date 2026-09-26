@@ -226,13 +226,34 @@ python3 $T/transform.py . $T/plan10.json /tmp/p10.json $T/new_module_docs.json -
 but the Tk root: a `functools.partial` is not a descriptor, so
 `tk.Widget.pack = _pack_patched` would stop receiving `self`.
 
-Left in `main()` (5):
+Left in `main()` after pass 10: the three `tk.Widget` patches,
+`_clock_saver_layers` (`**kwargs`) and `_try_remove_splash_overlay` -- see pass 11.
 
-- `_pack_patched`, `_grid_patched`, `_place_patched` -- installed as
-  `tk.Widget` methods (and take `**kwargs`);
-- `_clock_saver_layers` -- takes `**kwargs`;
-- `_try_remove_splash_overlay` -- reads `splash_photo` and the `_splash_*_cache`
-  lists, which are only bound inside `if _PIGEON_EXT:`.
+## Pass 11: main() has no top-level helpers left
 
-`main()` also still has functions nested inside `if` / `try` blocks (the splash
-workers, `_bootstrap_after_splash`); pass 10 only looks at its top level.
+- `hoist_main.py` moves `splash_photo` and the three `_splash_*_cache` dicts
+  (literal initialisers) out of `if _PIGEON_EXT:` to just before
+  `_try_remove_splash_overlay`. Nothing reads them at `main()`'s top level; all
+  other readers are closures created later inside that block. The only change:
+  the non-ext path now has four empty containers nobody reads, and the helper's
+  `except NameError` guard can no longer fire (kept verbatim).
+- `pass10.py` accepts `**kwargs` when every call passes explicit keywords and
+  none is a dependency name; deps become keyword-only params placed *before*
+  `**kwargs`, so `kwargs` sees the same keys.
+- `pass10.py --method NAME` allows a helper stored on a class; `transform.py`
+  then binds it with `bind_method_deps` (new in `pigeon.core.binding`), which
+  returns a real function so `tk.Widget.pack = _pack_patched` still gets
+  `self`. Deps must start with `_`; no Tk call in the app passes such a keyword.
+
+```bash
+python3 $T/hoist_main.py pigeon_0_9.py _try_remove_splash_overlay \
+    splash_photo _splash_rgb_cache _splash_bgra_cache _splash_photo_cache
+python3 $T/pass10.py pigeon_0_9.py /tmp/p11.json \
+    --method _pack_patched --method _grid_patched --method _place_patched
+python3 $T/transform.py . $T/plan11.json /tmp/p11.json $T/new_module_docs.json --scope=main
+```
+
+`plan11.json` lifts the last 5. `main()`'s only top-level `def` is now
+`bootstrap`. Functions nested inside `main()`'s `if` / `try` blocks (the
+splash workers, `splash_tick`, `_bootstrap_after_splash`, the null-object
+classes) are still inline.

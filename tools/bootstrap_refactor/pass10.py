@@ -23,6 +23,19 @@ A top-level ``def`` in ``main()`` (other than ``bootstrap``) is liftable when:
   (``root.report_callback_exception = f`` is fine). Storing it on a class
   (``tk.Widget.pack = f``) would break: a ``functools.partial`` is not a
   descriptor, so it would not receive ``self``.
+
+Pass 11 options:
+
+- ``--method NAME``: ``NAME`` may be stored on a class. The row is marked
+  ``method`` and ``transform.py`` binds it with ``bind_method_deps`` (a real
+  function, so it becomes a bound method). Every dependency name must start
+  with ``_`` and no ``.pack(`` / ``.grid(`` / ``.place(`` call in the app
+  passes such a keyword (Tk option names never start with ``_``).
+- ``**kwargs`` is accepted when every call of the helper in ``pigeon_0_9.py``
+  and ``pigeon/core/`` passes explicit keywords only (no ``**`` splat) and none
+  of them is a dependency name; the dependencies are then keyword-only
+  parameters placed before ``**kwargs``, so ``kwargs`` sees exactly the same
+  keys as before.
 """
 import ast
 import builtins
@@ -31,7 +44,17 @@ import json
 import symtable
 import sys
 
-SRC, OUT = sys.argv[1:3]
+import glob
+import os
+
+METHODS = set()
+_argv = sys.argv[1:]
+while "--method" in _argv:
+    k = _argv.index("--method")
+    METHODS.add(_argv[k + 1])
+    del _argv[k:k + 2]
+SRC, OUT = _argv[:2]
+CALL_FILES = [SRC] + sorted(glob.glob(os.path.join(os.path.dirname(os.path.abspath(SRC)), "pigeon", "core", "*.py")))
 src = open(SRC).read()
 tree = ast.parse(src)
 main = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "main")
@@ -194,6 +217,22 @@ def tables_under(t):
         yield from tables_under(c)
 
 
+def _calls():
+    for p in CALL_FILES:
+        for n in ast.walk(ast.parse(open(p).read())):
+            if isinstance(n, ast.Call):
+                yield n
+
+
+def call_keywords(name):
+    """Keyword names at every ``name(...)`` call (``None`` for a ``**`` splat)."""
+    return [k.arg for n in _calls() if isinstance(n.func, ast.Name) and n.func.id == name for k in n.keywords]
+
+
+def method_call_keywords(attr):
+    return [k.arg for n in _calls() if isinstance(n.func, ast.Attribute) and n.func.attr == attr for k in n.keywords]
+
+
 kids = collections.defaultdict(list)
 for c in mt.get_children():
     kids[c.get_name()].append(c)
@@ -206,14 +245,18 @@ for i, f in enumerate(main.body):
     r = []
     if f.decorator_list: r.append("decorated")
     if isinstance(f, ast.AsyncFunctionDef): r.append("async")
-    if f.args.kwarg: r.append("**kwargs")
     if not all(const_default(d) for d in f.args.defaults + [d for d in f.args.kw_defaults if d]): r.append("nonconst-default")
     if any(isinstance(n, (ast.Nonlocal, ast.Global)) for n in ast.walk(f)): r.append("nonlocal")
     if any(isinstance(n, ast.ClassDef) for n in ast.walk(f)): r.append("classdef")
     if len(mb.get(f.name, [])) != 1: r.append("rebound-self")
+    is_method = False
     for a in attr_stores(f.name):
-        if not (isinstance(a.value, ast.Name) and a.value.id in tk_roots):
-            r.append("stored-on:" + ast.unparse(a))
+        if isinstance(a.value, ast.Name) and a.value.id in tk_roots:
+            continue
+        if f.name in METHODS:
+            is_method = True
+            continue
+        r.append("stored-on:" + ast.unparse(a))
     deps, late, gdeps, imps = [], [], set(), set()
     for n in sorted(t.get_frees()):
         if not mt.lookup(n).is_local():
@@ -234,7 +277,19 @@ for i, f in enumerate(main.body):
                 elif n in plain_imports: imps.add(n)
                 elif n in BUILTINS: pass
                 else: gdeps.add(n)
-    rows.append(dict(name=f.name, line=f.lineno, end=f.end_lineno, idx=i, bdeps=sorted(set(deps) | set(late)),
+    all_deps = set(deps) | set(late) | gdeps
+    if is_method:
+        bad = sorted(d for d in all_deps if not d.startswith("_"))
+        if bad: r.append("method-dep-not-underscored:" + ",".join(bad))
+        attr = ast.unparse(attr_stores(f.name)[0]).rsplit(".", 1)[-1]
+        for kw in method_call_keywords(attr):
+            if kw is None: continue  # ``**opts`` at a Tk call: Tk option dicts never hold ``_`` keys
+            if kw in all_deps: r.append("kw-collision:" + kw)
+    elif f.args.kwarg:
+        for kw in call_keywords(f.name):
+            if kw is None: r.append("**kwargs:splat-call")
+            elif kw in all_deps: r.append("**kwargs:collision:" + kw)
+    rows.append(dict(name=f.name, method=is_method, line=f.lineno, end=f.end_lineno, idx=i, bdeps=sorted(set(deps) | set(late)),
                      mdeps=[], gdeps=sorted(gdeps), imps=sorted(imps), late=sorted(late), reasons=r, safe=not r))
 json.dump(rows, open(OUT, "w"), indent=1)
 for x in rows:

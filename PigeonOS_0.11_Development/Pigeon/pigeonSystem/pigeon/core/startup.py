@@ -11,6 +11,7 @@ from __future__ import annotations
 import numpy as np
 import time
 import tkinter as tk
+import sys
 
 
 def _early_splash_clock_underlay(*, _bgr_to_tk_image, _early_clock_underlay_photo, _reveal_clock_under_splash, _splash_reveal_clock, _splash_underlay_bgr, label) -> None:
@@ -201,3 +202,60 @@ def _splash_pump_maybe(*, _PIGEON_EXT, _reveal_clock_under_splash, _splash_pump_
         root.update()
     except tk.TclError:
         pass
+
+
+def _try_remove_splash_overlay(*, _PIGEON_EXT, _app_startup_mono, _finish_post_splash_startup_transition, _reveal_clock_under_splash, _splash_bgra_cache, _splash_photo_cache, _splash_rgb_cache, bootstrap_done, post_splash_mono, splash_anim_done, splash_photo, startup_ph) -> None:
+    """Destroy splash the instant the sequence ends (no bootstrap wait)."""
+    if not _PIGEON_EXT:
+        return
+    if not splash_anim_done[0]:
+        return
+    w = startup_ph[0]
+    if w is None:
+        return
+    # Clock must already be on the bridge underlay before the overlay disappears.
+    _reveal_clock_under_splash(refresh=False)
+    if bootstrap_done[0]:
+        _finish_post_splash_startup_transition()
+    try:
+        w.destroy()
+    except tk.TclError:
+        pass
+    startup_ph[0] = None
+    try:
+        sys.stderr.write(
+            f"pigeon: splash overlay lifted +{time.monotonic() - _app_startup_mono:.3f}s\n"
+        )
+        sys.stderr.flush()
+    except Exception:
+        pass
+    # Splash frames can hold tens of MB (full-window RGB/BGRA per frame);
+    # release them now that the overlay is gone. NameError guard: the caches
+    # only exist when the ext splash path ran.
+    try:
+        _splash_rgb_cache.clear()
+        _splash_bgra_cache.clear()
+        _splash_photo_cache.clear()
+        splash_photo[0] = None
+    except NameError:
+        pass
+    if post_splash_mono[0] is None:
+        post_splash_mono[0] = time.monotonic()
+
+
+def _pack_patched(self: tk.Misc, *args: object, _splash_pump_maybe, _tk_pack_orig, **kwargs: object) -> object | None:
+    r = _tk_pack_orig(self, *args, **kwargs)
+    _splash_pump_maybe()
+    return r
+
+
+def _grid_patched(self: tk.Misc, *args: object, _splash_pump_maybe, _tk_grid_orig, **kwargs: object) -> object | None:
+    r = _tk_grid_orig(self, *args, **kwargs)
+    _splash_pump_maybe()
+    return r
+
+
+def _place_patched(self: tk.Misc, *args: object, _splash_pump_maybe, _tk_place_orig, **kwargs: object) -> object | None:
+    r = _tk_place_orig(self, *args, **kwargs)
+    _splash_pump_maybe()
+    return r
