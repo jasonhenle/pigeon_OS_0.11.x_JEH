@@ -1,5 +1,11 @@
 import ast, io, json, os, sys, tokenize, inspect, re, copy
 sys.path.insert(0, os.path.expanduser("~/an"))
+# ``--scope=main`` (pass 10) lifts helpers defined directly in main() instead of bootstrap().
+SCOPE = "bootstrap"
+if any(a.startswith("--scope=") for a in sys.argv):
+    SCOPE = next(a for a in sys.argv if a.startswith("--scope="))[len("--scope="):]
+    sys.argv = [a for a in sys.argv if not a.startswith("--scope=")]
+assert SCOPE in ("bootstrap", "main"), SCOPE
 ROOT = sys.argv[1]  # pigeonSystem dir
 PLAN = json.load(open(sys.argv[2]))  # {module: [names]}
 ROWS = {r["name"]: r for r in json.load(open(sys.argv[3]))}
@@ -10,7 +16,8 @@ lines = src.splitlines(keepends=True)
 tree = ast.parse(src)
 main = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "main")
 boot = next(n for n in main.body if isinstance(n, ast.FunctionDef) and n.name == "bootstrap")
-defs = {s.name: s for s in boot.body if isinstance(s, ast.FunctionDef)}
+parent = boot if SCOPE == "bootstrap" else main
+defs = {s.name: s for s in parent.body if isinstance(s, ast.FunctionDef)}
 
 # module-level import statements usable directly
 direct = {}
@@ -23,7 +30,7 @@ for s in tree.body:
         for a in s.names:
             direct[a.asname or a.name] = f"from {s.module} import {a.name}" + (f" as {a.asname}" if a.asname else "")
 
-IND = " " * 8
+IND = " " * (8 if SCOPE == "bootstrap" else 4)
 
 def add_kwonly(text, fn, deps):
     """Insert keyword-only params before the def's closing paren."""
@@ -125,7 +132,7 @@ for mod, names in PLAN.items():
                 start -= 1
             moved = "".join(lines[start - 1: fn.lineno - 1])
             replacements.append((start, fn.end_lineno, ""))
-            after = boot.body[r["bind_after"]].end_lineno
+            after = parent.body[r["bind_after"]].end_lineno
             inserts.append((after, fn.lineno, "\n" + moved + b))
         report.append((mod, name, fn.end_lineno - fn.lineno + 1, len(deps)))
 
@@ -187,7 +194,7 @@ for mod, fns in modules_out.items():
         cl[last_imp:last_imp] = [a + "\n" for a in add]
         cur = "".join(cl).rstrip("\n") + "\n"
     else:
-        cur = f'"""{NEW_DOCS[mod]}\n\nExtracted verbatim from ``bootstrap()`` in ``pigeon_0_9.py``. Each function\ntakes the app state it used to close over as keyword-only arguments;\n``bootstrap()`` binds them once with ``bind_deps`` so call sites are unchanged.\n"""\n\nfrom __future__ import annotations\n\n'
+        cur = f'"""{NEW_DOCS[mod]}\n\nExtracted verbatim from ``{SCOPE}()`` in ``pigeon_0_9.py``. Each function\ntakes the app state it used to close over as keyword-only arguments;\n``{SCOPE}()`` binds them once with ``bind_deps`` so call sites are unchanged.\n"""\n\nfrom __future__ import annotations\n\n'
         cur += "".join(sorted(x + "\n" for x in needed))
     for n, t, _i in fns:
         cur += "\n\n" + t.rstrip("\n") + "\n"

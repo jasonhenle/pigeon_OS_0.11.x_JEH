@@ -1,8 +1,9 @@
 """Clock saver / pausesaver / idle-activity decisions.
 
-Extracted verbatim from ``bootstrap()`` in ``pigeon_0_9.py``. Each function
-takes the app state it used to close over as keyword-only arguments;
-``bootstrap()`` binds them once with ``bind_deps`` so call sites are unchanged.
+Extracted verbatim from ``bootstrap()`` (and, since pass 10, ``main()``) in
+``pigeon_0_9.py``. Each function takes the app state it used to close over as
+keyword-only arguments; the enclosing function binds them once with
+``bind_deps`` so call sites are unchanged.
 """
 
 from __future__ import annotations
@@ -1051,3 +1052,132 @@ def _clock_saver_for_compose(now: float, *, DevPhase, DisplayView, _apply_auto_w
     if clock_saver_force_on[0]:
         return True
     return _clock_saver_active(now)
+
+
+def _note_zone3_volume_takeover(*, view_circles_widget_holder) -> None:
+    """Hold the NP volume widget in zone 3 for 7s after an adjustment."""
+    try:
+        if view_circles_widget_holder[0] is not None:
+            view_circles_widget_holder[0].note_volume_adjustment()
+    except NameError:
+        pass
+    except Exception:
+        pass
+
+
+def _note_volume_graphics(raw: object, *, _clock_saver_volume, _note_zone3_volume_takeover, _volume_lines) -> None:
+    prev_label = str(getattr(_volume_lines, "last_label", "") or "")
+    try:
+        _volume_lines.note(raw)
+    except Exception:
+        pass
+    # Arms and Digital-7 must track the same string. A later fat poll
+    # must not paint a stale ``effective`` after this reveal.
+    new_label = str(getattr(_volume_lines, "last_label", "") or "")
+    if not new_label or new_label == prev_label:
+        return
+    if prev_label:
+        _note_zone3_volume_takeover()
+    try:
+        if _clock_saver_volume.is_stale_poll(raw):
+            return
+        _clock_saver_volume.remember(raw, source="poll")
+    except Exception:
+        pass
+
+
+def _remember_clock_saver_volume(raw: object, *, source: str = "poll", _clock_saver_volume) -> str:
+    """Keep the last displayable saver volume; empty / stale polls do not clear it."""
+    return _clock_saver_volume.remember(raw, source=source)
+
+
+def _clock_saver_receiver_off(*, receiver_standby_holder) -> bool:
+    """True when the AVR is in standby or not answering — hide the saver volume."""
+    try:
+        if bool(receiver_standby_holder[0]):
+            return True
+    except NameError:
+        pass
+    try:
+        from pigeon.runtime_state import core_state
+
+        rx = core_state().receiver
+        if bool(getattr(rx, "standby", False)):
+            return True
+        if not bool(getattr(rx, "reachable", False)):
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _clock_saver_volume_raw(*, _clock_saver_volume, denon_vol_cache, receiver_overlay_state, view_circles_widget_holder) -> str:
+    """AVR master volume for the saver + NP disc (box 3)."""
+    try:
+        shown = str(_clock_saver_volume.display_line() or "").strip()
+        if shown:
+            return shown
+    except Exception:
+        pass
+    candidates: list[object] = []
+    try:
+        candidates.append(denon_vol_cache.get("effective"))
+        candidates.append(denon_vol_cache.get("np_hold"))
+    except NameError:
+        pass
+    try:
+        candidates.append(receiver_overlay_state.get("volume"))
+    except NameError:
+        pass
+    try:
+        from pigeon.runtime_state import core_state
+
+        candidates.append(core_state().receiver.volume)
+    except Exception:
+        pass
+    try:
+        st = getattr(view_circles_widget_holder[0], "_state", None)
+        candidates.append(getattr(st, "volume", ""))
+    except NameError:
+        pass
+    except Exception:
+        pass
+    return _clock_saver_volume.pick(candidates)
+
+
+def _rasterize_clock_saver_window_bgr(*, DESIGN_H, DESIGN_W, UI_TARGET_H, UI_TARGET_W, WINDOW_H, WINDOW_W, _clock_saver_layers, _present_frame_to_display, alpha_blend_bgra_over_bgr, clock_saver_composite_bgra) -> np.ndarray | None:
+    """Full-window BGR clock saver, or None."""
+    if clock_saver_composite_bgra is None or alpha_blend_bgra_over_bgr is None:
+        return None
+    try:
+        dw = int(DESIGN_W) if int(DESIGN_W) > 0 else int(UI_TARGET_W)
+        dh = int(DESIGN_H) if int(DESIGN_H) > 0 else int(UI_TARGET_H)
+        canvas = np.zeros((dh, dw, 3), dtype=np.uint8)
+        (time_bgra, t_rect), (date_bgra, d_rect) = _clock_saver_layers(
+            shadow_bgr=None,
+            layer_opacity=1.0,
+            time_layer_opacity=1.0,
+            date_layer_opacity=1.0,
+        )
+        for cs_bgra, (sx, sy, sw, sh) in (
+            (date_bgra, d_rect),
+            (time_bgra, t_rect),
+        ):
+            x0 = max(0, int(sx))
+            y0 = max(0, int(sy))
+            x1 = min(dw, x0 + int(sw))
+            y1 = min(dh, y0 + int(sh))
+            if x1 <= x0 or y1 <= y0:
+                continue
+            roi = canvas[y0:y1, x0:x1]
+            patch = cs_bgra[0 : y1 - y0, 0 : x1 - x0]
+            if patch.shape[0] != roi.shape[0] or patch.shape[1] != roi.shape[1]:
+                continue
+            roi[:] = alpha_blend_bgra_over_bgr(roi, patch)
+        return np.ascontiguousarray(
+            _present_frame_to_display(
+                canvas, WINDOW_W, WINDOW_H, native_now_playing=True
+            )
+        )
+    except Exception:
+        return None

@@ -1,0 +1,5 @@
+{
+ "app_shell": ["_reassert_kiosk", "_restore_desktop_chrome", "_quit_pigeon", "_report_callback_exception"],
+ "saver_state": ["_note_zone3_volume_takeover", "_note_volume_graphics", "_remember_clock_saver_volume", "_clock_saver_receiver_off", "_clock_saver_volume_raw", "_rasterize_clock_saver_window_bgr"],
+ "startup": ["_apply_clock_to_bridge_label", "_reveal_clock_under_splash", "_finish_post_splash_startup_transition", "_live_clock_until_compose", "_splash_pump_maybe"]
+}

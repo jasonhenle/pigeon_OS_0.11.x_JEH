@@ -1,8 +1,9 @@
 """Splash / startup choreography: clock underlay capture and the post-splash clock fade-in.
 
-Extracted verbatim from ``bootstrap()`` in ``pigeon_0_9.py``. Each function
-takes the app state it used to close over as keyword-only arguments;
-``bootstrap()`` binds them once with ``bind_deps`` so call sites are unchanged.
+Extracted verbatim from ``bootstrap()`` (and, since pass 10, ``main()``) in
+``pigeon_0_9.py``. Each function takes the app state it used to close over as
+keyword-only arguments; the enclosing function binds them once with
+``bind_deps`` so call sites are unchanged.
 """
 
 from __future__ import annotations
@@ -120,3 +121,83 @@ def _activate_now_playing_after_splash(*, _enable_now_playing_screen, _startup_s
     _startup_splash_complete[0] = True
     skip_cache[0] = None
     render_once()
+
+
+def _apply_clock_to_bridge_label(shown: np.ndarray, *, _bgr_to_tk_image, _boot_clock_label, _boot_clock_photo) -> None:
+    """Push clock pixels onto the content_host bridge (under the splash overlay)."""
+    try:
+        _boot_clock_photo[0] = _bgr_to_tk_image(shown)
+        if _boot_clock_label.winfo_exists():
+            _boot_clock_label.configure(image=_boot_clock_photo[0])
+            _boot_clock_label.image = _boot_clock_photo[0]  # type: ignore[attr-defined]
+    except tk.TclError:
+        pass
+
+
+def _reveal_clock_under_splash(*, refresh: bool = False, _apply_clock_to_bridge_label, _rasterize_clock_saver_window_bgr, _splash_clock_ready_bgr, _splash_on_reveal_paint, _splash_reveal_clock, _splash_underlay_bgr, _splash_underlay_paint_mono, bootstrap_done) -> bool:
+    """From frame 90: put the live clock into the underlay + bridge beneath splash."""
+    shown = _splash_clock_ready_bgr[0]
+    if shown is None or refresh:
+        shown = _rasterize_clock_saver_window_bgr()
+        if shown is not None:
+            _splash_clock_ready_bgr[0] = shown
+    if shown is None:
+        return False
+    # Compose owns the underlay after bootstrap; do not overwrite it with a stale prewarm.
+    if not bootstrap_done[0]:
+        _splash_underlay_bgr[0] = shown
+        _apply_clock_to_bridge_label(shown)
+        _splash_underlay_paint_mono[0] = time.monotonic()
+        paint = _splash_on_reveal_paint[0]
+        if callable(paint):
+            try:
+                paint()
+            except Exception:
+                pass
+    _splash_reveal_clock[0] = True
+    return True
+
+
+def _finish_post_splash_startup_transition(*, _post_splash_startup_hook, _splash_post_hook_ran) -> None:
+    """Post-splash hook (registered from ``bootstrap``)."""
+    if _splash_post_hook_ran[0]:
+        return
+    hook = _post_splash_startup_hook[0]
+    if callable(hook):
+        _splash_post_hook_ran[0] = True
+        hook()
+
+
+def _live_clock_until_compose(*, _live_clock_until_compose, _reveal_clock_under_splash, _splash_clock_refresh_stop, _splash_reveal_clock, bootstrap_done, root, splash_anim_done) -> None:
+    """Keep the boot/video clock on wall time until compose owns the display.
+
+    Bootstrap waits for splash, then packs widgets with ``root.update()``
+    (``_splash_pump_maybe``), which lets this tick run so the saver does not
+    freeze again between overlay lift and the first ``render_once``.
+    """
+    if bootstrap_done[0] or _splash_clock_refresh_stop[0]:
+        return
+    if _splash_reveal_clock[0] or splash_anim_done[0]:
+        _reveal_clock_under_splash(refresh=False)
+    if not bootstrap_done[0] and not _splash_clock_refresh_stop[0]:
+        try:
+            root.after(250, _live_clock_until_compose)
+        except tk.TclError:
+            pass
+
+
+def _splash_pump_maybe(*, _PIGEON_EXT, _reveal_clock_under_splash, _splash_pump_next, _splash_reveal_clock, _splash_underlay_paint_mono, bootstrap_done, root, splash_anim_done) -> None:
+    if not _PIGEON_EXT or bootstrap_done[0]:
+        return
+    now = time.monotonic()
+    if now < _splash_pump_next[0]:
+        return
+    _splash_pump_next[0] = now + (1.0 / 30.0)
+    if (_splash_reveal_clock[0] or splash_anim_done[0]) and (
+        now - float(_splash_underlay_paint_mono[0] or 0.0) >= 0.25
+    ):
+        _reveal_clock_under_splash(refresh=False)
+    try:
+        root.update()
+    except tk.TclError:
+        pass

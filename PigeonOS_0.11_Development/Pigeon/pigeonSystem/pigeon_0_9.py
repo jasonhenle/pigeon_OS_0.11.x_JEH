@@ -91,6 +91,7 @@ from pigeon.core import view_four as _core_view_four
 from pigeon.core import tmdb_flow as _core_tmdb_flow
 from pigeon.core import input_keys as _core_input_keys
 from pigeon.core import device_control as _core_device_control
+from pigeon.core import app_shell as _core_app_shell
 from pigeon.core import pairing as _core_pairing
 from pigeon.core import startup as _core_startup
 from pigeon.core import view_one as _core_view_one
@@ -953,31 +954,13 @@ def main() -> int:
 
     _kiosk_logged = [False]
 
-    def _reassert_kiosk(_event: object | None = None) -> None:
-        if not _kiosk_on:
-            return
-        try:
-            updated = enforce_kiosk(root, _kiosk_stopped_pids, borderless=True)
-        except Exception:
-            updated = list(_kiosk_stopped_pids)
-        _kiosk_stopped_pids[:] = updated
-        if _kiosk_logged[0]:
-            return
-        try:
-            covers = bool(window_covers_display(root))
-        except Exception:
-            covers = False
-        if covers:
-            _kiosk_logged[0] = True
-            try:
-                sys.stderr.write(
-                    f"pigeon: kiosk {root.winfo_width()}x{root.winfo_height()}"
-                    f"+{root.winfo_rootx()}+{root.winfo_rooty()} "
-                    f"screen={root.winfo_screenwidth()}x{root.winfo_screenheight()}\n"
-                )
-                sys.stderr.flush()
-            except Exception:
-                pass
+    _reassert_kiosk = _bind_deps(
+        _core_app_shell._reassert_kiosk,
+        _kiosk_logged=_kiosk_logged,
+        _kiosk_on=_kiosk_on,
+        _kiosk_stopped_pids=_kiosk_stopped_pids,
+        root=root,
+    )
 
     if _kiosk_on:
         apply_kiosk_fullscreen(root, borderless=False)
@@ -992,19 +975,18 @@ def main() -> int:
             pass
         schedule_kiosk_guard(root, _kiosk_stopped_pids)
 
-    def _restore_desktop_chrome() -> None:
-        if _kiosk_stopped_pids or _kiosk_on:
-            release_kiosk(list(_kiosk_stopped_pids))
-            _kiosk_stopped_pids.clear()
+    _restore_desktop_chrome = _bind_deps(
+        _core_app_shell._restore_desktop_chrome,
+        _kiosk_on=_kiosk_on,
+        _kiosk_stopped_pids=_kiosk_stopped_pids,
+    )
 
-    def _quit_pigeon() -> None:
-        try:
-            if stop_audio_meter_capture is not None:
-                stop_audio_meter_capture()
-        except Exception:
-            pass
-        _restore_desktop_chrome()
-        root.quit()
+    _quit_pigeon = _bind_deps(
+        _core_app_shell._quit_pigeon,
+        _restore_desktop_chrome=_restore_desktop_chrome,
+        root=root,
+        stop_audio_meter_capture=stop_audio_meter_capture,
+    )
 
     root.protocol("WM_DELETE_WINDOW", _quit_pigeon)
     if _kiosk_on:
@@ -1012,22 +994,10 @@ def main() -> int:
 
         atexit.register(_restore_desktop_chrome)
     # Ensure unexpected Tk callback errors are surfaced (and don't silently kill UI behavior).
-    def _report_callback_exception(exc, val, tb) -> None:  # type: ignore[no-untyped-def]
-        # Tk calls this as report_callback_exception(exc, val, tb) — no bound self.
-        import traceback
-
-        text = "".join(traceback.format_exception(exc, val, tb))
-        try:
-            sys.stderr.write("pigeon: Tk callback exception\n" + text + "\n")
-            sys.stderr.flush()
-        except Exception:
-            pass
-        if _kiosk_on:
-            return
-        try:
-            messagebox.showerror("Pigeon error", text)
-        except Exception:
-            pass
+    _report_callback_exception = _bind_deps(
+        _core_app_shell._report_callback_exception,
+        _kiosk_on=_kiosk_on,
+    )
 
     root.report_callback_exception = _report_callback_exception  # type: ignore[method-assign]
 
@@ -1148,91 +1118,35 @@ def main() -> int:
     }
     view_circles_widget_holder = [None]
 
-    def _note_zone3_volume_takeover() -> None:
-        """Hold the NP volume widget in zone 3 for 7s after an adjustment."""
-        try:
-            if view_circles_widget_holder[0] is not None:
-                view_circles_widget_holder[0].note_volume_adjustment()
-        except NameError:
-            pass
-        except Exception:
-            pass
+    _note_zone3_volume_takeover = _bind_deps(
+        _core_saver_state._note_zone3_volume_takeover,
+        view_circles_widget_holder=view_circles_widget_holder,
+    )
 
-    def _note_volume_graphics(raw: object) -> None:
-        prev_label = str(getattr(_volume_lines, "last_label", "") or "")
-        try:
-            _volume_lines.note(raw)
-        except Exception:
-            pass
-        # Arms and Digital-7 must track the same string. A later fat poll
-        # must not paint a stale ``effective`` after this reveal.
-        new_label = str(getattr(_volume_lines, "last_label", "") or "")
-        if not new_label or new_label == prev_label:
-            return
-        if prev_label:
-            _note_zone3_volume_takeover()
-        try:
-            if _clock_saver_volume.is_stale_poll(raw):
-                return
-            _clock_saver_volume.remember(raw, source="poll")
-        except Exception:
-            pass
+    _note_volume_graphics = _bind_deps(
+        _core_saver_state._note_volume_graphics,
+        _clock_saver_volume=_clock_saver_volume,
+        _note_zone3_volume_takeover=_note_zone3_volume_takeover,
+        _volume_lines=_volume_lines,
+    )
 
-    def _remember_clock_saver_volume(raw: object, *, source: str = "poll") -> str:
-        """Keep the last displayable saver volume; empty / stale polls do not clear it."""
-        return _clock_saver_volume.remember(raw, source=source)
+    _remember_clock_saver_volume = _bind_deps(
+        _core_saver_state._remember_clock_saver_volume,
+        _clock_saver_volume=_clock_saver_volume,
+    )
 
-    def _clock_saver_receiver_off() -> bool:
-        """True when the AVR is in standby or not answering — hide the saver volume."""
-        try:
-            if bool(receiver_standby_holder[0]):
-                return True
-        except NameError:
-            pass
-        try:
-            from pigeon.runtime_state import core_state
+    _clock_saver_receiver_off = _bind_deps(
+        _core_saver_state._clock_saver_receiver_off,
+        receiver_standby_holder=receiver_standby_holder,
+    )
 
-            rx = core_state().receiver
-            if bool(getattr(rx, "standby", False)):
-                return True
-            if not bool(getattr(rx, "reachable", False)):
-                return True
-        except Exception:
-            pass
-        return False
-
-    def _clock_saver_volume_raw() -> str:
-        """AVR master volume for the saver + NP disc (box 3)."""
-        try:
-            shown = str(_clock_saver_volume.display_line() or "").strip()
-            if shown:
-                return shown
-        except Exception:
-            pass
-        candidates: list[object] = []
-        try:
-            candidates.append(denon_vol_cache.get("effective"))
-            candidates.append(denon_vol_cache.get("np_hold"))
-        except NameError:
-            pass
-        try:
-            candidates.append(receiver_overlay_state.get("volume"))
-        except NameError:
-            pass
-        try:
-            from pigeon.runtime_state import core_state
-
-            candidates.append(core_state().receiver.volume)
-        except Exception:
-            pass
-        try:
-            st = getattr(view_circles_widget_holder[0], "_state", None)
-            candidates.append(getattr(st, "volume", ""))
-        except NameError:
-            pass
-        except Exception:
-            pass
-        return _clock_saver_volume.pick(candidates)
+    _clock_saver_volume_raw = _bind_deps(
+        _core_saver_state._clock_saver_volume_raw,
+        _clock_saver_volume=_clock_saver_volume,
+        denon_vol_cache=denon_vol_cache,
+        receiver_overlay_state=receiver_overlay_state,
+        view_circles_widget_holder=view_circles_widget_holder,
+    )
 
     def _clock_saver_layers(**kwargs):
         try:
@@ -1261,84 +1175,44 @@ def main() -> int:
             return render_audio_meter_composite_bgra(layer_opacity=float(op))
         return clock_saver_composite_bgra(**kwargs)
 
-    def _rasterize_clock_saver_window_bgr() -> np.ndarray | None:
-        """Full-window BGR clock saver, or None."""
-        if clock_saver_composite_bgra is None or alpha_blend_bgra_over_bgr is None:
-            return None
-        try:
-            dw = int(DESIGN_W) if int(DESIGN_W) > 0 else int(UI_TARGET_W)
-            dh = int(DESIGN_H) if int(DESIGN_H) > 0 else int(UI_TARGET_H)
-            canvas = np.zeros((dh, dw, 3), dtype=np.uint8)
-            (time_bgra, t_rect), (date_bgra, d_rect) = _clock_saver_layers(
-                shadow_bgr=None,
-                layer_opacity=1.0,
-                time_layer_opacity=1.0,
-                date_layer_opacity=1.0,
-            )
-            for cs_bgra, (sx, sy, sw, sh) in (
-                (date_bgra, d_rect),
-                (time_bgra, t_rect),
-            ):
-                x0 = max(0, int(sx))
-                y0 = max(0, int(sy))
-                x1 = min(dw, x0 + int(sw))
-                y1 = min(dh, y0 + int(sh))
-                if x1 <= x0 or y1 <= y0:
-                    continue
-                roi = canvas[y0:y1, x0:x1]
-                patch = cs_bgra[0 : y1 - y0, 0 : x1 - x0]
-                if patch.shape[0] != roi.shape[0] or patch.shape[1] != roi.shape[1]:
-                    continue
-                roi[:] = alpha_blend_bgra_over_bgr(roi, patch)
-            return np.ascontiguousarray(
-                _present_frame_to_display(
-                    canvas, WINDOW_W, WINDOW_H, native_now_playing=True
-                )
-            )
-        except Exception:
-            return None
+    _rasterize_clock_saver_window_bgr = _bind_deps(
+        _core_saver_state._rasterize_clock_saver_window_bgr,
+        DESIGN_H=DESIGN_H,
+        DESIGN_W=DESIGN_W,
+        UI_TARGET_H=UI_TARGET_H,
+        UI_TARGET_W=UI_TARGET_W,
+        WINDOW_H=WINDOW_H,
+        WINDOW_W=WINDOW_W,
+        _clock_saver_layers=_clock_saver_layers,
+        _present_frame_to_display=_present_frame_to_display,
+        alpha_blend_bgra_over_bgr=alpha_blend_bgra_over_bgr,
+        clock_saver_composite_bgra=clock_saver_composite_bgra,
+    )
 
-    def _apply_clock_to_bridge_label(shown: np.ndarray) -> None:
-        """Push clock pixels onto the content_host bridge (under the splash overlay)."""
-        try:
-            _boot_clock_photo[0] = _bgr_to_tk_image(shown)
-            if _boot_clock_label.winfo_exists():
-                _boot_clock_label.configure(image=_boot_clock_photo[0])
-                _boot_clock_label.image = _boot_clock_photo[0]  # type: ignore[attr-defined]
-        except tk.TclError:
-            pass
+    _apply_clock_to_bridge_label = _bind_deps(
+        _core_startup._apply_clock_to_bridge_label,
+        _bgr_to_tk_image=_bgr_to_tk_image,
+        _boot_clock_label=_boot_clock_label,
+        _boot_clock_photo=_boot_clock_photo,
+    )
 
-    def _reveal_clock_under_splash(*, refresh: bool = False) -> bool:
-        """From frame 90: put the live clock into the underlay + bridge beneath splash."""
-        shown = _splash_clock_ready_bgr[0]
-        if shown is None or refresh:
-            shown = _rasterize_clock_saver_window_bgr()
-            if shown is not None:
-                _splash_clock_ready_bgr[0] = shown
-        if shown is None:
-            return False
-        # Compose owns the underlay after bootstrap; do not overwrite it with a stale prewarm.
-        if not bootstrap_done[0]:
-            _splash_underlay_bgr[0] = shown
-            _apply_clock_to_bridge_label(shown)
-            _splash_underlay_paint_mono[0] = time.monotonic()
-            paint = _splash_on_reveal_paint[0]
-            if callable(paint):
-                try:
-                    paint()
-                except Exception:
-                    pass
-        _splash_reveal_clock[0] = True
-        return True
+    _reveal_clock_under_splash = _bind_deps(
+        _core_startup._reveal_clock_under_splash,
+        _apply_clock_to_bridge_label=_apply_clock_to_bridge_label,
+        _rasterize_clock_saver_window_bgr=_rasterize_clock_saver_window_bgr,
+        _splash_clock_ready_bgr=_splash_clock_ready_bgr,
+        _splash_on_reveal_paint=_splash_on_reveal_paint,
+        _splash_reveal_clock=_splash_reveal_clock,
+        _splash_underlay_bgr=_splash_underlay_bgr,
+        _splash_underlay_paint_mono=_splash_underlay_paint_mono,
+        bootstrap_done=bootstrap_done,
+    )
 
-    def _finish_post_splash_startup_transition() -> None:
-        """Post-splash hook (registered from ``bootstrap``)."""
-        if _splash_post_hook_ran[0]:
-            return
-        hook = _post_splash_startup_hook[0]
-        if callable(hook):
-            _splash_post_hook_ran[0] = True
-            hook()
+    _finish_post_splash_startup_transition = _bind_deps(
+        _core_startup._finish_post_splash_startup_transition,
+        _post_splash_startup_hook=_post_splash_startup_hook,
+        _splash_post_hook_ran=_splash_post_hook_ran,
+    )
 
     def _try_remove_splash_overlay() -> None:
         """Destroy splash the instant the sequence ends (no bootstrap wait)."""
@@ -1378,43 +1252,33 @@ def main() -> int:
         if post_splash_mono[0] is None:
             post_splash_mono[0] = time.monotonic()
 
-    def _live_clock_until_compose() -> None:
-        """Keep the boot/video clock on wall time until compose owns the display.
-
-        Bootstrap waits for splash, then packs widgets with ``root.update()``
-        (``_splash_pump_maybe``), which lets this tick run so the saver does not
-        freeze again between overlay lift and the first ``render_once``.
-        """
-        if bootstrap_done[0] or _splash_clock_refresh_stop[0]:
-            return
-        if _splash_reveal_clock[0] or splash_anim_done[0]:
-            _reveal_clock_under_splash(refresh=False)
-        if not bootstrap_done[0] and not _splash_clock_refresh_stop[0]:
-            try:
-                root.after(250, _live_clock_until_compose)
-            except tk.TclError:
-                pass
+    _live_clock_until_compose = _bind_deps(
+        _core_startup._live_clock_until_compose,
+        _live_clock_until_compose=_late(lambda: _live_clock_until_compose, "_live_clock_until_compose"),
+        _reveal_clock_under_splash=_reveal_clock_under_splash,
+        _splash_clock_refresh_stop=_splash_clock_refresh_stop,
+        _splash_reveal_clock=_splash_reveal_clock,
+        bootstrap_done=bootstrap_done,
+        root=root,
+        splash_anim_done=splash_anim_done,
+    )
 
     _tk_pack_orig = tk.Widget.pack
     _tk_grid_orig = tk.Widget.grid
     _tk_place_orig = tk.Widget.place
     _splash_pump_next: list[float] = [0.0]
 
-    def _splash_pump_maybe() -> None:
-        if not _PIGEON_EXT or bootstrap_done[0]:
-            return
-        now = time.monotonic()
-        if now < _splash_pump_next[0]:
-            return
-        _splash_pump_next[0] = now + (1.0 / 30.0)
-        if (_splash_reveal_clock[0] or splash_anim_done[0]) and (
-            now - float(_splash_underlay_paint_mono[0] or 0.0) >= 0.25
-        ):
-            _reveal_clock_under_splash(refresh=False)
-        try:
-            root.update()
-        except tk.TclError:
-            pass
+    _splash_pump_maybe = _bind_deps(
+        _core_startup._splash_pump_maybe,
+        _PIGEON_EXT=_PIGEON_EXT,
+        _reveal_clock_under_splash=_reveal_clock_under_splash,
+        _splash_pump_next=_splash_pump_next,
+        _splash_reveal_clock=_splash_reveal_clock,
+        _splash_underlay_paint_mono=_splash_underlay_paint_mono,
+        bootstrap_done=bootstrap_done,
+        root=root,
+        splash_anim_done=splash_anim_done,
+    )
 
     def _pack_patched(self: tk.Misc, *args: object, **kwargs: object) -> object | None:
         r = _tk_pack_orig(self, *args, **kwargs)

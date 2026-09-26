@@ -204,3 +204,35 @@ Known pre-existing issue (not changed here): functions defined directly in
 `_clock_saver_receiver_off`) read `view_circles_widget`,
 `receiver_overlay_state`, `receiver_standby_holder`, which only exist inside
 `bootstrap()`; the `NameError` is swallowed, so those reads never succeed.
+
+## Pass 10: helpers defined directly in main()
+
+Same rules one scope up: the parent is `main()`, the grandparent the module.
+`pass10.py` does the pass-2 analysis (plus pass-7 late binding for recursion)
+for `main()`'s top-level `def`s; `transform.py --scope=main` moves them with a
+4-space dedent and binds them where the `def` stood.
+
+```bash
+python3 $T/pass10.py pigeon_0_9.py /tmp/p10.json
+python3 $T/transform.py . $T/plan10.json /tmp/p10.json $T/new_module_docs.json --scope=main
+```
+
+`plan10.json` lifts 15 helpers: kiosk / quit / Tk error reporter (new
+`pigeon/core/app_shell.py`), the clock-saver volume + rasterize helpers
+(`saver_state.py`), and the splash-reveal clock helpers (`startup.py`;
+`_live_clock_until_compose` is recursive, so it is late-bound).
+
+`pass10.py` also refuses a helper that is stored as an attribute of anything
+but the Tk root: a `functools.partial` is not a descriptor, so
+`tk.Widget.pack = _pack_patched` would stop receiving `self`.
+
+Left in `main()` (5):
+
+- `_pack_patched`, `_grid_patched`, `_place_patched` -- installed as
+  `tk.Widget` methods (and take `**kwargs`);
+- `_clock_saver_layers` -- takes `**kwargs`;
+- `_try_remove_splash_overlay` -- reads `splash_photo` and the `_splash_*_cache`
+  lists, which are only bound inside `if _PIGEON_EXT:`.
+
+`main()` also still has functions nested inside `if` / `try` blocks (the splash
+workers, `_bootstrap_after_splash`); pass 10 only looks at its top level.
