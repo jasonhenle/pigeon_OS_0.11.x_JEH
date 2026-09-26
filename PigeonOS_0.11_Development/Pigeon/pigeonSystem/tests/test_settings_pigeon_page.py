@@ -30,6 +30,9 @@ class _IsolatedStateTest(unittest.TestCase):
         path = Path(self._tmp.name) / "state.json"
         patches = [
             mock.patch.object(app_state, "state_file", return_value=path),
+            # Cache keys are (mtime, size) only; restore the caller's entries after.
+            mock.patch.object(app_state, "_STATE_TEXT_CACHE", None),
+            mock.patch.object(app_state, "_STATE_PARSED_CACHE", None),
             mock.patch.object(pigeon_locale, "_lookup_ip_location", return_value=("", "")),
             mock.patch.object(pigeon_locale, "_lookup_zip_timezone", return_value=""),
             mock.patch("pigeon.weather.refresh_weather", return_value=False),
@@ -38,8 +41,6 @@ class _IsolatedStateTest(unittest.TestCase):
             p.start()
             self.addCleanup(p.stop)
         self.addCleanup(self._tmp.cleanup)
-        app_state._STATE_TEXT_CACHE = None
-        app_state._STATE_PARSED_CACHE = None
         ucs._LIVE_UI_KEY = None
         self.addCleanup(setattr, ucs, "_LIVE_UI_KEY", None)
 
@@ -98,6 +99,28 @@ class FocusRingTests(unittest.TestCase):
             self.assertEqual(
                 full_hex(ucs.hex_for_color_key("ui", key)), full_hex(icon.get("fill")), key
             )
+
+
+class IsolatedStateFixtureTests(unittest.TestCase):
+    def test_state_caches_restored_after_cleanup(self) -> None:
+        text_sentinel = (1, 2, "outer")
+        parsed_sentinel = (1, 2, {"outer": True})
+        with (
+            mock.patch.object(app_state, "_STATE_TEXT_CACHE", text_sentinel),
+            mock.patch.object(app_state, "_STATE_PARSED_CACHE", parsed_sentinel),
+        ):
+            inner = _IsolatedStateTest("run")
+            inner.setUp()
+            self.assertIsNone(app_state._STATE_TEXT_CACHE)
+            self.assertIsNone(app_state._STATE_PARSED_CACHE)
+            app_state.write_app_state(zipcode="21710")
+            app_state.read_app_state()
+            app_state.read_app_state_shared()
+            self.assertIsNotNone(app_state._STATE_TEXT_CACHE)
+            self.assertIsNotNone(app_state._STATE_PARSED_CACHE)
+            inner.doCleanups()
+            self.assertIs(app_state._STATE_TEXT_CACHE, text_sentinel)
+            self.assertIs(app_state._STATE_PARSED_CACHE, parsed_sentinel)
 
 
 class PageStateTests(_IsolatedStateTest):
