@@ -1174,7 +1174,6 @@ def _handle_main_settings_action(action: str, *, _apply_persisted_location_to_ru
         st.live_wifi_ssid = ""
         st.wifi_logged_out = False
         st.pigeon_metadata_ok = False
-        st.pigeon_hdmi_ok = False
         st.pigeon_audio_ok = False
         try:
             from pigeon.source_status import apply_source_status_to_settings_state
