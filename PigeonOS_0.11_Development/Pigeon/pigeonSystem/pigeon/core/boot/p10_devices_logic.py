@@ -1,6 +1,6 @@
 """Boot phase: device list parsing, pairing LEDs, locations, and mid-bootstrap View 1 warm-up.
 
-Phase 10 of ``bootstrap()`` in ``pigeon_0_9.py``, moved verbatim. ``run``
+Phase 10 of ``bootstrap()`` in ``pigeon_0_11.py``, moved verbatim. ``run``
 reads the names it needs from the shared boot context, runs the original
 statements, and writes back the names later phases read.
 """

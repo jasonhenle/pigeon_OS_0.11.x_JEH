@@ -168,7 +168,7 @@ PY
   }
   local app=""
   for d in "${WORKDIR}/extract"/*/"${APP_PREFIX}"; do
-    if [[ -f "${d}/pigeonSystem/pigeon_0_9.py" || -f "${d}/pigeonSystem/pigeon_0_8.py" ]]; then
+    if [[ -f "${d}/pigeonSystem/pigeon_0_11.py" || -f "${d}/pigeonSystem/pigeon_0_9.py" || -f "${d}/pigeonSystem/pigeon_0_8.py" ]]; then
       app="${d}"
       break
     fi
@@ -240,7 +240,7 @@ PY
     fi
     local app=""
     for d in "${WORKDIR}/release"/Pigeon_*; do
-      if [[ -f "${d}/pigeonSystem/pigeon_0_9.py" || -f "${d}/pigeonSystem/pigeon_0_8.py" ]]; then
+      if [[ -f "${d}/pigeonSystem/pigeon_0_11.py" || -f "${d}/pigeonSystem/pigeon_0_9.py" || -f "${d}/pigeonSystem/pigeon_0_8.py" ]]; then
         app="${d}"
         break
       fi

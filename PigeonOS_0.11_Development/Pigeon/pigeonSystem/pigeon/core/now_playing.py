@@ -1,6 +1,6 @@
 """Now-playing metadata queries: app detection, music/video artwork caches, playback clock maths.
 
-Extracted verbatim from ``bootstrap()`` in ``pigeon_0_9.py``. Each function
+Extracted verbatim from ``bootstrap()`` in ``pigeon_0_11.py``. Each function
 takes the app state it used to close over as keyword-only arguments;
 ``bootstrap()`` binds them once with ``bind_deps`` so call sites are unchanged.
 """

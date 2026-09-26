@@ -1,6 +1,6 @@
 """Main-window phase: clock-saver volume state and helpers, and the splash clock-reveal helpers.
 
-Phase 3 of ``main()`` in ``pigeon_0_9.py``, moved verbatim. ``run``
+Phase 3 of ``main()`` in ``pigeon_0_11.py``, moved verbatim. ``run``
 reads the names it needs from the shared boot context, runs the original
 statements, and writes back the names later phases read.
 """

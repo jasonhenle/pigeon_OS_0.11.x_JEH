@@ -84,7 +84,8 @@ def _baseline_tree(dest: str) -> str | None:
     except (OSError, subprocess.CalledProcessError):
         return None
     path = os.path.join(dest, rel)
-    return path if os.path.isfile(os.path.join(path, "pigeon_0_9.py")) else None
+    entry = ("pigeon_0_11.py", "pigeon_0_9.py")  # baselines before the rename have only the old name
+    return path if any(os.path.isfile(os.path.join(path, e)) for e in entry) else None
 
 
 class StartupTraceTests(unittest.TestCase):

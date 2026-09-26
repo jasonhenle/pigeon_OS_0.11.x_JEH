@@ -50,18 +50,18 @@ def _prologue_reads(fn):
 
 
 def _seed_names(var):
-    """Keyword names of the ``<var> = _BootContext(...)`` seed in pigeon_0_9.py."""
-    src = open(os.path.join(_SYS, "pigeon_0_9.py"), encoding="utf-8").read()
+    """Keyword names of the ``<var> = _BootContext(...)`` seed in pigeon_0_11.py."""
+    src = open(os.path.join(_SYS, "pigeon_0_11.py"), encoding="utf-8").read()
     for n in ast.walk(ast.parse(src)):
         if (isinstance(n, ast.Assign) and isinstance(n.targets[0], ast.Name) and n.targets[0].id == var
                 and isinstance(n.value, ast.Call) and getattr(n.value.func, "id", "") == "_BootContext"):
             return {k.arg for k in n.value.keywords}
-    raise AssertionError(f"no {var} = _BootContext(...) in pigeon_0_9.py")
+    raise AssertionError(f"no {var} = _BootContext(...) in pigeon_0_11.py")
 
 
 class BootPhaseWiringTests(unittest.TestCase):
     def test_phase_order_matches_callers(self):
-        src = open(os.path.join(_SYS, "pigeon_0_9.py"), encoding="utf-8").read()
+        src = open(os.path.join(_SYS, "pigeon_0_11.py"), encoding="utf-8").read()
         for prefix, arg in (("m", "_main_ctx"), ("p", "ctx")):
             mods = [os.path.basename(p)[:-3] for p in _phase_paths(prefix)]
             calls = [ln.strip() for ln in src.splitlines()
@@ -234,9 +234,9 @@ class BootPhaseInvariantTests(unittest.TestCase):
                 self.assertNotIn("ctx", _local_stores(fn), f"{mod} rebinds ctx")
 
     def test_seeded_module_globals_are_never_rebound(self):
-        # The seeds copy pigeon_0_9 globals when main() / bootstrap() start. A
+        # The seeds copy pigeon_0_11 globals when main() / bootstrap() start. A
         # global rebound later (``global X; X = ...``) would not reach the phases.
-        src = open(os.path.join(_SYS, "pigeon_0_9.py"), encoding="utf-8").read()
+        src = open(os.path.join(_SYS, "pigeon_0_11.py"), encoding="utf-8").read()
         rebound = {nm for n in ast.walk(ast.parse(src)) if isinstance(n, ast.Global) for nm in n.names}
         for var in ("_main_ctx", "ctx"):
             self.assertEqual(sorted(_seed_names(var) & rebound), [], var)

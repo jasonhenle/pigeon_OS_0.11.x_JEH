@@ -13,7 +13,7 @@ import symtable
 import unittest
 from pathlib import Path
 
-SRC = Path(__file__).resolve().parents[1] / "pigeon_0_9.py"
+SRC = Path(__file__).resolve().parents[1] / "pigeon_0_11.py"
 
 
 def _module_names(tree: ast.Module) -> set[str]:

@@ -1,6 +1,6 @@
 """Main-window phase: the shell / content frames, the boot clock label, and splash / startup state.
 
-Phase 2 of ``main()`` in ``pigeon_0_9.py``, moved verbatim. ``run``
+Phase 2 of ``main()`` in ``pigeon_0_11.py``, moved verbatim. ``run``
 reads the names it needs from the shared boot context, runs the original
 statements, and writes back the names later phases read.
 """

@@ -1,7 +1,7 @@
 """Splash / startup choreography: clock underlay capture and the post-splash clock fade-in.
 
 Extracted verbatim from ``bootstrap()`` (and, since pass 10, ``main()``) in
-``pigeon_0_9.py``. Each function takes the app state it used to close over as
+``pigeon_0_11.py``. Each function takes the app state it used to close over as
 keyword-only arguments; the enclosing function binds them once with
 ``bind_deps`` so call sites are unchanged.
 """

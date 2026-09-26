@@ -212,11 +212,16 @@ if DEVICES:
     _as.write_last_receiver(host="127.0.0.1", name="AVR")
     _as.write_last_apple_tv(identifier="TEST-ATV", address="127.0.0.1", name="Living Room")
 
-import pigeon_0_9  # noqa: E402
+# The entry point is named after the version (pigeon_0_11.py); baselines older
+# than the rename (e.g. 0.11.34) only have pigeon_0_9.py.
+try:
+    import pigeon_0_11 as pigeon_app  # noqa: E402
+except ImportError:
+    import pigeon_0_9 as pigeon_app  # noqa: E402
 
 if NO_EXT:
-    pigeon_0_9._PIGEON_EXT = False
-sys.argv = ["pigeon_0_9.py"]
+    pigeon_app._PIGEON_EXT = False
+sys.argv = [os.path.basename(pigeon_app.__file__)]
 
 
 def watchdog():
@@ -227,7 +232,7 @@ def watchdog():
 
 threading.Thread(target=watchdog, daemon=True).start()
 try:
-    rc = pigeon_0_9.main()
+    rc = pigeon_app.main()
     events.append(f"main returned {rc}")
 except BaseException as e:  # noqa: BLE001
     events.append(f"main raised {type(e).__name__}: {e}")

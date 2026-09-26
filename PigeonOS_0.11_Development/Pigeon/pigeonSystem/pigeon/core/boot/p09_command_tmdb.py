@@ -1,6 +1,6 @@
 """Boot phase: the command bar and the TMDb lookup / match-quality flow.
 
-Phase 9 of ``bootstrap()`` in ``pigeon_0_9.py``, moved verbatim. ``run``
+Phase 9 of ``bootstrap()`` in ``pigeon_0_11.py``, moved verbatim. ``run``
 reads the names it needs from the shared boot context, runs the original
 statements, and writes back the names later phases read.
 """

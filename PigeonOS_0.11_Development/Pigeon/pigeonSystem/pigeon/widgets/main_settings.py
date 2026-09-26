@@ -8887,7 +8887,7 @@ class MainSettingsWidget:
         else:
             roi[:] = alpha_blend_bgra_over_bgr(roi, resized)
 
-    # Alias used by ``pigeon_0_9`` composite paths.
+    # Alias used by ``pigeon_0_11`` composite paths.
     render_on_bgr = render
 
 

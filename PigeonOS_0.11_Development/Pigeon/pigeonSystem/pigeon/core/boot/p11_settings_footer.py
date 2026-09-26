@@ -1,6 +1,6 @@
 """Boot phase: settings footer, saved-device seeding, and the device / playback polls.
 
-Phase 11 of ``bootstrap()`` in ``pigeon_0_9.py``, moved verbatim. ``run``
+Phase 11 of ``bootstrap()`` in ``pigeon_0_11.py``, moved verbatim. ``run``
 reads the names it needs from the shared boot context, runs the original
 statements, and writes back the names later phases read.
 """

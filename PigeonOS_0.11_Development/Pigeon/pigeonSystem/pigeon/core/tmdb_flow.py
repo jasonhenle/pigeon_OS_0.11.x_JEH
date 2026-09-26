@@ -1,6 +1,6 @@
 """TMDb lookup flow: spawn identity, match quality overlays, command parsing.
 
-Extracted verbatim from ``bootstrap()`` in ``pigeon_0_9.py``. Each function
+Extracted verbatim from ``bootstrap()`` in ``pigeon_0_11.py``. Each function
 takes the app state it used to close over as keyword-only arguments;
 ``bootstrap()`` binds them once with ``bind_deps`` so call sites are unchanged.
 """

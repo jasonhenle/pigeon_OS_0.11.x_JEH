@@ -49,7 +49,7 @@ _LAUNCHER_NAMES = (
 )
 _INSTALLER_DIR = "installer"
 # Prefer 0.11; legacy names accepted when scanning old zips for migration.
-_MAIN_PY_NAMES = ("pigeon_0_9.py", "pigeon_0_8.py", "pigeon_0_7.py", "pigeon_0_6.py")
+_MAIN_PY_NAMES = ("pigeon_0_11.py", "pigeon_0_9.py", "pigeon_0_8.py", "pigeon_0_7.py", "pigeon_0_6.py")
 _PREFERRED_APP_REL = Path("PigeonOS_0.11_Development") / "Pigeon"
 
 
@@ -386,7 +386,7 @@ def _find_app_root_in_tree(root: Path) -> Path | None:
     for base in bases:
         preferred = base / _PREFERRED_APP_REL
         if any(
-            (preferred / "pigeonSystem" / name).is_file() for name in ("pigeon_0_9.py", "pigeon_0_8.py")
+            (preferred / "pigeonSystem" / name).is_file() for name in ("pigeon_0_11.py", "pigeon_0_9.py", "pigeon_0_8.py")
         ) and _has_launcher(preferred):
             return preferred
         if any((preferred / "pigeonSystem" / name).is_file() for name in _MAIN_PY_NAMES) and _has_launcher(
@@ -410,7 +410,7 @@ def _find_app_root_in_tree(root: Path) -> Path | None:
                     parent = parent.parent
                 if any(
                     (parent / "pigeonSystem" / name).is_file()
-                    for name in ("pigeon_0_9.py", "pigeon_0_8.py")
+                    for name in ("pigeon_0_11.py", "pigeon_0_9.py", "pigeon_0_8.py")
                 ):
                     return parent
         for pattern in (

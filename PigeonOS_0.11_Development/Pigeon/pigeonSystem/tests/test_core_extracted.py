@@ -1,7 +1,7 @@
-"""Helpers extracted from ``pigeon_0_9.bootstrap()`` into ``pigeon.core``.
+"""Helpers extracted from ``pigeon_0_11.bootstrap()`` into ``pigeon.core``.
 
 Covers the ``bind_deps`` wiring contract, a structural check that every bind
-site in ``pigeon_0_9.py`` matches the extracted function's signature, and
+site in ``pigeon_0_11.py`` matches the extracted function's signature, and
 behaviour of the pure helpers.
 """
 
@@ -54,15 +54,15 @@ class BindDepsTests(unittest.TestCase):
 
 
 class BindSitesMatchSignaturesTests(unittest.TestCase):
-    """Every ``name = _bind_deps(_core_mod.name, dep=dep, ...)`` in pigeon_0_9.py
+    """Every ``name = _bind_deps(_core_mod.name, dep=dep, ...)`` in pigeon_0_11.py
     must reference a real extracted function and bind only its keyword-only
     parameters (catches renames/typos when either side is edited)."""
 
     def test_bind_sites(self):
-        # Bind sites live in pigeon_0_9.py and (since pass 13) the boot phases.
+        # Bind sites live in pigeon_0_11.py and (since pass 13) the boot phases.
         import glob
 
-        paths = [os.path.join(_SYS_ROOT, "pigeon_0_9.py")] + sorted(
+        paths = [os.path.join(_SYS_ROOT, "pigeon_0_11.py")] + sorted(
             glob.glob(os.path.join(_SYS_ROOT, "pigeon", "core", "boot", "[mp][0-9]*.py")))
         nodes = [n for p in paths for n in ast.walk(ast.parse(open(p, encoding="utf-8").read()))]
         sites = 0

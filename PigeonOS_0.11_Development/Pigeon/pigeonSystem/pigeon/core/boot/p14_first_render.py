@@ -1,6 +1,6 @@
 """Boot phase: first render, receiver polls, and the bootstrap-done handoff to the splash.
 
-Phase 14 of ``bootstrap()`` in ``pigeon_0_9.py``, moved verbatim. ``run``
+Phase 14 of ``bootstrap()`` in ``pigeon_0_11.py``, moved verbatim. ``run``
 reads the names it needs from the shared boot context, runs the original
 statements, and writes back the names later phases read.
 """

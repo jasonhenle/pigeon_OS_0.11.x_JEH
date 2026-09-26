@@ -43,8 +43,8 @@ rsync -a \
 # Guard against empty or partial staging (e.g. wrong cwd, missing assets after a bad copy).
 STAGING_APP="${STAGING}/${APP_DIR}"
 STAGING_BYTES="$(du -sk "${STAGING_APP}" | awk '{print $1}')"
-if [[ ! -f "${STAGING_APP}/pigeonSystem/pigeon_0_9.py" ]]; then
-  echo "ERROR: staging is missing pigeonSystem/pigeon_0_9.py — run from a full Pigeon tree." >&2
+if [[ ! -f "${STAGING_APP}/pigeonSystem/pigeon_0_11.py" ]]; then
+  echo "ERROR: staging is missing pigeonSystem/pigeon_0_11.py — run from a full Pigeon tree." >&2
   exit 1
 fi
 if [[ ! -d "${STAGING_APP}/pigeonAssets/App logos" ]]; then
