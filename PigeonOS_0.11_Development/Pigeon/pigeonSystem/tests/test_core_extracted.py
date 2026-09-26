@@ -59,10 +59,14 @@ class BindSitesMatchSignaturesTests(unittest.TestCase):
     parameters (catches renames/typos when either side is edited)."""
 
     def test_bind_sites(self):
-        path = os.path.join(_SYS_ROOT, "pigeon_0_9.py")
-        tree = ast.parse(open(path, encoding="utf-8").read())
+        # Bind sites live in pigeon_0_9.py and (since pass 13) the boot phases.
+        import glob
+
+        paths = [os.path.join(_SYS_ROOT, "pigeon_0_9.py")] + sorted(
+            glob.glob(os.path.join(_SYS_ROOT, "pigeon", "core", "boot", "p*.py")))
+        nodes = [n for p in paths for n in ast.walk(ast.parse(open(p, encoding="utf-8").read()))]
         sites = 0
-        for node in ast.walk(tree):
+        for node in nodes:
             if not (isinstance(node, ast.Assign) and len(node.targets) == 1):
                 continue
             v = node.value

@@ -291,3 +291,39 @@ HOME=$(mktemp -d) SMOKE_TICKS=1 python3 /tmp/smoke_on.py
 Still inline in `main()`: the two null-object classes (`_NullClockSaverVolumeHold`,
 `_NullVolumeLineReveal`) and `bootstrap()` itself, whose ~700 top-level
 statements are the remaining work.
+
+## Pass 13: bootstrap() split into 14 phases
+
+At most cut points 100-225 names are live across the boundary, so phases
+share a `BootContext` (`pigeon/core/boot/context.py`) instead of returning
+tuples. `phases.py` moves each slice of `bootstrap()`'s statements verbatim
+into `pigeon/core/boot/pNN_*.py` as `run(ctx)`: a prologue `x = ctx.x` for
+what it reads, the statements, an epilogue `ctx.y = y` for what later phases
+read. `bootstrap()` seeds the context with the `main()` locals and module
+globals the phases use, then calls the 14 `run`s. Helpers and their
+`_bind_deps` wiring are unchanged; the wiring now lives in the phases.
+
+```bash
+python3 $T/phases.py pigeon_0_9.py $T/plan13.json          # analyse: in/out per phase, errors
+python3 $T/phases.py pigeon_0_9.py $T/plan13.json --write  # rewrite (asserts each phase's AST)
+```
+
+What it checks (see its docstring): prologue names definitely bound when the
+phase starts, epilogue names definitely bound when it ends; no deferred code
+(lambda, genexp) reads a name a later phase rebinds -- except names bound once
+by a simple statement of a later phase and read here only from deferred code
+(`_late(lambda: X, "X")`, `command=lambda: X()`): those become `ctx.X`, and
+`ctx.X = X` is written right after X's binding, so the lookup still happens at
+call time (and `BootContext` raises `NameError` for a missing name, like the
+closure did). `except E as e` names are handler-local.
+
+`tests/test_boot_phases.py` keeps the wiring honest after hand edits: every
+prologue read was written by the seed or an earlier phase, phase modules only
+read bound names, and `bootstrap()` calls the phases in order.
+
+To move a statement between phases, edit it by hand and fix the prologue /
+epilogue; the test tells you if a read now comes before its write. The pass
+2-12 tools and `verify_order.py` assume the old single `bootstrap()` body and
+no longer apply.
+
+pigeon_0_9.py: 5,949 -> 1,788 lines (bootstrap() is 179, mostly the seed).
