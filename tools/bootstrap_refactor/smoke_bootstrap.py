@@ -1,5 +1,5 @@
 """Run main() with a fake tkinter so bootstrap()'s top level executes once."""
-import sys, os, threading, traceback, builtins
+import sys, os, threading, traceback, builtins, functools
 from unittest import mock
 sys.path.insert(0, os.getcwd())
 for m in ["tkinter","tkinter.font","tkinter.messagebox","tkinter.scrolledtext","tkinter.simpledialog","tkinter.ttk","PIL.ImageTk"]:
@@ -27,8 +27,11 @@ def make_root(*a, **k):
     def mainloop():
         fn = calls[0]
         if fn.__name__ != "bootstrap":
-            cells = dict(zip(fn.__code__.co_freevars, fn.__closure__))
-            fn = cells["bootstrap"].cell_contents
+            if isinstance(fn, functools.partial):  # lifted in pass 12 (bind_deps)
+                fn = fn.keywords["bootstrap"]
+            else:
+                cells = dict(zip(fn.__code__.co_freevars, fn.__closure__))
+                fn = cells["bootstrap"].cell_contents
         print("SMOKE: running bootstrap", flush=True)
         fn()
         print("SMOKE: bootstrap returned", flush=True)

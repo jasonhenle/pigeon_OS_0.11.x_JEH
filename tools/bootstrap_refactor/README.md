@@ -254,6 +254,40 @@ python3 $T/transform.py . $T/plan11.json /tmp/p11.json $T/new_module_docs.json -
 ```
 
 `plan11.json` lifts the last 5. `main()`'s only top-level `def` is now
-`bootstrap`. Functions nested inside `main()`'s `if` / `try` blocks (the
-splash workers, `splash_tick`, `_bootstrap_after_splash`, the null-object
-classes) are still inline.
+`bootstrap`.
+
+## Pass 12: functions inside main()'s `if` blocks
+
+`pass12.py` handles `def`s that are direct statements of an `if` body at
+`main()`'s top level; `transform.py --scope=main-if` replaces each in place (so
+the name is still bound only on that path). "Bound before" means dominating:
+bound by a direct statement of `main()` before the `if`, or of the same `if`
+body before the `def`. Two additions:
+
+- *settled* names: `splash_total_frames`, `_splash_fade_frames`,
+  `splash_png_paths`, `splash_video_path` are computed by several assignments,
+  but all of them come before the `def` and definitely bind the name on every
+  path (`definitely_binds`), so the value at the `def` is the value every
+  later call read;
+- a forward *value* (`_splash_reveal_i` for `_splash_frame_keeps_live_clock`)
+  moves the binding down to just after it, only if the helper's name is not
+  read anywhere in `main()` before the new bind point.
+
+```bash
+python3 $T/pass12.py pigeon_0_9.py /tmp/p12.json
+python3 $T/transform.py . $T/plan12.json /tmp/p12.json $T/new_module_docs.json --scope=main-if
+```
+
+`plan12.json` lifts all 14 into the new `pigeon/core/splash.py` (the clock
+prewarm worker, frame decode / prebake workers, `splash_tick`,
+`_bootstrap_after_splash`). `smoke_bootstrap.py` now finds `bootstrap` through
+a `bind_deps` partial too. Check the splash path as well as the default:
+
+```bash
+sed 's/"PIGEON_NO_SPLASH", "1"/"PIGEON_NO_SPLASH", "0"/' $T/smoke_bootstrap.py > /tmp/smoke_on.py
+HOME=$(mktemp -d) SMOKE_TICKS=1 python3 /tmp/smoke_on.py
+```
+
+Still inline in `main()`: the two null-object classes (`_NullClockSaverVolumeHold`,
+`_NullVolumeLineReveal`) and `bootstrap()` itself, whose ~700 top-level
+statements are the remaining work.

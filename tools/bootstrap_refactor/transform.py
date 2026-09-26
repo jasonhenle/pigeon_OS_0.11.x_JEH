@@ -5,7 +5,7 @@ SCOPE = "bootstrap"
 if any(a.startswith("--scope=") for a in sys.argv):
     SCOPE = next(a for a in sys.argv if a.startswith("--scope="))[len("--scope="):]
     sys.argv = [a for a in sys.argv if not a.startswith("--scope=")]
-assert SCOPE in ("bootstrap", "main"), SCOPE
+assert SCOPE in ("bootstrap", "main", "main-if"), SCOPE
 ROOT = sys.argv[1]  # pigeonSystem dir
 PLAN = json.load(open(sys.argv[2]))  # {module: [names]}
 ROWS = {r["name"]: r for r in json.load(open(sys.argv[3]))}
@@ -17,7 +17,11 @@ tree = ast.parse(src)
 main = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "main")
 boot = next(n for n in main.body if isinstance(n, ast.FunctionDef) and n.name == "bootstrap")
 parent = boot if SCOPE == "bootstrap" else main
-defs = {s.name: s for s in parent.body if isinstance(s, ast.FunctionDef)}
+if SCOPE == "main-if":
+    # pass 12: defs that are direct statements of an ``if`` body at main()'s top level
+    defs = {s.name: s for top in main.body if isinstance(top, ast.If) for s in top.body if isinstance(s, ast.FunctionDef)}
+else:
+    defs = {s.name: s for s in parent.body if isinstance(s, ast.FunctionDef)}
 
 # module-level import statements usable directly
 direct = {}
@@ -30,7 +34,7 @@ for s in tree.body:
         for a in s.names:
             direct[a.asname or a.name] = f"from {s.module} import {a.name}" + (f" as {a.asname}" if a.asname else "")
 
-IND = " " * (8 if SCOPE == "bootstrap" else 4)
+IND = " " * (4 if SCOPE == "main" else 8)
 
 def add_kwonly(text, fn, deps):
     """Insert keyword-only params before the def's closing paren."""
@@ -134,7 +138,7 @@ for mod, names in PLAN.items():
             if len(one) <= 100: b = one
         else:
             b = f"{IND}{name} = _core_{mod}.{name}\n"
-        if r.get("bind_after") is None:
+        if r.get("bind_after") is None and r.get("bind_after_line") is None:
             replacements.append((fn.lineno, fn.end_lineno, b))
         else:
             # pass 3: bind later, after the last forward dep; comments above the def move too
@@ -143,7 +147,7 @@ for mod, names in PLAN.items():
                 start -= 1
             moved = "".join(lines[start - 1: fn.lineno - 1])
             replacements.append((start, fn.end_lineno, ""))
-            after = parent.body[r["bind_after"]].end_lineno
+            after = r["bind_after_line"] or parent.body[r["bind_after"]].end_lineno
             inserts.append((after, fn.lineno, "\n" + moved + b))
         report.append((mod, name, fn.end_lineno - fn.lineno + 1, len(deps)))
 
@@ -210,7 +214,7 @@ for mod, fns in modules_out.items():
         cl[last_imp:last_imp] = [a + "\n" for a in add]
         cur = "".join(cl).rstrip("\n") + "\n"
     else:
-        cur = f'"""{NEW_DOCS[mod]}\n\nExtracted verbatim from ``{SCOPE}()`` in ``pigeon_0_9.py``. Each function\ntakes the app state it used to close over as keyword-only arguments;\n``{SCOPE}()`` binds them once with ``bind_deps`` so call sites are unchanged.\n"""\n\nfrom __future__ import annotations\n\n'
+        cur = f'"""{NEW_DOCS[mod]}\n\nExtracted verbatim from ``{SCOPE.split("-")[0]}()`` in ``pigeon_0_9.py``. Each function\ntakes the app state it used to close over as keyword-only arguments;\n``{SCOPE.split("-")[0]}()`` binds them once with ``bind_deps`` so call sites are unchanged.\n"""\n\nfrom __future__ import annotations\n\n'
         cur += "".join(sorted(x + "\n" for x in needed))
     for n, t, _i in fns:
         cur += "\n\n" + t.rstrip("\n") + "\n"

@@ -1,0 +1,18 @@
+{
+ "splash": [
+  "_prewarm_splash_clock_worker",
+  "_splash_frame_keeps_live_clock",
+  "_splash_photo_from_rgb",
+  "_splash_prebuild_photos",
+  "_splash_raw_bgra",
+  "_splash_bgra_over_bgr_to_rgb",
+  "_splash_store_prebaked",
+  "_splash_prebake_reveal_bgra",
+  "_splash_prebake_worker_pngs",
+  "_splash_prebake_worker_video",
+  "_splash_fallback_frame_sync",
+  "_splash_composite_bgra_to_photo",
+  "splash_tick",
+  "_bootstrap_after_splash"
+ ]
+}

@@ -92,6 +92,7 @@ from pigeon.core import view_four as _core_view_four
 from pigeon.core import tmdb_flow as _core_tmdb_flow
 from pigeon.core import input_keys as _core_input_keys
 from pigeon.core import device_control as _core_device_control
+from pigeon.core import splash as _core_splash
 from pigeon.core import app_shell as _core_app_shell
 from pigeon.core import pairing as _core_pairing
 from pigeon.core import startup as _core_startup
@@ -1302,17 +1303,13 @@ def main() -> int:
         # Keep rasterizing the live saver off the UI thread so splash reveal (and the
         # post-splash bridge) show wall-clock time and the current color — not a
         # frame frozen at process start.
-        def _prewarm_splash_clock_worker() -> None:
-            while not _splash_clock_refresh_stop[0]:
-                try:
-                    shown = _rasterize_clock_saver_window_bgr()
-                    if shown is not None:
-                        _splash_clock_ready_bgr[0] = shown
-                except Exception:
-                    pass
-                if bootstrap_done[0] or _splash_clock_refresh_stop[0]:
-                    break
-                time.sleep(0.25)
+        _prewarm_splash_clock_worker = _bind_deps(
+            _core_splash._prewarm_splash_clock_worker,
+            _rasterize_clock_saver_window_bgr=_rasterize_clock_saver_window_bgr,
+            _splash_clock_ready_bgr=_splash_clock_ready_bgr,
+            _splash_clock_refresh_stop=_splash_clock_refresh_stop,
+            bootstrap_done=bootstrap_done,
+        )
 
         try:
             threading.Thread(
@@ -1324,15 +1321,6 @@ def main() -> int:
             shown = _rasterize_clock_saver_window_bgr()
             if shown is not None:
                 _splash_clock_ready_bgr[0] = shown
-
-        def _splash_frame_keeps_live_clock(ii: int) -> bool:
-            if not splash_png_paths:
-                return False
-            if callable(splash_keep_alpha_for_live_clock):
-                return bool(
-                    splash_keep_alpha_for_live_clock(ii, reveal_frame=_splash_reveal_i)
-                )
-            return int(ii) >= int(_splash_reveal_i)
 
         # Resolve total frame count AND native fps up front. The PNG / built-in paths lock to
         # SPLASH_FPS, but a video drives its own cadence (e.g. 59.94) so the splash plays at
@@ -1392,146 +1380,86 @@ def main() -> int:
         )
         _splash_reveal_i = int(SPLASH_CLOCK_REVEAL_FRAME)
 
+        _splash_frame_keeps_live_clock = _bind_deps(
+            _core_splash._splash_frame_keeps_live_clock,
+            _splash_reveal_i=_splash_reveal_i,
+            splash_keep_alpha_for_live_clock=splash_keep_alpha_for_live_clock,
+            splash_png_paths=splash_png_paths,
+        )
+
         _splash_prebake_done = [False]
 
-        def _splash_photo_from_rgb(rgb: np.ndarray) -> ImageTk.PhotoImage:
-            return ImageTk.PhotoImage(image=Image.fromarray(rgb, "RGB"))
+        _splash_photo_from_rgb = _core_splash._splash_photo_from_rgb
 
-        def _splash_prebuild_photos(*, limit: int) -> int:
-            """Turn already-decoded RGB frames into Tk images on the UI thread."""
-            built = 0
-            for ii in range(splash_total_frames):
-                if built >= limit:
-                    break
-                if _splash_frame_keeps_live_clock(ii):
-                    continue
-                if ii in _splash_photo_cache:
-                    continue
-                rgb = _splash_rgb_cache.get(ii)
-                if rgb is None:
-                    continue
-                try:
-                    _splash_photo_cache[ii] = _splash_photo_from_rgb(rgb)
-                except Exception:
-                    break
-                built += 1
-            return built
+        _splash_prebuild_photos = _bind_deps(
+            _core_splash._splash_prebuild_photos,
+            _splash_frame_keeps_live_clock=_splash_frame_keeps_live_clock,
+            _splash_photo_cache=_splash_photo_cache,
+            _splash_photo_from_rgb=_splash_photo_from_rgb,
+            _splash_rgb_cache=_splash_rgb_cache,
+            splash_total_frames=splash_total_frames,
+        )
         _splash_video_cap_holder: list[cv2.VideoCapture | None] = [None]
 
-        def _splash_raw_bgra(ii: int) -> np.ndarray | None:
-            """Source-resolution BGRA for frame ``ii`` (PNG / built-in). Video path doesn't use this."""
-            if splash_png_paths:
-                if 0 <= ii < len(splash_png_paths):
-                    return load_splash_bgra(splash_png_paths[ii])
-                return None
-            return builtin_splash_bgra_frame(
-                ii, splash_total_frames, width=UI_TARGET_W, height=UI_TARGET_H
-            )
+        _splash_raw_bgra = _bind_deps(
+            _core_splash._splash_raw_bgra,
+            UI_TARGET_H=UI_TARGET_H,
+            UI_TARGET_W=UI_TARGET_W,
+            builtin_splash_bgra_frame=builtin_splash_bgra_frame,
+            load_splash_bgra=load_splash_bgra,
+            splash_png_paths=splash_png_paths,
+            splash_total_frames=splash_total_frames,
+        )
 
-        def _splash_bgra_over_bgr_to_rgb(bgra: np.ndarray, under_bgr: np.ndarray) -> np.ndarray:
-            a = bgra[:, :, 3].astype(np.uint16)
-            inv = 255 - a
-            blended = (
-                bgra[:, :, :3].astype(np.uint16) * a[:, :, None]
-                + under_bgr.astype(np.uint16) * inv[:, :, None]
-                + 127
-            ) // 255
-            rgb = cv2.cvtColor(blended.astype(np.uint8), cv2.COLOR_BGR2RGB)
-            return np.ascontiguousarray(rgb)
+        _splash_bgra_over_bgr_to_rgb = _core_splash._splash_bgra_over_bgr_to_rgb
 
-        def _splash_store_prebaked(ii: int, bgra_window: np.ndarray) -> None:
-            """Store a window-sized frame. Pre-reveal → RGB over black; reveal PNGs keep BGRA."""
-            if _splash_frame_keeps_live_clock(ii):
-                _splash_bgra_cache[ii] = bgra_window
-                return
-            if ii >= _splash_fade_zone_start and _splash_fade_frames > 0:
-                _splash_bgra_cache[ii] = bgra_window
-                return
-            try:
-                _splash_rgb_cache[ii] = flatten_bgra_over_bg_to_rgb(bgra_window, _splash_bg_bgr)
-            except Exception:
-                _splash_bgra_cache[ii] = bgra_window
+        _splash_store_prebaked = _bind_deps(
+            _core_splash._splash_store_prebaked,
+            _splash_bg_bgr=_splash_bg_bgr,
+            _splash_bgra_cache=_splash_bgra_cache,
+            _splash_fade_frames=_splash_fade_frames,
+            _splash_fade_zone_start=_splash_fade_zone_start,
+            _splash_frame_keeps_live_clock=_splash_frame_keeps_live_clock,
+            _splash_rgb_cache=_splash_rgb_cache,
+            flatten_bgra_over_bg_to_rgb=flatten_bgra_over_bg_to_rgb,
+        )
 
-        def _splash_prebake_reveal_bgra() -> None:
-            """Warm BGRA for reveal frames; never flatten them over a frozen clock."""
-            try:
-                for ii in range(_splash_reveal_i, splash_total_frames):
-                    _splash_rgb_cache.pop(ii, None)
-                    _splash_photo_cache.pop(ii, None)
-                    if ii in _splash_bgra_cache:
-                        continue
-                    fr = _splash_raw_bgra(ii)
-                    if fr is None:
-                        continue
-                    _splash_bgra_cache[ii] = _bgra_to_display_window(fr)
-            except Exception:
-                pass
+        _splash_prebake_reveal_bgra = _bind_deps(
+            _core_splash._splash_prebake_reveal_bgra,
+            _bgra_to_display_window=_bgra_to_display_window,
+            _splash_bgra_cache=_splash_bgra_cache,
+            _splash_photo_cache=_splash_photo_cache,
+            _splash_raw_bgra=_splash_raw_bgra,
+            _splash_reveal_i=_splash_reveal_i,
+            _splash_rgb_cache=_splash_rgb_cache,
+            splash_total_frames=splash_total_frames,
+        )
 
-        def _splash_prebake_worker_pngs() -> None:
-            """Decode PNGs off the UI thread; flatten early frames over black for a fast blit path."""
-            try:
-                for ii in range(splash_total_frames):
-                    if ii in _splash_rgb_cache or ii in _splash_bgra_cache:
-                        continue
-                    fr = _splash_raw_bgra(ii)
-                    if fr is None:
-                        continue
-                    fr = _bgra_to_display_window(fr)
-                    _splash_store_prebaked(ii, fr)
-                _splash_prebake_reveal_bgra()
-            except Exception:
-                pass
-            finally:
-                _splash_prebake_done[0] = True
+        _splash_prebake_worker_pngs = _bind_deps(
+            _core_splash._splash_prebake_worker_pngs,
+            _bgra_to_display_window=_bgra_to_display_window,
+            _splash_bgra_cache=_splash_bgra_cache,
+            _splash_prebake_done=_splash_prebake_done,
+            _splash_prebake_reveal_bgra=_splash_prebake_reveal_bgra,
+            _splash_raw_bgra=_splash_raw_bgra,
+            _splash_rgb_cache=_splash_rgb_cache,
+            _splash_store_prebaked=_splash_store_prebaked,
+            splash_total_frames=splash_total_frames,
+        )
 
-        def _splash_prebake_worker_video() -> None:
-            """Sequentially decode the splash video into the fast-path caches.
-
-            Sequential reads on ``VideoCapture`` are hardware-accelerated on macOS
-            (AVFoundation/VideoToolbox) and far cheaper than 100+ PNG decodes + resizes.
-            """
-            cap_v: cv2.VideoCapture | None = None
-            try:
-                cap_v = cv2.VideoCapture(str(splash_video_path))
-                _splash_video_cap_holder[0] = cap_v
-                if not cap_v.isOpened():
-                    return
-                for ii in range(splash_total_frames):
-                    ok, bgr = cap_v.read()
-                    if not ok or bgr is None:
-                        break
-                    if bgr.shape[1] != UI_TARGET_W or bgr.shape[0] != UI_TARGET_H:
-                        _sw, _sh = int(bgr.shape[1]), int(bgr.shape[0])
-                        bgr = cv2.resize(
-                            bgr,
-                            (UI_TARGET_W, UI_TARGET_H),
-                            interpolation=cv_resize_interp(_sw, _sh, UI_TARGET_W, UI_TARGET_H),
-                        )
-                    bgra_fit = cv2.cvtColor(bgr, cv2.COLOR_BGR2BGRA)
-                    bgra_fit[:, :, 3] = 255
-                    bgra_win = _bgra_to_display_window(bgra_fit)
-                    bgr = bgra_win[:, :, :3]
-                    if ii < _splash_fade_zone_start:
-                        rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-                        _splash_rgb_cache[ii] = np.ascontiguousarray(rgb)
-                    else:
-                        # Fade-tail wants dynamic alpha, so synthesize opaque BGRA and let the
-                        # tick multiply the alpha channel each frame.
-                        h, w = bgr.shape[:2]
-                        bgra = np.empty((h, w, 4), dtype=np.uint8)
-                        bgra[:, :, :3] = bgr
-                        bgra[:, :, 3] = 255
-                        _splash_bgra_cache[ii] = bgra
-            except Exception:
-                pass
-            finally:
-                try:
-                    if cap_v is not None:
-                        cap_v.release()
-                except Exception:
-                    pass
-                _splash_video_cap_holder[0] = None
-                _splash_prebake_done[0] = True
+        _splash_prebake_worker_video = _bind_deps(
+            _core_splash._splash_prebake_worker_video,
+            UI_TARGET_H=UI_TARGET_H,
+            UI_TARGET_W=UI_TARGET_W,
+            _bgra_to_display_window=_bgra_to_display_window,
+            _splash_bgra_cache=_splash_bgra_cache,
+            _splash_fade_zone_start=_splash_fade_zone_start,
+            _splash_prebake_done=_splash_prebake_done,
+            _splash_rgb_cache=_splash_rgb_cache,
+            _splash_video_cap_holder=_splash_video_cap_holder,
+            splash_total_frames=splash_total_frames,
+            splash_video_path=splash_video_path,
+        )
 
         # Kick off the prebake thread immediately so frames are warm before ``splash_tick``
         # starts pulling from the cache post-``after_idle``.
@@ -1545,202 +1473,62 @@ def main() -> int:
             # Fall back to on-demand decode inside ``splash_tick``.
             _splash_prebake_done[0] = True
 
-        def _splash_fallback_frame_sync(ii: int) -> np.ndarray | None:
-            """On-demand decode if the worker hasn't populated this index yet (built-in only)."""
-            if splash_video_path is not None:
-                # We can't safely random-seek while the worker owns the VideoCapture.
-                return None
-            fr = _splash_raw_bgra(ii)
-            if fr is None:
-                return None
-            fr = _bgra_to_display_window(fr)
-            _splash_store_prebaked(ii, fr)
-            return fr
+        _splash_fallback_frame_sync = _bind_deps(
+            _core_splash._splash_fallback_frame_sync,
+            _bgra_to_display_window=_bgra_to_display_window,
+            _splash_raw_bgra=_splash_raw_bgra,
+            _splash_store_prebaked=_splash_store_prebaked,
+            splash_video_path=splash_video_path,
+        )
 
-        def _splash_composite_bgra_to_photo(bgra_hit: np.ndarray | None, fade_mul: float) -> None:
-            """Composite splash BGRA over underlay into an opaque RGB ``splash_photo``.
+        _splash_composite_bgra_to_photo = _bind_deps(
+            _core_splash._splash_composite_bgra_to_photo,
+            _splash_bg_bgr=_splash_bg_bgr,
+            _splash_bgra_over_bgr_to_rgb=_splash_bgra_over_bgr_to_rgb,
+            _splash_underlay_bgr=_splash_underlay_bgr,
+            apply_splash_global_alpha=apply_splash_global_alpha,
+            flatten_bgra_over_bg_to_rgb=flatten_bgra_over_bg_to_rgb,
+            splash_photo=splash_photo,
+        )
 
-            Before frame 90 the underlay is black; from frame 90 it is the live clock saver.
-            Always bake to RGB so the splash layer fully covers content_host.
-            """
-            if bgra_hit is None:
-                return
-            bgra_out = (
-                apply_splash_global_alpha(bgra_hit, fade_mul)
-                if fade_mul < 0.999 and apply_splash_global_alpha is not None
-                else bgra_hit
-            )
-            under = _splash_underlay_bgr[0]
-            if under is None or under.ndim != 3 or under.shape[:2] != bgra_out.shape[:2]:
-                rgb = flatten_bgra_over_bg_to_rgb(bgra_out, _splash_bg_bgr)
-            else:
-                rgb = _splash_bgra_over_bgr_to_rgb(bgra_out, under)
-            splash_photo[0] = ImageTk.PhotoImage(image=Image.fromarray(rgb, "RGB"))
-
-        def splash_tick() -> None:
-            try:
-                if not splash_label.winfo_exists():
-                    return
-            except tk.TclError:
-                return
-            ov_top = startup_ph[0]
-            if ov_top is not None:
-                try:
-                    # Keep splash strictly above content_host (clock lives underneath).
-                    ov_top.lift(content_host)
-                except tk.TclError:
-                    try:
-                        ov_top.lift()
-                    except tk.TclError:
-                        pass
-            ntot = splash_total_frames
-            now = time.monotonic()
-            if splash_t0[0] is None:
-                if _splash_wait_deadline[0] is None:
-                    _splash_wait_deadline[0] = now + 3.6
-                # Hold the clock until the reveal neighborhood is warm so the
-                # Pi does not hitch or jump when PNG alpha starts punching through.
-                lead_need = min(ntot, max(48, int(_splash_reveal_i) + 8))
-                lead = 0
-                for k in range(lead_need):
-                    if k in _splash_rgb_cache or k in _splash_bgra_cache:
-                        lead += 1
-                ready0 = 0 in _splash_rgb_cache or 0 in _splash_bgra_cache
-                if ready0 and splash_photo[0] is None:
-                    ph0 = _splash_photo_cache.get(0)
-                    if ph0 is None:
-                        rgb0 = _splash_rgb_cache.get(0)
-                        if rgb0 is not None:
-                            try:
-                                ph0 = _splash_photo_from_rgb(rgb0)
-                                _splash_photo_cache[0] = ph0
-                            except Exception:
-                                ph0 = None
-                    if ph0 is not None:
-                        splash_photo[0] = ph0
-                        try:
-                            splash_label.configure(image=ph0)
-                        except Exception:
-                            pass
-                _splash_prebuild_photos(limit=6)
-                if (
-                    lead < lead_need
-                    and not _splash_prebake_done[0]
-                    and now < float(_splash_wait_deadline[0])
-                ):
-                    root.after(8, splash_tick)
-                    return
-                splash_t0[0] = now
-                try:
-                    sys.stderr.write(
-                        f"pigeon: splash play start frames={ntot} lead={lead}/{lead_need} "
-                        f"photos={len(_splash_photo_cache)} "
-                        f"+{now - _app_startup_mono:.3f}s\n"
-                    )
-                    sys.stderr.flush()
-                except Exception:
-                    pass
-            t0 = float(splash_t0[0])
-            if float(SPLASH_MAX_DURATION_S) > 0 and now - t0 > float(SPLASH_MAX_DURATION_S):
-                splash_idx[0] = ntot
-            # Strict order. A held frame looks better than a skip on the Pi.
-            i = min(int(splash_idx[0]), ntot)
-            if i >= ntot:
-                splash_anim_done[0] = True
-                try:
-                    sys.stderr.write(
-                        f"pigeon: splash sequence done +{time.monotonic() - _app_startup_mono:.3f}s "
-                        f"frames={ntot}\n"
-                    )
-                    sys.stderr.flush()
-                except Exception:
-                    pass
-                _try_remove_splash_overlay()
-                return
-
-            live_clock_underlay = _splash_frame_keeps_live_clock(i)
-            rgb_hit = None if live_clock_underlay else _splash_rgb_cache.get(i)
-            bgra_hit = _splash_bgra_cache.get(i) if rgb_hit is None else None
-            if live_clock_underlay:
-                bgra_hit = _splash_bgra_cache.get(i)
-
-            # Worker hasn't reached this index yet: try a short spin before giving up.
-            if rgb_hit is None and bgra_hit is None:
-                _splash_fallback_frame_sync(i)
-                if live_clock_underlay:
-                    bgra_hit = _splash_bgra_cache.get(i)
-                else:
-                    rgb_hit = _splash_rgb_cache.get(i)
-                    bgra_hit = _splash_bgra_cache.get(i) if rgb_hit is None else None
-                if rgb_hit is None and bgra_hit is None:
-                    # Wait for the prebake worker instead of jumping — skips look choppy.
-                    root.after(8, splash_tick)
-                    return
-
-            # Frame 90+: live clock under the splash PNG alpha. Before that: black only.
-            if i >= _splash_reveal_i:
-                first_reveal = not _splash_reveal_clock[0]
-                _reveal_clock_under_splash(refresh=False)
-                if first_reveal:
-                    try:
-                        import threading
-
-                        threading.Thread(
-                            target=_splash_prebake_reveal_bgra,
-                            name="pigeon-splash-reveal-bake",
-                            daemon=True,
-                        ).start()
-                    except Exception:
-                        _splash_prebake_reveal_bgra()
-                    try:
-                        sys.stderr.write(
-                            f"pigeon: splash clock reveal frame={i} "
-                            f"+{time.monotonic() - _app_startup_mono:.3f}s\n"
-                        )
-                        sys.stderr.flush()
-                    except Exception:
-                        pass
-
-            splash_idx[0] = i + 1
-
-            try:
-                ph = None if live_clock_underlay else _splash_photo_cache.get(i)
-                if ph is None and rgb_hit is not None and not live_clock_underlay:
-                    ph = _splash_photo_from_rgb(rgb_hit)
-                    _splash_photo_cache[i] = ph
-                if ph is not None:
-                    splash_photo[0] = ph
-                else:
-                    fade_mul = (
-                        splash_end_fade_factor(i, ntot, min(_splash_fade_frames, ntot))
-                        if _splash_fade_frames > 0 and splash_end_fade_factor is not None
-                        else 1.0
-                    )
-                    _splash_composite_bgra_to_photo(bgra_hit, float(fade_mul))
-            except Exception:
-                # Best-effort RGB fallback so a single bad frame doesn't abort the splash.
-                try:
-                    fb = rgb_hit if rgb_hit is not None else flatten_bgra_over_bg_to_rgb(
-                        bgra_hit if bgra_hit is not None else np.zeros((WINDOW_H, WINDOW_W, 4), np.uint8),
-                        _splash_bg_bgr,
-                    )
-                    splash_photo[0] = ImageTk.PhotoImage(image=Image.fromarray(fb, "RGB"))
-                except Exception:
-                    pass
-            splash_label.configure(image=splash_photo[0])
-            # Warm one upcoming frame only — extra encodes on this tick cause hitching.
-            _splash_prebuild_photos(limit=1)
-
-            # Hold a late frame rather than jumping; catch up on the next tick.
-            now2 = time.monotonic()
-            next_i = int(splash_idx[0])
-            target = t0 + float(next_i) * frame_dt
-            delay_ms = int(round((target - now2) * 1000.0))
-            if delay_ms < 1:
-                delay_ms = 1
-            elif delay_ms > frame_ms * 3:
-                delay_ms = frame_ms
-            root.after(delay_ms, splash_tick)
+        splash_tick = _bind_deps(
+            _core_splash.splash_tick,
+            SPLASH_MAX_DURATION_S=SPLASH_MAX_DURATION_S,
+            WINDOW_H=WINDOW_H,
+            WINDOW_W=WINDOW_W,
+            _app_startup_mono=_app_startup_mono,
+            _reveal_clock_under_splash=_reveal_clock_under_splash,
+            _splash_bg_bgr=_splash_bg_bgr,
+            _splash_bgra_cache=_splash_bgra_cache,
+            _splash_composite_bgra_to_photo=_splash_composite_bgra_to_photo,
+            _splash_fade_frames=_splash_fade_frames,
+            _splash_fallback_frame_sync=_splash_fallback_frame_sync,
+            _splash_frame_keeps_live_clock=_splash_frame_keeps_live_clock,
+            _splash_photo_cache=_splash_photo_cache,
+            _splash_photo_from_rgb=_splash_photo_from_rgb,
+            _splash_prebake_done=_splash_prebake_done,
+            _splash_prebake_reveal_bgra=_splash_prebake_reveal_bgra,
+            _splash_prebuild_photos=_splash_prebuild_photos,
+            _splash_reveal_clock=_splash_reveal_clock,
+            _splash_reveal_i=_splash_reveal_i,
+            _splash_rgb_cache=_splash_rgb_cache,
+            _splash_wait_deadline=_splash_wait_deadline,
+            _try_remove_splash_overlay=_try_remove_splash_overlay,
+            content_host=content_host,
+            flatten_bgra_over_bg_to_rgb=flatten_bgra_over_bg_to_rgb,
+            frame_dt=frame_dt,
+            frame_ms=frame_ms,
+            root=root,
+            splash_anim_done=splash_anim_done,
+            splash_end_fade_factor=splash_end_fade_factor,
+            splash_idx=splash_idx,
+            splash_label=splash_label,
+            splash_photo=splash_photo,
+            splash_t0=splash_t0,
+            splash_tick=_late(lambda: splash_tick, "splash_tick"),
+            splash_total_frames=splash_total_frames,
+            startup_ph=startup_ph,
+        )
 
     else:
         loading = tk.Label(
@@ -6134,19 +5922,14 @@ def main() -> int:
     if _PIGEON_EXT:
         # Play the splash at full rate on a free UI thread. Heavy bootstrap used to run in
         # parallel and starve ``after()``, freezing the last splash frame for many seconds.
-        def _bootstrap_after_splash() -> None:
-            if not splash_anim_done[0]:
-                root.after(16, _bootstrap_after_splash)
-                return
-            try:
-                sys.stderr.write(
-                    f"pigeon: starting bootstrap after splash "
-                    f"+{time.monotonic() - _app_startup_mono:.3f}s\n"
-                )
-                sys.stderr.flush()
-            except Exception:
-                pass
-            bootstrap()
+        _bootstrap_after_splash = _bind_deps(
+            _core_splash._bootstrap_after_splash,
+            _app_startup_mono=_app_startup_mono,
+            _bootstrap_after_splash=_late(lambda: _bootstrap_after_splash, "_bootstrap_after_splash"),
+            bootstrap=bootstrap,
+            root=root,
+            splash_anim_done=splash_anim_done,
+        )
 
         root.after_idle(splash_tick)
         root.after_idle(_live_clock_until_compose)
