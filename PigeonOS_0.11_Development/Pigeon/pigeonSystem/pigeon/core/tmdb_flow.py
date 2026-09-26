@@ -380,18 +380,6 @@ def _mark_tmdb_missing_art(*, identity: object | None = None, apple_tv_auto_stat
         pass
 
 
-def _read_tmdb_quality_counts(*, _PIGEON_EXT) -> tuple[int, int]:
-    if not _PIGEON_EXT:
-        return (0, 0)
-    try:
-        st = read_app_state()
-        s = int(st.get("tmdb_quality_successes", 0) or 0)
-        f = int(st.get("tmdb_quality_failures", 0) or 0)
-        return (s, f)
-    except Exception:
-        return (0, 0)
-
-
 def _adjust_tmdb_quality_failure_delta(delta: int, *, _PIGEON_EXT, _refresh_match_quality_glance_label, match_quality_glance_sig) -> None:
     """Persist ±1 failure immediately (⌘⇧X flag on / undo); refreshes Settings glance."""
     if not _PIGEON_EXT or int(delta) == 0:

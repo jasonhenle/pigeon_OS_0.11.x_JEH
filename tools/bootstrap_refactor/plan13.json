@@ -1,0 +1,16 @@
+[
+ {"module": "p01_state", "start": 0, "doc": "Boot phase: hoisted shared state, capture reset, and startup-placeholder handling."},
+ {"module": "p02_video_surface", "start": 18, "doc": "Boot phase: the video area and label, and the splash-to-label clock handoff."},
+ {"module": "p03_settings_scaffold", "start": 35, "doc": "Boot phase: settings frame, scroll canvas, fonts, mouse-wheel scrolling and activity tracking."},
+ {"module": "p04_settings_location", "start": 77, "doc": "Boot phase: the settings Location section (selector, rename, delete)."},
+ {"module": "p05_devices_panel", "start": 100, "doc": "Boot phase: device state, the Devices section, the Updates flow, and the Content section."},
+ {"module": "p06_render_state", "start": 181, "doc": "Boot phase: render / display state, View 1 layout helpers, clock-saver and idle-dim state."},
+ {"module": "p07_widgets", "start": 300, "doc": "Boot phase: overlay widgets (clock, TMDb logo, status bar, playback overlay, circles, main settings) and splash warm-up."},
+ {"module": "p08_render_pipeline", "start": 340, "doc": "Boot phase: blit caches and the stage / poster / now-playing render pipeline."},
+ {"module": "p09_command_tmdb", "start": 427, "doc": "Boot phase: the command bar and the TMDb lookup / match-quality flow."},
+ {"module": "p10_devices_logic", "start": 501, "doc": "Boot phase: device list parsing, pairing LEDs, locations, and mid-bootstrap View 1 warm-up."},
+ {"module": "p11_settings_footer", "start": 575, "doc": "Boot phase: settings footer, saved-device seeding, and the device / playback polls."},
+ {"module": "p12_key_bindings", "start": 601, "doc": "Boot phase: mouse and keyboard bindings (Tab, Return, Space, view keys, hotkeys, chords)."},
+ {"module": "p13_hardware_inputs", "start": 654, "doc": "Boot phase: receiver volume worker, GPIO / rotary / serial inputs, and settings navigation."},
+ {"module": "p14_first_render", "start": 687, "doc": "Boot phase: first render, receiver polls, and the bootstrap-done handoff to the splash."}
+]

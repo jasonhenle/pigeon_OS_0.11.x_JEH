@@ -277,35 +277,6 @@ def _on_hdmi_frame_checked(changed, *, _apply_hdmi_frame_check, apple_tv_auto_st
         apple_tv_auto_state["hdmi_check_in_flight"] = False
 
 
-def set_current_receiver_only(row: dict[str, str], *, persist: bool = True, _rebuild_paired_devices_panel, _schedule_refresh_pairing_leds, _warm_playback_overlay_blits, describe_current_apple_tv, playback_overlay_widget, receiver_http_host, render_once, skip_cache) -> None:
-    """Persist AVR / AirPlay-only row for Denon HTTP overlay only; does not change Apple TV playback."""
-    adr = str(row.get("address") or "").strip()
-    if not adr:
-        return
-    if persist:
-        write_last_receiver(
-            host=adr,
-            name=str(row.get("name") or "").strip() or None,
-            label=str(row.get("label") or "").strip() or None,
-            device_id=str(row.get("identifier") or "").strip() or None,
-        )
-    receiver_http_host["host"] = adr
-    if playback_overlay_widget is not None:
-        playback_overlay_widget.clear_cache()
-    try:
-        _warm_playback_overlay_blits()
-    except Exception:
-        pass
-    skip_cache[0] = None
-    try:
-        render_once()
-    except Exception:
-        pass
-    describe_current_apple_tv()
-    _rebuild_paired_devices_panel()
-    _schedule_refresh_pairing_leds()
-
-
 def on_apple_tv_selected_then_tmdb(*, _PIGEON_EXT, _open_find_device_dialog, _pyatv_install_hint, apple_tv_busy, begin_apple_tv_operation, describe_current_apple_tv, end_apple_tv_operation, last_atv_interaction_mono, root, set_current_apple_tv, spawn_tmdb_poster_fetch, streaming_slot_holder) -> None:
     """Use the saved streaming slot: pyatv (Apple TV) or Roku ECP, then TMDb + backdrop."""
     if not _PIGEON_EXT:

@@ -174,23 +174,6 @@ def _vv_is_youtube(*, apple_tv_auto_state, streaming_badge_state) -> bool:
     return False
 
 
-def _vv_music_track_title(*, apple_tv_auto_state) -> str:
-    """Return the preferred Music track title for text rendering.
-
-    Prefers ``title``; falls back to ``album`` (often the only populated
-    field for certain streaming sources). Returns an empty string when
-    nothing usable is available.
-    """
-    lm = apple_tv_auto_state.get("last_metadata")
-    if not isinstance(lm, dict):
-        return ""
-    for k in ("title", "album"):
-        v = str(lm.get(k) or "").strip()
-        if v:
-            return v
-    return ""
-
-
 def _vv_music_text_lines(*, apple_tv_auto_state) -> tuple[str, str]:
     """Return ``(title, subtitle)`` for Music text rendering.
 
