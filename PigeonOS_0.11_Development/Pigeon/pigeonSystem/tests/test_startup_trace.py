@@ -15,7 +15,10 @@ Normalised away, because they vary between two runs of *either* version:
 - the version string;
 - the ``_playback_ui_tick`` delay (computed from elapsed time);
 - what worker threads do (threads they start, ``after()`` callbacks they
-  schedule). The harness lists those separately and does not run them.
+  schedule). The harness lists those separately and does not run them;
+- the ``pigeon-weather`` fetch thread. Opening settings forces a weather
+  refresh, which is skipped while an earlier fetch is still on the network,
+  so whether it starts on the main thread depends on network latency.
 
 Skipped when git or the baseline commit is not available (e.g. an installed
 copy without history). If a change is *meant* to alter startup, move the
@@ -53,6 +56,8 @@ def normalise(text: str) -> str:
         if line.startswith("# "):
             bg = False
         if bg:
+            continue
+        if line.startswith("thread.start name=pigeon-weather "):
             continue
         line = re.sub(r"\b0\.\d+\.\d+\b", "<version>", line)
         line = re.sub(r"root\.after\(\d+, cb:_playback_ui_tick\)", "root.after(<ms>, cb:_playback_ui_tick)", line)

@@ -179,6 +179,8 @@ HISS_MAX_MEAN_FILL = 0.32
 HISS_CLEAR_FILL = 0.40
 _program_audio_until = 0.0
 _program_audio_session_until = 0.0
+# Last time program audio was detected (settings_pigeon 60 s indicator).
+_program_audio_seen_mono = 0.0
 _hiss_lock = threading.Lock()
 _hiss_fills: deque[tuple[float, float]] = deque()
 _hiss_last_note_mono = 0.0
@@ -637,7 +639,7 @@ def program_audio_present() -> bool:
     enough — ``fill`` already sits at 0 for idle hiss. A persistent hiss that
     sits just above the gate is also ignored so the saver can still arm.
     """
-    global _program_audio_until, _program_audio_session_until
+    global _program_audio_until, _program_audio_session_until, _program_audio_seen_mono
     now = time.monotonic()
     if _capture_dead:
         return now < _program_audio_until
@@ -649,11 +651,20 @@ def program_audio_present() -> bool:
         return False
     fresh = _last_pcm_mono > 0.0 and (now - _last_pcm_mono) < 0.75
     if fresh and level >= float(PROGRAM_AUDIO_ON_FILL):
+        _program_audio_seen_mono = now
         _program_audio_until = now + float(PROGRAM_AUDIO_HOLD_S)
         if not _signal_is_stationary_low(level, now):
             _program_audio_session_until = now + float(PROGRAM_AUDIO_SESSION_HOLD_S)
         return True
     return now < _program_audio_until
+
+
+def program_audio_seen_within(seconds: float) -> bool:
+    """True when program audio was detected in the last ``seconds``."""
+    if program_audio_present():
+        return True
+    seen = float(_program_audio_seen_mono)
+    return seen > 0.0 and (time.monotonic() - seen) < float(seconds)
 
 
 def program_audio_session_present() -> bool:

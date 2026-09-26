@@ -1163,6 +1163,10 @@ def _handle_main_settings_action(action: str, *, _apply_persisted_location_to_ru
                 {"accent": "white", "ui": "blue", "button": "black"},
                 persist=False,
             )
+            st.ui_color_committed_key = "blue"
+            from pigeon.widgets.options_settings import load_options_into_state
+
+            load_options_into_state(st)
         except Exception:
             pass
         try:
@@ -1776,9 +1780,8 @@ def _composite_settings_on_canvas(canvas: np.ndarray, *, _nav_coalescer_holder, 
     nav_hot = bool(coalescer is not None and coalescer.is_hot())
     if not nav_hot:
         try:
-            if not bool(getattr(main_settings_widget.state, "show_widgets", False)):
-                _sync_preferences_now_playing_progress()
-                _sync_settings_zone2_tt()
+            _sync_preferences_now_playing_progress()
+            _sync_settings_zone2_tt()
         except Exception:
             pass
     main_settings_widget.render(canvas)
@@ -2023,9 +2026,9 @@ def _enter_main_settings_for_rotary(*, DevPhase, dev_phase, main_settings_widget
     except Exception:
         pass
     try:
-        from pigeon.weather import DEFAULT_WEATHER_ZIP, refresh_weather
+        from pigeon.weather import refresh_weather
 
-        refresh_weather(zip_code=DEFAULT_WEATHER_ZIP, force=True)
+        refresh_weather(force=True)
     except Exception:
         pass
     skip_cache[0] = None
@@ -2250,12 +2253,6 @@ def _settings_audio_led_listen(*, main_settings_widget_holder) -> bool:
         return False
     if not bool(getattr(st, "show_pigeon_settings", False)):
         return False
-    if bool(getattr(st, "show_widgets", False)):
-        return False
-    if bool(getattr(st, "show_options", False)):
-        return False
-    if bool(getattr(st, "show_ui_color", False)):
-        return False
     if bool(getattr(st, "show_preferences", False)):
         return False
     if bool(getattr(st, "show_metadata_debug", False)):
@@ -2301,11 +2298,11 @@ def _maybe_exit_settings_menus_on_idle(now_mono: float | None = None, *, DevPhas
 
 
 def _sync_preferences_now_playing_progress(*, _active_tmdb_tt_src_bgra, _circles_poster_bgra, _format_hmmss, _playback_extrapolated_pair, _playback_progress_fraction_for_bar, _resolve_receiver_lines_for_now_playing, _vv_is_music, active_tmdb_display_title, active_tmdb_title_key, apple_tv_auto_state, apple_tv_playback_clock, main_settings_widget_holder, streaming_badge_state) -> None:
-    """Feed live NP content into prefs / widgets; idle keeps SVG demos."""
+    """Feed live NP content into prefs; idle keeps SVG demos."""
     if main_settings_widget_holder[0] is None:
         return
     st_ms = main_settings_widget_holder[0].state
-    if not st_ms.show_preferences and not st_ms.show_widgets:
+    if not st_ms.show_preferences:
         return
 
     def _clear_prefs_live() -> None:

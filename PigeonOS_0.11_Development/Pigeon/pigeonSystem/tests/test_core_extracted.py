@@ -267,15 +267,16 @@ class HdmiFrameCheckWiringTests(unittest.TestCase):
 
 
 class SourceTilesAreStatusOnlyTests(unittest.TestCase):
-    """WIFI / METADATA / HDMI / AUDIO tiles report status; they are not toggles."""
+    """WIFI / METADATA / AUDIO lights report status; they are not selectable."""
 
     def test_source_tiles_not_in_focus_ring(self):
         from pigeon.widgets.pigeon_settings import pigeon_focus_ring
 
         ring = pigeon_focus_ring()
-        for fid in ("wifi_button", "metadata_button", "hdmi_button", "audio_button"):
-            self.assertNotIn(fid, ring)
-        self.assertIn("update_button", ring)
+        for fid in ring:
+            for source in ("wifi", "metadata", "hdmi", "audio"):
+                self.assertNotIn(source, fid)
+        self.assertIn("update", ring)
 
     def test_no_toggle_module(self):
         import importlib.util

@@ -528,6 +528,9 @@ def _store_music_artwork_from_metadata(md: dict[str, object] | None, *, _atv_met
 
 def _update_status_bar_from_metadata(metadata: dict[str, object] | None, *, _apply_playback_clock_from_poll, _sync_trt_text_to_true_once) -> None:
     if metadata:
+        from pigeon.source_status import note_metadata_received
+
+        note_metadata_received()
         _apply_playback_clock_from_poll(metadata)
     # Sync TRT digits to the latest polled integer second. The steady 1 Hz metronome
     # continues stepping from this anchor.

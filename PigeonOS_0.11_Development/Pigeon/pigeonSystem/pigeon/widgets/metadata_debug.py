@@ -32,9 +32,11 @@ from pigeon.widgets.main_settings import (
     _find_by_logical_id,
     _prune_display_none,
     _set_paint,
+    _set_text_content,
     _set_visible,
     _truncate_text_to_width,
 )
+from pigeon.settings_layout import SETTINGS_BACKGROUND_SHIFT_Y, SETTINGS_CANVAS_ORIGIN
 
 # Same Illustrator board crop as settings_pigeon.svg so the panel lines up
 # with the shared code-drawn theme background.
@@ -277,10 +279,70 @@ def apply_metadata_debug_svg_state(
         _set_visible(conf_group, False)
 
     # EXIT is the only actionable control on this screen — always highlighted.
-    from pigeon.widgets.pigeon_settings import _sync_back_button, _sync_version_text
-
     _sync_back_button(root, selected=True)
     _sync_version_text(root, state)
+
+
+# EXIT / version chrome shared with the 0.8 settings_pigeon layers (the
+# inspector art still uses them; the 0.11 settings_pigeon page does not).
+_COLOR_WHITE = "#FFFFFF"
+_COLOR_BLACK = "#000000"
+_COLOR_BACK_FILL = "#202020"
+# Board crop the version string is placed against (0.8 settings_pigeon).
+_VERSION_VIEWBOX_XY = (
+    SETTINGS_CANVAS_ORIGIN[0],
+    SETTINGS_CANVAS_ORIGIN[1] - SETTINGS_BACKGROUND_SHIFT_Y,
+)
+
+
+def _paint_text(el: ET.Element | None, color: str) -> None:
+    if el is None:
+        return
+    nodes = [el] if el.tag.endswith("text") else [
+        n for n in el.iter() if n.tag.endswith("text") or n.tag.endswith("tspan")
+    ]
+    for node in nodes or [el]:
+        _set_paint(node, fill=color)
+
+
+def _sync_back_button(root: ET.Element, *, selected: bool) -> None:
+    group = _find_by_logical_id(root, "settings_pigeon_back_group")
+    scope = group if group is not None else root
+    button = _find_by_logical_id(scope, "settings_pigeon_back_button")
+    accent = _find_by_logical_id(scope, "settings_pigeon_back_accent")
+    text = _find_by_logical_id(scope, "settings_pigeon_back_text")
+    if button is not None:
+        _set_paint(
+            button,
+            fill=_COLOR_WHITE if selected else _COLOR_BACK_FILL,
+            stroke=_COLOR_BLACK,
+        )
+    if accent is not None:
+        _set_paint(accent, fill="none", stroke=_COLOR_BLACK if selected else _COLOR_WHITE)
+    _paint_text(text, _COLOR_BLACK if selected else _COLOR_WHITE)
+
+
+def _sync_version_text(root: ET.Element, state: MainSettingsState) -> None:
+    from pigeon.version import version_string
+
+    ver = str(getattr(state, "version_string", "") or version_string()).strip()
+    if ver.lower().startswith("v"):
+        ver = ver[1:].lstrip()
+    label = f"PIGEON V {ver}" if ver else "PIGEON"
+    text = _find_by_logical_id(root, "settings_pigeon_version_text")
+    if text is None:
+        return
+    if not text.tag.endswith("text"):
+        nested = next(
+            (n for n in text.iter() if n is not text and n.tag.endswith("text")), None
+        )
+        text = nested if nested is not None else text
+    _set_text_content(text, label)
+    _paint_text(text, _COLOR_WHITE)
+    vb_x, vb_y = _VERSION_VIEWBOX_XY
+    text.set("transform", f"translate({vb_x + 1180.0:.2f} {vb_y + 159.0:.2f})")
+    text.set("text-anchor", "end")
+    text.attrib.pop("style", None)
 
 
 def _full_theme_bgra(

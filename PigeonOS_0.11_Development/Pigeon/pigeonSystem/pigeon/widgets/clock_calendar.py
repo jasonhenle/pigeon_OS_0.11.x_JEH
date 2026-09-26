@@ -65,7 +65,9 @@ def _time_12h_no_leading_zero(now: datetime) -> str:
 def _resolve_display_time() -> datetime:
     raw = (os.environ.get("PIGEON_FAKE_TIME") or os.environ.get("PIGEON_FAKE_DATETIME") or "").strip()
     if not raw:
-        return datetime.now()
+        from pigeon.pigeon_locale import pigeon_now
+
+        return pigeon_now()
     for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M"):
         try:
             return datetime.strptime(raw, fmt)
@@ -75,7 +77,9 @@ def _resolve_display_time() -> datetime:
         return datetime.fromisoformat(raw.replace("Z", ""))
     except ValueError:
         pass
-    return datetime.now()
+    from pigeon.pigeon_locale import pigeon_now
+
+    return pigeon_now()
 
 
 def _fit_segmented_fonts(
