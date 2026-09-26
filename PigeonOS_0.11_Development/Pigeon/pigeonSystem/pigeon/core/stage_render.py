@@ -1064,9 +1064,9 @@ def cycle_dev_phase(_event=None, *, DevPhase, _bump_pigeon_user_activity, dev_ph
     sync_developer_chrome()
     if dev_phase[0] == DevPhase.MAIN_SETTINGS:
         try:
-            from pigeon.weather import DEFAULT_WEATHER_ZIP, refresh_weather
+            from pigeon.weather import refresh_weather
 
-            refresh_weather(zip_code=DEFAULT_WEATHER_ZIP, force=True)
+            refresh_weather(force=True)
         except Exception:
             pass
         render_once()

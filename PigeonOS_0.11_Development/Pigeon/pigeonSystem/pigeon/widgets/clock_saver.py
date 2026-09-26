@@ -38,7 +38,8 @@ from pigeon.font_paths import (
     resolve_digital7_font,
     resolve_ui_font_bold,
 )
-from pigeon.weather import DEFAULT_WEATHER_ZIP, ensure_weather
+from pigeon.pigeon_locale import pigeon_now
+from pigeon.weather import ensure_weather
 from pigeon.widgets.clock_calendar import _resolve_display_time
 
 # Large saver time band (legacy callers); full-frame SVG is preferred now.
@@ -487,7 +488,7 @@ def _apply_clock_saver_svg_state(
     weather_bottom_svg = 0.0
     if include_weather:
         if refresh_weather:
-            temps = ensure_weather(zip_code=DEFAULT_WEATHER_ZIP)
+            temps = ensure_weather()
         else:
             from pigeon.weather import cached_weather_temps
 
@@ -1432,8 +1433,6 @@ def render_seconds_bar_widget_bgra(
     fill_bgr: tuple[int, int, int] | None = None,
 ) -> np.ndarray:
     """Clock-saver seconds cells, fitted into a strip well."""
-    from datetime import datetime
-
     from pigeon.np_layout import (
         clock_saver_seconds_filled,
         clock_saver_seconds_segment_rects,
@@ -1443,7 +1442,7 @@ def render_seconds_bar_widget_bgra(
     w = max(32, int(width))
     h = max(12, int(height))
     out = np.zeros((h, w, 4), dtype=np.uint8)
-    when = now if now is not None else datetime.now()
+    when = now if now is not None else pigeon_now()
     pad_x = max(8, int(round(w * 0.03)))
     pad_y = max(4, int(round(h * 0.22)))
     tw = max(8, w - 2 * pad_x)

@@ -965,7 +965,9 @@ def _schedule_refresh_pairing_leds(*, _PIGEON_EXT, _content_indicator_ok, _paint
                 try:
                     st_led = main_settings_widget.state
                     if st_led.show_pigeon_settings:
-                        meta_ok = bool(_content_indicator_ok())
+                        from pigeon.source_status import metadata_received_within
+
+                        meta_ok = metadata_received_within()
                         if st_led.pigeon_metadata_ok != meta_ok:
                             st_led.pigeon_metadata_ok = meta_ok
                             main_settings_widget.invalidate()

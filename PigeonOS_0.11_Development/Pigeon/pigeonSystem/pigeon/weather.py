@@ -1,7 +1,8 @@
 """Local weather for the clock saver (high / low by ZIP).
 
-Default test ZIP is Frederick, MD ``21704``. Uses Zippopotam for lat/lon and
-Open-Meteo for daily highs/lows (no API key). Soft-fails offline.
+Uses the settings_pigeon zip (auto-detected from the public IP or typed in),
+falling back to Frederick, MD ``21704``. Zippopotam gives lat/lon and
+Open-Meteo daily highs/lows (no API key). Soft-fails offline.
 """
 
 from __future__ import annotations
@@ -116,10 +117,27 @@ def _store(temps: WeatherTemps) -> None:
         _cache_low = int(temps.low_f)
 
 
-def refresh_weather(*, zip_code: str = DEFAULT_WEATHER_ZIP, force: bool = False) -> bool:
-    """Fetch (or reuse cache). Returns True when a background fetch was started."""
+def _resolve_zip(zip_code: str | None) -> str:
+    z = str(zip_code or "").strip()
+    if z:
+        return z
+    try:
+        from pigeon.pigeon_locale import weather_zip
+
+        return weather_zip(DEFAULT_WEATHER_ZIP)
+    except Exception:
+        return DEFAULT_WEATHER_ZIP
+
+
+def refresh_weather(*, zip_code: str | None = None, force: bool = False) -> bool:
+    """Fetch (or reuse cache). Returns True when a background fetch was started.
+
+    With no ``zip_code`` the saved settings zip is used (default until the
+    settings IP lookup saves one; the next :func:`ensure_weather` then sees a
+    different zip than the cache and fetches again).
+    """
     global _fetch_in_flight, _cache_mono
-    z = str(zip_code or DEFAULT_WEATHER_ZIP).strip() or DEFAULT_WEATHER_ZIP
+    z = _resolve_zip(zip_code)
     now = time.monotonic()
     with _lock:
         fresh = (
@@ -146,7 +164,7 @@ def refresh_weather(*, zip_code: str = DEFAULT_WEATHER_ZIP, force: bool = False)
     return True
 
 
-def ensure_weather(*, zip_code: str = DEFAULT_WEATHER_ZIP) -> WeatherTemps | None:
+def ensure_weather(*, zip_code: str | None = None) -> WeatherTemps | None:
     """Return cache; kick a refresh when stale/empty."""
     refresh_weather(zip_code=zip_code, force=False)
     return cached_weather_temps()

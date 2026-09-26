@@ -33,6 +33,7 @@ from pigeon.compositing import (
     premultiply_bgra_on_black,
 )
 from pigeon.design import DESIGN_H, DESIGN_W
+from pigeon.pigeon_locale import pigeon_now
 from pigeon.np_layout import (
     CAST_ACTOR_SIZE_PX,
     CAST_CHAR_SIZE_PX,
@@ -2274,7 +2275,7 @@ def apply_view_circles_svg_state(
     for el in pending:
         _detach_element(root, el)
 
-    dt = now if now is not None else datetime.now()
+    dt = now if now is not None else pigeon_now()
     # Exterior (button) under middle (button); active zone adds accent seconds wedge.
     _apply_clock_accent_fills(root, theme=th)
     # Audio-levels channel bars follow settings UI color (LFE stays chrome).
@@ -2323,7 +2324,7 @@ def render_view_circles_svg_base_bgra(
     th = theme or np_theme_from_settings()
     assignments = zone_widgets or _default_zone_widget_assignments()
     out = np.zeros((int(DESIGN_H), int(DESIGN_W), 4), dtype=np.uint8)
-    now_dt = now if now is not None else datetime.now()
+    now_dt = now if now is not None else pigeon_now()
     chrome_keys = {
         "clock": "clock",
         "volume": "volume",
@@ -3640,7 +3641,7 @@ def _draw_volume_selected_pie(
 
 
 def _clock_hhmm(now: datetime | None = None) -> str:
-    dt = now if now is not None else datetime.now()
+    dt = now if now is not None else pigeon_now()
     try:
         from pigeon.widgets.options_settings import clock_uses_24h
 
@@ -3730,7 +3731,7 @@ class ViewCirclesWidget:
 
     def _reset_clock_spin_from_wall(self) -> None:
         """Seed intro spin phases from the current wall clock + volume."""
-        n = datetime.now()
+        n = pigeon_now()
         h12 = n.hour % 12
         self._spin_hour_phase = float(h12)  # 0 = 12 o'clock face
         self._spin_min_phase = float(n.minute)
@@ -3739,7 +3740,7 @@ class ViewCirclesWidget:
 
     def _clock_now_for_display(self) -> datetime:
         """Wall clock. (Intro racing-clock animation removed — real values always.)"""
-        return datetime.now()
+        return pigeon_now()
 
     def _volume_fraction_for_display(self) -> float:
         if self._state.volume_muted:
@@ -4363,7 +4364,7 @@ class ViewCirclesWidget:
             h12,
             int(now.minute),
             int(now.second) if keep_second else -1,
-            _format_zone0_date(datetime.now()),
+            _format_zone0_date(pigeon_now()),
             zone_widgets,
             theme_key,
             header_on,

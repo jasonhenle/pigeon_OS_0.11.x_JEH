@@ -17,12 +17,38 @@ Preferences zone nav: zone1 → zone5 → **color** → BACK. The color control 
 | Name | Module / surface | Asset |
 |------|------------------|-------|
 | **settings_main** | `pigeon/widgets/main_settings.py` + OpenCV composite | `pigeonAssets/settings_0.8/settings_main.svg` |
-| **pigeon settings** | `pigeon/widgets/pigeon_settings.py` (12-tile grid) | drawn in code (legacy `settings_pigeon.svg` unused) |
+| **pigeon settings** | `pigeon/widgets/pigeon_settings.py` (0.11 flat page, see below) | `pigeonAssets/settings/pigeon/settings_pigeon.svg` |
 | **preferences** | `pigeon/widgets/preferences_settings.py` | `pigeon_settings_preferences.svg` |
 | **update popup** | `pigeon/widgets/update_popup.py` | update SVG layers |
 | **keyboards** | `pigeon/widgets/settings_keyboard.py` | `keyboard_*.svg` |
 
 `DevPhase.MAIN_SETTINGS = 2` (SVG stack only). The legacy Tk settings form is no longer reachable.
+
+## settings_pigeon (0.11)
+
+One flat page, opened from settings_main box1. Nothing opens a sub-page except
+the zip keypad, the timezone dropdown and the update popup.
+
+Focus order: **EXIT → ZIP → TIMEZONE → blue, green, yellow, orange, red, grey,
+white → 12/24 hr → °F/°C → theme/dark → RESET → UPDATE**. The clock, version
+and the wifi / metadata / audio lights are not selectable.
+
+- **EXIT** returns to now playing (settings_main while WiFi setup still locks settings open).
+- **ZIP** opens the numeric keypad. The zip is guessed once from the public IP
+  when settings opens (`pigeon/pigeon_locale.py`); a typed zip wins, sets the
+  timezone for that zip, and drives the weather widget. Shows `ENTER` when unknown.
+- **TIMEZONE** opens a dropdown (`CST -1:00` = offset from the current zone).
+  It applies to Pigeon's clocks only (`pigeon_now()`); the OS clock is untouched.
+- **Colors** preview live while focused; activating commits. Leaving the row
+  falls back to the committed color. Theme hexes are the `ui_color_*_icon` fills.
+- **Options** toggle `time_format`, `temp_format`, `color_format` (dark = red
+  monochrome). `toggle_a` / `toggle_b` layers show per their names.
+- **Lights**: wifi green while associated; metadata / audio green when seen in
+  the last 60 s (`pigeon/source_status.py`).
+
+The now-play widget picker and the old options / color bars are retired: now
+playing always uses the default zone layout, and the old clock-face, idle-delay
+and clocksaver-off switches read as their defaults.
 
 ## Assets
 

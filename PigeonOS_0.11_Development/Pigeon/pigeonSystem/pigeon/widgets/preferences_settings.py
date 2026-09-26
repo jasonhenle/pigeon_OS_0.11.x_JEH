@@ -22,6 +22,7 @@ from pathlib import Path
 import numpy as np
 
 from pigeon.design import DESIGN_H, DESIGN_W
+from pigeon.pigeon_locale import pigeon_now
 from pigeon.np_layout import canonical_zone_widget, is_status_bar_widget
 from pigeon.widgets.main_settings import (
     MainSettingsState,
@@ -225,19 +226,13 @@ def _normalize_zone_widgets(
 def read_now_playing_zone_widgets(
     content_mode: str | None = None,
 ) -> tuple[str, str, str, str, str]:
-    defaults = _defaults_for_mode(content_mode)
-    key = _state_key_for_mode(content_mode)
-    try:
-        from pigeon.app_state import read_app_state
+    """Zone widgets for now playing.
 
-        raw = read_app_state().get(key)
-    except Exception:
-        raw = None
-    if isinstance(raw, dict):
-        return _normalize_zone_widgets(raw, defaults=defaults)
-    if isinstance(raw, list):
-        return _normalize_zone_widgets(raw, defaults=defaults)
-    return defaults
+    Widgets are no longer user-assignable (0.11): always the default layout;
+    ``pigeon.auto_widgets`` handles per-content fallbacks. Layouts saved by
+    older widget pickers are ignored.
+    """
+    return _defaults_for_mode(content_mode)
 
 
 def write_now_playing_zone_widgets(
@@ -1415,7 +1410,7 @@ def _draw_preferences_clock_digitals_bgra(
     vb_x, vb_y, vb_w, vb_h = _PREFS_VIEWBOX
     sx = DESIGN_W / max(vb_w, 1.0)
     sy = DESIGN_H / max(vb_h, 1.0)
-    when = now or datetime.now()
+    when = now or pigeon_now()
     hhmm = vc._clock_hhmm(when)
     time_p, _, _ = vc._text_patch_digital7(
         hhmm, size_px=_PREFS_NP_TIME_SIZE_PX, fill_rgb=(255, 255, 255)
@@ -2008,7 +2003,7 @@ def _apply_preferences_zone_dynamics(
         _find_by_key,
     )
 
-    dt = now if now is not None else datetime.now()
+    dt = now if now is not None else pigeon_now()
     _apply_clock_accent_fills(root)
 
     for zone in (1, 2, 3):
@@ -2542,7 +2537,7 @@ def _prefs_structure_cache_key(
             )
         ),
         # Minute bucket: second wedges refresh at most once/min without full nav.
-        datetime.now().strftime("%H%M"),
+        pigeon_now().strftime("%H%M"),
         1 if getattr(state, "preferences_live_content", False) else 0,
         6,  # structure schema — TT+TRT vertically centered
     )
