@@ -16,4 +16,11 @@ class BootContext:
         self.__dict__.update(names)
 
     def __getattr__(self, name: str) -> object:
+        if name.startswith("__") and name.endswith("__"):
+            # Protocol probes (copy, pickle, inspect: ``__deepcopy__``,
+            # ``__getstate__`` ...) expect AttributeError for "not here".
+            raise AttributeError(name)
+        # Not bound yet. Plain names raise NameError -- what the original closure
+        # lookup raised -- so ``hasattr(ctx, "x")`` raises too: test with
+        # ``"x" in vars(ctx)`` instead.
         raise NameError(f"name {name!r} is not defined (not bound yet in bootstrap)")

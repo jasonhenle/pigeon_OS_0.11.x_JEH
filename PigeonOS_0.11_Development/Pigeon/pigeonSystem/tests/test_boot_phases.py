@@ -103,6 +103,19 @@ class BootPhaseWiringTests(unittest.TestCase):
                     if sym.is_global() and sym.is_referenced():
                         self.assertIn(sym.get_name(), known, f"{os.path.basename(path)}: {sym.get_name()}")
 
+    def test_context_supports_copy_and_pickle(self):
+        import copy
+        import pickle
+
+        from pigeon.core.boot.context import BootContext
+
+        ctx = BootContext(a=[1])
+        self.assertEqual(copy.copy(ctx).a, [1])
+        self.assertEqual(copy.deepcopy(ctx).a, [1])
+        self.assertEqual(pickle.loads(pickle.dumps(ctx)).a, [1])
+        self.assertIn("a", vars(ctx))
+        self.assertNotIn("b", vars(ctx))
+
     def test_missing_name_raises_name_error(self):
         from pigeon.core.boot.context import BootContext
 
@@ -110,6 +123,133 @@ class BootPhaseWiringTests(unittest.TestCase):
         self.assertEqual(ctx.a, 1)
         with self.assertRaises(NameError):
             ctx.not_bound_yet
+
+
+
+def _deferred_reads(fn):
+    """Plain names read inside lambdas / generator expressions of ``fn`` (their own params excluded)."""
+    out = set()
+
+    def visit(n, hidden, deferred):
+        if isinstance(n, ast.Lambda):
+            a = n.args
+            h = hidden | {x.arg for x in a.posonlyargs + a.args + a.kwonlyargs + [y for y in (a.vararg, a.kwarg) if y]}
+            for d in a.defaults + [k for k in a.kw_defaults if k]:
+                visit(d, hidden, deferred)
+            visit(n.body, h, True)
+            return
+        if isinstance(n, (ast.GeneratorExp, ast.ListComp, ast.SetComp, ast.DictComp)):
+            h = hidden | {x.id for g in n.generators for x in ast.walk(g.target) if isinstance(x, ast.Name)}
+            d = deferred or isinstance(n, ast.GeneratorExp)
+            for c in ast.iter_child_nodes(n):
+                visit(c, h, d)
+            return
+        if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) and deferred and n.id not in hidden:
+            out.add(n.id)
+            return
+        for c in ast.iter_child_nodes(n):
+            visit(c, hidden, deferred)
+
+    for stmt in fn.body:
+        visit(stmt, set(), False)
+    return out
+
+
+def _local_stores(fn):
+    """Names ``run`` binds in its own scope (not inside lambdas / comprehensions)."""
+    out = set()
+
+    def visit(n):
+        if isinstance(n, (ast.Lambda, ast.GeneratorExp, ast.ListComp, ast.SetComp, ast.DictComp)):
+            return
+        if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store):
+            out.add(n.id)
+        elif isinstance(n, (ast.Import, ast.ImportFrom)):
+            out.update((a.asname or a.name).split(".")[0] for a in n.names)
+        elif isinstance(n, (ast.FunctionDef, ast.ClassDef)):
+            out.add(n.name)
+            return
+        for c in ast.iter_child_nodes(n):
+            visit(c)
+
+    for stmt in fn.body:
+        inner = stmt.body[0] if isinstance(stmt, ast.Try) and len(stmt.body) == 1 else stmt
+        if isinstance(inner, ast.Assign) and _is_ctx_attr(inner.value, store=False) \
+                and isinstance(inner.targets[0], ast.Name) and inner.targets[0].id == inner.value.attr:
+            continue  # ``x = ctx.x``: the same object, not a new binding
+        visit(stmt)
+    return out
+
+
+def _ctx_attrs(fn, store):
+    return {n.attr for n in ast.walk(fn) if _is_ctx_attr(n, store)}
+
+
+def _guarded_names(fn):
+    """Names whose prologue read / epilogue write is wrapped in ``try: ... except NameError``."""
+    out = set()
+    for stmt in fn.body:
+        if (isinstance(stmt, ast.Try) and len(stmt.body) == 1 and len(stmt.handlers) == 1
+                and isinstance(stmt.handlers[0].type, ast.Name) and stmt.handlers[0].type.id == "NameError"
+                and isinstance(stmt.body[0], ast.Assign)):
+            a = stmt.body[0]
+            if _is_ctx_attr(a.value, store=False):
+                out.add(a.value.attr)
+            elif _is_ctx_attr(a.targets[0], store=True):
+                out.add(a.targets[0].attr)
+    return out
+
+
+class BootPhaseInvariantTests(unittest.TestCase):
+    """Invariants the phase split relies on; a hand edit that breaks one would
+    change behaviour silently (a stale value, a lookup that can never succeed)."""
+
+    def _group(self, prefix):
+        return [(os.path.basename(p)[:-3], _run_fn(ast.parse(open(p, encoding="utf-8").read())))
+                for p in _phase_paths(prefix)]
+
+    def test_deferred_reads_never_see_a_later_rebinding(self):
+        # A lambda in phase k closes over phase k's local. If a later phase binds
+        # the same name, the original single-scope code would have seen the new
+        # value; the split one would not. Such reads must go through ctx.X.
+        for prefix in ("m", "p"):
+            group = self._group(prefix)
+            for k, (mod, fn) in enumerate(group):
+                later = set().union(*[_local_stores(f) for _m, f in group[k + 1:]]) if k + 1 < len(group) else set()
+                stale = sorted(_deferred_reads(fn) & later - {"ctx"})
+                self.assertEqual(stale, [], f"{mod}: deferred code reads names a later phase rebinds")
+
+    def test_every_ctx_read_has_a_writer(self):
+        for prefix, var in (("m", "_main_ctx"), ("p", "ctx")):
+            group = self._group(prefix)
+            written = _seed_names(var).union(*[_ctx_attrs(f, store=True) for _m, f in group])
+            for mod, fn in group:
+                missing = sorted(_ctx_attrs(fn, store=False) - written)
+                self.assertEqual(missing, [], f"{mod} reads ctx names nothing ever writes")
+
+    def test_ctx_is_only_the_phase_parameter(self):
+        for prefix in ("m", "p"):
+            for mod, fn in self._group(prefix):
+                self.assertEqual([a.arg for a in fn.args.args], ["ctx"], mod)
+                self.assertNotIn("ctx", _local_stores(fn), f"{mod} rebinds ctx")
+
+    def test_seeded_module_globals_are_never_rebound(self):
+        # The seeds copy pigeon_0_9 globals when main() / bootstrap() start. A
+        # global rebound later (``global X; X = ...``) would not reach the phases.
+        src = open(os.path.join(_SYS, "pigeon_0_9.py"), encoding="utf-8").read()
+        rebound = {nm for n in ast.walk(ast.parse(src)) if isinstance(n, ast.Global) for nm in n.names}
+        for var in ("_main_ctx", "ctx"):
+            self.assertEqual(sorted(_seed_names(var) & rebound), [], var)
+
+    def test_only_expected_names_are_path_dependent(self):
+        # ``try: x = ctx.x / ctx.x = x except NameError`` marks a name bound only
+        # on one path. Today that is splash_tick (only with _PIGEON_EXT). A new
+        # one is fine but should be a conscious decision: add it here.
+        found = set()
+        for prefix in ("m", "p"):
+            for _mod, fn in self._group(prefix):
+                found |= _guarded_names(fn)
+        self.assertEqual(found, {"splash_tick"})
 
 
 if __name__ == "__main__":
