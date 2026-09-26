@@ -63,7 +63,7 @@ class BindSitesMatchSignaturesTests(unittest.TestCase):
         import glob
 
         paths = [os.path.join(_SYS_ROOT, "pigeon_0_9.py")] + sorted(
-            glob.glob(os.path.join(_SYS_ROOT, "pigeon", "core", "boot", "p*.py")))
+            glob.glob(os.path.join(_SYS_ROOT, "pigeon", "core", "boot", "[mp][0-9]*.py")))
         nodes = [n for p in paths for n in ast.walk(ast.parse(open(p, encoding="utf-8").read()))]
         sites = 0
         for node in nodes:

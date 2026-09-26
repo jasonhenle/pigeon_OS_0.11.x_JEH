@@ -65,10 +65,23 @@ main = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name ==
 boot = next(n for n in main.body if isinstance(n, ast.FunctionDef) and n.name == "bootstrap")
 st = symtable.symtable(src, SRC, "exec")
 mt = next(c for c in st.get_children() if c.get_name() == "main")
-B = list(boot.body)
+# ``--scope=main`` (pass 16): phase main()'s statements *before* ``def bootstrap``
+# instead; the rest of main() (and bootstrap()) read the results back.
+SCOPE = "main" if "--scope=main" in sys.argv else "bootstrap"
+if SCOPE == "main":
+    host = main
+    K = main.body.index(boot)
+    B = list(main.body[:K])
+    TAIL = list(main.body[K:])
+    HIND = 4
+else:
+    host = boot
+    B = list(boot.body)
+    TAIL = []
+    HIND = 8
 has_doc = bool(B) and isinstance(B[0], ast.Expr) and isinstance(getattr(B[0], "value", None), ast.Constant) and isinstance(B[0].value.value, str)
 plan = json.load(open(PLAN))
-assert plan[0]["start"] == (1 if has_doc else 0), "first phase must start at bootstrap()'s first statement"
+assert plan[0]["start"] == (1 if has_doc else 0), f"first phase must start at {host.name}()'s first statement"
 bounds = [p["start"] for p in plan] + [len(B)]
 assert bounds == sorted(set(bounds)), "phase starts must increase"
 errors = []
@@ -88,7 +101,13 @@ def inner_locals(n):
     return out
 
 
-def scan(stmt):
+def _tables_under(t):
+    yield t
+    for c in t.get_children():
+        yield from _tables_under(c)
+
+
+def scan(stmt, strict=True):
     """(stores, loads, deferred_loads) for one bootstrap-level statement.
 
     Scope-aware: names local to a lambda / comprehension are not bootstrap
@@ -96,14 +115,29 @@ def scan(stmt):
     stores, loads, dloads, eloads, deferred_nodes = set(), set(), set(), set(), []
 
     def visit(n, hidden, deferred):
-        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            errors.append(f"line {n.lineno}: nested def/class in bootstrap()")
+        if isinstance(n, ast.ClassDef) and n is stmt and SCOPE == "main":
+            # A class statement at main() level (the null-object classes): the class
+            # name is bound here; every outer name its body / methods use is a load,
+            # treated as deferred (methods run later).
+            stores.add(n.name)
+            for d in n.decorator_list + n.bases + [k.value for k in n.keywords]:
+                visit(d, hidden, deferred)
+            ct = next(c for c in mt.get_children() if c.get_name() == n.name and c.get_lineno() == n.lineno)
+            for tb in _tables_under(ct):
+                for sym in tb.get_symbols():
+                    if sym.is_referenced() and (sym.is_free() or (sym.is_global() and not sym.is_declared_global())):
+                        loads.add(sym.get_name())
+                        dloads.add(sym.get_name())
             return
-        if isinstance(n, (ast.Return, ast.Yield, ast.YieldFrom, ast.Nonlocal, ast.Global, ast.Delete, ast.Await)):
-            errors.append(f"line {n.lineno}: {type(n).__name__} at bootstrap level")
-        if isinstance(n, ast.NamedExpr):
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if strict:
+                errors.append(f"line {n.lineno}: nested def/class in {host.name}()")
+            return
+        if strict and isinstance(n, (ast.Return, ast.Yield, ast.YieldFrom, ast.Nonlocal, ast.Global, ast.Delete, ast.Await)):
+            errors.append(f"line {n.lineno}: {type(n).__name__} at {host.name}() level")
+        if strict and isinstance(n, ast.NamedExpr):
             errors.append(f"line {n.lineno}: walrus")
-        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id in ("locals", "vars", "eval", "exec"):
+        if strict and isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id in ("locals", "vars", "eval", "exec"):
             errors.append(f"line {n.lineno}: {n.func.id}()")
         if isinstance(n, INNER):
             h = hidden | inner_locals(n)
@@ -197,7 +231,19 @@ def definitely_binds(stmts, name):
 
 
 # ---------------------------------------------------------------- outer scopes
-main_locals = {s.get_name() for s in mt.get_symbols() if s.is_local()}
+main_locals = {s.get_name() for s in mt.get_symbols() if s.is_local()} if SCOPE == "bootstrap" else set()
+
+# what the rest of the host function reads / (re)binds after the phased statements
+TAIL_LOADS, TAIL_STORES = set(), set()
+for s_ in TAIL:
+    if s_ is boot:
+        bt = next(c for c in mt.get_children() if c.get_name() == "bootstrap")
+        TAIL_LOADS |= set(bt.get_frees())
+        TAIL_STORES.add("bootstrap")
+    else:
+        st_, ld_, _d, _n, _e = scan(s_, strict=False)
+        TAIL_LOADS |= ld_
+        TAIL_STORES |= st_
 BUILTINS = set(dir(builtins))
 mod_binds = collections.Counter()
 direct = {}  # name -> import line
@@ -258,14 +304,18 @@ for k, p in enumerate(plan):
     loads_p = set().union(*LOADS[a:b])
     dloads_p = set().union(*DLOADS[a:b])
     before = set().union(*STORES[:a]) if a else set()
-    after_stores = set().union(*STORES[b:]) if b < len(B) else set()
-    after_loads = set().union(*LOADS[b:]) if b < len(B) else set()
+    after_stores = (set().union(*STORES[b:]) if b < len(B) else set()) | TAIL_STORES
+    after_loads = (set().union(*LOADS[b:]) if b < len(B) else set()) | TAIL_LOADS
     inputs, imports, seeds, rewrites = [], set(), set(), set()
+    maybe_in, maybe_out = set(), set()
     for n in sorted(loads_p):
         if n in BOOT:
             if n in before:
                 if not definitely_binds(B[:a], n):
-                    errors.append(f"{p['module']}: reads {n}, which may be unbound when the phase starts")
+                    if SCOPE == "main":
+                        maybe_in.add(n)  # guarded read: stays unbound here too
+                    else:
+                        errors.append(f"{p['module']}: reads {n}, which may be unbound when the phase starts")
                 inputs.append(n)
             elif n not in stores_p:
                 if n not in dloads_p:
@@ -281,6 +331,9 @@ for k, p in enumerate(plan):
                     errors.append(f"{p['module']}: module global {n} is rebound with `global`")
                 inputs.append(n)
                 seeds.add(n)
+        elif n in ("__file__", "__name__", "__spec__"):
+            inputs.append(n)  # the host module's value, not the phase module's
+            seeds.add(n)
         elif n in BUILTINS:
             pass
         else:
@@ -308,10 +361,14 @@ for k, p in enumerate(plan):
     inputs = [n for n in inputs if n not in rewrites]
     outputs = sorted(n for n in stores_p if n in after_loads)
     for n in outputs:
-        if n not in inputs and not definitely_binds(stmts, n):
-            errors.append(f"{p['module']}: {n} is read later but not bound on every path through the phase")
+        if (n not in inputs or n in maybe_in) and not definitely_binds(stmts, n):
+            if SCOPE == "main":
+                maybe_out.add(n)  # guarded write: only when this path bound it
+            else:
+                errors.append(f"{p['module']}: {n} is read later but not bound on every path through the phase")
     seed |= seeds
-    phases.append(dict(p, a=a, b=b, inputs=inputs, outputs=outputs, imports=sorted(imports), rewrites=sorted(rewrites)))
+    phases.append(dict(p, a=a, b=b, inputs=inputs, outputs=outputs, imports=sorted(imports), rewrites=sorted(rewrites),
+                       maybe_in=sorted(maybe_in), maybe_out=sorted(maybe_out)))
 
 for ph in phases:
     ph["publish"] = sorted(n for n, i in publish.items() if ph["a"] <= i < ph["b"])
@@ -340,7 +397,7 @@ for t in tokenize.generate_tokens(io.StringIO(src).readline):
 
 def seg_start(i):
     ln = B[i].lineno
-    while ln > 1 and lines[ln - 2].strip().startswith("#") and lines[ln - 2].startswith(" " * 8):
+    while ln > 1 and lines[ln - 2].strip().startswith("#") and lines[ln - 2].startswith(" " * HIND):
         ln -= 1
     return ln
 
@@ -379,15 +436,15 @@ for ph in phases:
         if ln in string_inner or not t.strip():
             body.append(t if t.strip() else "\n")
         else:
-            assert t.startswith("        "), (ln, t)
-            body.append(t[4:])
+            assert t.startswith(" " * HIND), (ln, t)
+            body.append(t[HIND - 4:])
     # read rewritten names as ``ctx.X`` (insert right to left within a line)
     hits = collections.defaultdict(list)
     for i in range(ph["a"], ph["b"]):
         for nd in DNODES[i]:
             if nd.id in ph["rewrites"]:
                 assert nd.lineno == nd.end_lineno and nd.lineno not in string_inner, nd.lineno
-                hits[nd.lineno].append(nd.col_offset - 4)
+                hits[nd.lineno].append(nd.col_offset - (HIND - 4))
     for ln, cols in hits.items():
         t = body[ln - s]
         for c in sorted(cols, reverse=True):
@@ -402,11 +459,16 @@ for ph in phases:
         if ln in ends:
             out.append(f"    ctx.{ends[ln]} = {ends[ln]}\n")
     text = "".join(out)
-    pro = "".join(f"    {n} = ctx.{n}\n" for n in ph["inputs"])
-    epi = "".join(f"    ctx.{n} = {n}\n" for n in ph["outputs"] if n not in ph["publish"])
+    def guarded(stmt):
+        # ``NameError`` covers a missing ctx entry and an unbound local alike
+        return f"    try:\n        {stmt}\n    except NameError:\n        pass\n"
+
+    pro = "".join(guarded(f"{n} = ctx.{n}") if n in ph["maybe_in"] else f"    {n} = ctx.{n}\n" for n in ph["inputs"])
+    epi = "".join(guarded(f"ctx.{n} = {n}") if n in ph["maybe_out"] else f"    ctx.{n} = {n}\n"
+                  for n in ph["outputs"] if n not in ph["publish"])
     mod = (
         f'"""{ph["doc"]}\n\n'
-        f"Phase {phases.index(ph) + 1} of ``bootstrap()`` in ``pigeon_0_9.py``, moved verbatim. ``run``\n"
+        f"Phase {phases.index(ph) + 1} of ``{host.name}()`` in ``pigeon_0_9.py``, moved verbatim. ``run``\n"
         "reads the names it needs from the shared boot context, runs the original\n"
         "statements, and writes back the names later phases read.\n"
         '"""\n\nfrom __future__ import annotations\n\n'
@@ -430,43 +492,63 @@ for ph in phases:
     assert len(got) == len(want) and all(norm(x) == norm(y) for x, y in zip(got, want)), f"AST mismatch in {ph['module']}"
     open(os.path.join(PKG, ph["module"] + ".py"), "w", encoding="utf-8").write(mod)
 
-open(os.path.join(PKG, "__init__.py"), "w").write('"""``bootstrap()`` split into phases; see ``context.BootContext``."""\n')
-open(os.path.join(PKG, "context.py"), "w").write('''"""Shared state for the ``bootstrap()`` phases in ``pigeon.core.boot``."""
+if SCOPE == "bootstrap":
+    open(os.path.join(PKG, "__init__.py"), "w").write('"""``bootstrap()`` split into phases; see ``context.BootContext``."""\n')
+    open(os.path.join(PKG, "context.py"), "w").write('''"""Shared state for the ``bootstrap()`` phases in ``pigeon.core.boot``."""
 
-from __future__ import annotations
+    from __future__ import annotations
 
 
-class BootContext:
-    """One attribute per former ``bootstrap()`` local (plus the ``main()`` locals
-    and module globals the phases read, seeded up front).
+    class BootContext:
+        """One attribute per former ``bootstrap()`` local (plus the ``main()`` locals
+        and module globals the phases read, seeded up front).
 
-    Phases read their inputs from it when they start and write back what later
-    phases need when they end. Reading a name nobody has bound yet raises
-    ``NameError`` -- what the original closure lookup raised.
-    """
+        Phases read their inputs from it when they start and write back what later
+        phases need when they end. Reading a name nobody has bound yet raises
+        ``NameError`` -- what the original closure lookup raised.
+        """
 
-    def __init__(self, **names: object) -> None:
-        self.__dict__.update(names)
+        def __init__(self, **names: object) -> None:
+            self.__dict__.update(names)
 
-    def __getattr__(self, name: str) -> object:
-        raise NameError(f"name {name!r} is not defined (not bound yet in bootstrap)")
-''')
+        def __getattr__(self, name: str) -> object:
+            raise NameError(f"name {name!r} is not defined (not bound yet in bootstrap)")
+    ''')
 
-# rewrite bootstrap()
+# rewrite the host function
 bs = seg_start(1 if has_doc else 0)
-while bs > boot.lineno + 1 and not lines[bs - 2].strip():
+while bs > host.lineno + 1 and not lines[bs - 2].strip():
     bs -= 1  # drop blank lines between the def (or docstring) and the first phase
 be = B[-1].end_lineno
 seeds = sorted(seed)
-new = [f"        # Startup runs as {len(phases)} phases in pigeon/core/boot/ (see BootContext). Seed the\n",
-       "        # shared context with the main() locals and module globals they read.\n",
-       "        ctx = _BootContext(\n"] + [f"            {n}={n},\n" for n in seeds] + ["        )\n"]
-new += [f"        _boot_{ph['module']}.run(ctx)\n" for ph in phases]
+if SCOPE == "bootstrap":
+    new = [f"        # Startup runs as {len(phases)} phases in pigeon/core/boot/ (see BootContext). Seed the\n",
+           "        # shared context with the main() locals and module globals they read.\n",
+           "        ctx = _BootContext(\n"] + [f"            {n}={n},\n" for n in seeds] + ["        )\n"]
+    new += [f"        _boot_{ph['module']}.run(ctx)\n" for ph in phases]
+else:
+    bound = set().union(*STORES)
+    pull = sorted(n for n in TAIL_LOADS if n in bound)
+    maybe = {n for n in pull if not definitely_binds(B, n)}  # e.g. bound only on the splash path
+    new = [f"    # Setup runs as {len(phases)} phases in pigeon/core/boot/ (m*.py, see BootContext);\n",
+           "    # the rest of main() and bootstrap() read their results back below.\n",
+           "    _main_ctx = _BootContext(\n"] + [f"        {n}={n},\n" for n in seeds] + ["    )\n"]
+    new += [f"    _boot_{ph['module']}.run(_main_ctx)\n" for ph in phases]
+    new += ["\n"]
+    for n in pull:
+        if n in maybe:
+            new += [f"    try:\n        {n} = _main_ctx.{n}\n    except NameError:\n        pass\n"]
+        else:
+            new += [f"    {n} = _main_ctx.{n}\n"]
+    new += ["\n"]
 src2 = "".join(lines[: bs - 1] + new + lines[be:])
-anchor = "from pigeon.core import device_control as _core_device_control\n"
-assert anchor in src2
-imps = "from pigeon.core.boot.context import BootContext as _BootContext\n" + "".join(
-    f"from pigeon.core.boot import {ph['module']} as _boot_{ph['module']}\n" for ph in phases)
-src2 = src2.replace(anchor, anchor + imps, 1)
+anchor = "from pigeon.core.boot.context import BootContext as _BootContext\n"
+imps = "".join(f"from pigeon.core.boot import {ph['module']} as _boot_{ph['module']}\n" for ph in phases)
+if anchor in src2:
+    src2 = src2.replace(anchor, anchor + imps, 1)
+else:
+    a2 = "from pigeon.core import device_control as _core_device_control\n"
+    assert a2 in src2
+    src2 = src2.replace(a2, a2 + anchor + imps, 1)
 open(SRC, "w", encoding="utf-8").write(src2)
-print("wrote", len(phases), "phases; bootstrap() is now", len(new) + 1, "lines")
+print("wrote", len(phases), "phases into", host.name + "()")

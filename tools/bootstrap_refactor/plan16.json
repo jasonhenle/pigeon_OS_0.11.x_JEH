@@ -1,0 +1,6 @@
+[
+ {"module": "m01_window", "start": 0, "doc": "Main-window phase: arguments, the Tk root, kiosk guard, quit handling, and the Tk error reporter."},
+ {"module": "m02_shell", "start": 25, "doc": "Main-window phase: the shell / content frames, the boot clock label, and splash / startup state."},
+ {"module": "m03_volume_and_reveal", "start": 49, "doc": "Main-window phase: clock-saver volume state and helpers, and the splash clock-reveal helpers."},
+ {"module": "m04_splash", "start": 67, "doc": "Main-window phase: splash caches, the Tk pack / grid / place pump, splash playback, and the first paint."}
+]

@@ -1,8 +1,5 @@
-import argparse
 import os
 import sys
-import threading
-import time
 from dataclasses import dataclass
 from enum import IntEnum
 from pathlib import Path
@@ -61,12 +58,13 @@ if not os.path.isdir(os.path.join(_PROJECT_DIR, "pigeonAssets")):
 from pigeon.app_state import read_app_state, write_app_state
 from pigeon.compositing import cv_resize_interp
 from pigeon.stage_background import get_stage_bgr
-from pigeon.version import version_string
 from pigeon.core.binding import bind_deps as _bind_deps
-from pigeon.core.binding import bind_method_deps as _bind_method_deps
 from pigeon.core.binding import late as _late
-from pigeon.core import saver_state as _core_saver_state
 from pigeon.core.boot.context import BootContext as _BootContext
+from pigeon.core.boot import m01_window as _boot_m01_window
+from pigeon.core.boot import m02_shell as _boot_m02_shell
+from pigeon.core.boot import m03_volume_and_reveal as _boot_m03_volume_and_reveal
+from pigeon.core.boot import m04_splash as _boot_m04_splash
 from pigeon.core.boot import p01_state as _boot_p01_state
 from pigeon.core.boot import p02_video_surface as _boot_p02_video_surface
 from pigeon.core.boot import p03_settings_scaffold as _boot_p03_settings_scaffold
@@ -82,8 +80,6 @@ from pigeon.core.boot import p12_key_bindings as _boot_p12_key_bindings
 from pigeon.core.boot import p13_hardware_inputs as _boot_p13_hardware_inputs
 from pigeon.core.boot import p14_first_render as _boot_p14_first_render
 from pigeon.core import splash as _core_splash
-from pigeon.core import app_shell as _core_app_shell
-from pigeon.core import startup as _core_startup
 
 try:
     from pigeon.tmdb_retry_log import append_entry as _tmdb_retry_log_append
@@ -221,7 +217,6 @@ try:
 except ImportError as _exc:
     _log_optional_import_failure("core_compositing", _exc)
 
-from pigeon.linux_kiosk import apply_kiosk_fullscreen, linux_kiosk_enabled, schedule_kiosk_guard
 
 try:
     from pigeon.widgets.clock_calendar import (
@@ -893,650 +888,98 @@ def _format_hmmss(seconds_value: float | int | None) -> str:
 
 
 def main() -> int:
-    sys.stderr.write(f"pigeon: running script {os.path.abspath(__file__)}\n")
-    sys.stderr.flush()
-    try:
-        from pigeon.pi_diagnostics import run_linux_startup_checks
-
-        run_linux_startup_checks()
-    except Exception:
-        pass
-
-    parser = argparse.ArgumentParser(prog=f"Pigeon {version_string()}", add_help=True)
-    parser.parse_args()
-
-    cap: list[cv2.VideoCapture | None] = [None]
-
-    root = tk.Tk()
-    _app_startup_mono = time.monotonic()
-    try:
-        root.configure(bg="#000", cursor="none")
-        root.option_add("*cursor", "none")
-    except tk.TclError:
-        pass
-    root.title("")
-    root.geometry(f"{WINDOW_W}x{WINDOW_H}")
-    root.minsize(
-        int(round((DISPLAY_W // 2) * _LAUNCH_WINDOW_SCALE)),
-        int(round((DISPLAY_H // 2) * _LAUNCH_WINDOW_SCALE)),
-    )
-    root.resizable(True, True)
-    _kiosk_stopped_pids: list[int] = []
-    _kiosk_on = bool(linux_kiosk_enabled())
-    if not _kiosk_on:
-        try:
-            root.wm_aspect(5, 3, 5, 3)
-        except tk.TclError:
-            pass
-
-    _kiosk_logged = [False]
-
-    _reassert_kiosk = _bind_deps(
-        _core_app_shell._reassert_kiosk,
-        _kiosk_logged=_kiosk_logged,
-        _kiosk_on=_kiosk_on,
-        _kiosk_stopped_pids=_kiosk_stopped_pids,
-        root=root,
-    )
-
-    if _kiosk_on:
-        apply_kiosk_fullscreen(root, borderless=False)
-        try:
-            root.bind("<Map>", _reassert_kiosk)
-        except tk.TclError:
-            pass
-        try:
-            root.after(200, _reassert_kiosk)
-            root.after(800, _reassert_kiosk)
-        except tk.TclError:
-            pass
-        schedule_kiosk_guard(root, _kiosk_stopped_pids)
-
-    _restore_desktop_chrome = _bind_deps(
-        _core_app_shell._restore_desktop_chrome,
-        _kiosk_on=_kiosk_on,
-        _kiosk_stopped_pids=_kiosk_stopped_pids,
-    )
-
-    _quit_pigeon = _bind_deps(
-        _core_app_shell._quit_pigeon,
-        _restore_desktop_chrome=_restore_desktop_chrome,
-        root=root,
-        stop_audio_meter_capture=stop_audio_meter_capture,
-    )
-
-    root.protocol("WM_DELETE_WINDOW", _quit_pigeon)
-    if _kiosk_on:
-        import atexit
-
-        atexit.register(_restore_desktop_chrome)
-    # Ensure unexpected Tk callback errors are surfaced (and don't silently kill UI behavior).
-    _report_callback_exception = _bind_deps(
-        _core_app_shell._report_callback_exception,
-        _kiosk_on=_kiosk_on,
-    )
-
-    root.report_callback_exception = _report_callback_exception  # type: ignore[method-assign]
-
-    shell = tk.Frame(root, bg="#111", cursor="none")
-    shell.pack(fill=tk.BOTH, expand=True)
-    # Main UI is built here; splash overlay sits above until the splash sequence finishes.
-    content_host = tk.Frame(shell, bg="#111", cursor="none")
-    content_host.pack(fill=tk.BOTH, expand=True)
-    # Bridge host so the clock saver is visible the instant splash lifts — even if full
-    # bootstrap has not created the real video ``Label`` yet. Bootstrap destroys this.
-    _boot_clock_host = tk.Frame(content_host, bg="#000", cursor="none")
-    _boot_clock_host.pack(fill=tk.BOTH, expand=True)
-    _boot_clock_label = tk.Label(_boot_clock_host, bd=0, highlightthickness=0, bg="#000", cursor="none")
-    _boot_clock_label.pack(fill=tk.BOTH, expand=True)
-    _boot_clock_photo: list[ImageTk.PhotoImage | None] = [None]
-
-    # Full-window splash: PNG sequence in ``pigeonSplash/`` if present, else H.264/HEVC
-    # video (hardware-decoded on macOS), else built-in wordmark.
-    startup_ph: list[tk.Widget | None] = [None]
-    splash_png_paths: list[Path] = []
-    splash_video_path: Path | None = None
-    if _PIGEON_EXT:
-        try:
-            _assets_root = Path(_PROJECT_DIR) / "pigeonAssets"
-            splash_png_paths, splash_video_path = resolve_splash_media(_assets_root)
-        except Exception:
-            splash_png_paths = []
-            splash_video_path = None
-
-    bootstrap_done: list[bool] = [False]
-    splash_anim_done: list[bool] = [False]
-    # Live underlay composited under splash PNG alpha. Stays black until frame 90.
-    _splash_underlay_bgr: list[np.ndarray | None] = [None]
-    # Live clock buffer (background thread); copied under the splash from frame 90.
-    _splash_clock_ready_bgr: list[np.ndarray | None] = [None]
-    # Stop the live-clock worker once compose owns the display.
-    _splash_clock_refresh_stop: list[bool] = [False]
-    # True once splash reaches ``SPLASH_CLOCK_REVEAL_FRAME``.
-    _splash_reveal_clock: list[bool] = [False]
-    # Registered from bootstrap: keep the real video label in sync after reveal.
-    _splash_on_reveal_paint: list[object] = [None]
-    _splash_underlay_paint_mono: list[float] = [0.0]
-    _splash_post_hook_ran: list[bool] = [False]
-    # Post-splash UI timing (splash lift).
-    post_splash_mono: list[float | None] = [None]
-    _post_splash_startup_hook: list[object] = [None]
-
-    class _NullClockSaverVolumeHold:
-        hold = ""
-        pre_mute = ""
-
-        def remember(self, raw, *, source="poll", hold_s=None, now=None):
-            return str(raw or "")
-
-        def pick(self, candidates, *, now=None, receiver_off=False):
-            if receiver_off:
-                self.hold = ""
-                return ""
-            for raw in candidates:
-                s = str(raw or "").strip()
-                if s:
-                    return s
-            return ""
-
-        def is_stale_poll(self, raw, *, now=None):
-            return False
-
-        def in_nudge_grace(self, now=None):
-            return False
-
-        def display_line(self):
-            return str(self.hold or "").strip()
-
-        def clear(self):
-            self.hold = ""
-
-    _clock_saver_volume = (
-        ClockSaverVolumeHold() if ClockSaverVolumeHold is not None else _NullClockSaverVolumeHold()
-    )
-
-    class _NullVolumeLineReveal:
-        def note(self, raw, *, now=None):
-            return None
-
-        def opacity(self, now=None):
-            return 0.0
-
-        def fading(self, now=None):
-            return False
-
-    _volume_lines = (
-        VolumeLineReveal() if VolumeLineReveal is not None else _NullVolumeLineReveal()
-    )
-
-    # Shared with bootstrap() and the pigeon.core helpers. Created here (not inside
-    # bootstrap()) so the main()-level volume helpers below can read them too.
-    # Track the last usable Denon volume reading so the Apple TV metadata poll (which
-    # reports ``volume_percent=0`` when an AV receiver owns the volume line) does not
-    # briefly overwrite the authoritative dB value on its own cadence. The receiver
-    # poll keeps running on its own schedule; this cache only controls *display*.
-    denon_vol_cache: dict[str, object] = {
-        "effective": "",
-        "mono_usable": 0.0,
-        # Last volume string shown on View 1 (survives brief empty polls).
-        "np_hold": "",
-        "heal_quick_mono": 0.0,
-        "heal_sweep_mono": 0.0,
-        "bound_host": "",
-    }
-    # True when the last Denon poll answered but reported OFF/STANDBY — hide all
-    # receiver metadata and treat the receiver indicator as inactive.
-    receiver_standby_holder: list[bool] = [False]
-    receiver_overlay_state: dict[str, str] = {
-        "incoming": "",
-        "config": "",
-        "volume": "",
-        "input": "",
-    }
-    view_circles_widget_holder = [None]
-
-    _note_zone3_volume_takeover = _bind_deps(
-        _core_saver_state._note_zone3_volume_takeover,
-        view_circles_widget_holder=view_circles_widget_holder,
-    )
-
-    _note_volume_graphics = _bind_deps(
-        _core_saver_state._note_volume_graphics,
-        _clock_saver_volume=_clock_saver_volume,
-        _note_zone3_volume_takeover=_note_zone3_volume_takeover,
-        _volume_lines=_volume_lines,
-    )
-
-    _remember_clock_saver_volume = _bind_deps(
-        _core_saver_state._remember_clock_saver_volume,
-        _clock_saver_volume=_clock_saver_volume,
-    )
-
-    _clock_saver_receiver_off = _bind_deps(
-        _core_saver_state._clock_saver_receiver_off,
-        receiver_standby_holder=receiver_standby_holder,
-    )
-
-    _clock_saver_volume_raw = _bind_deps(
-        _core_saver_state._clock_saver_volume_raw,
-        _clock_saver_volume=_clock_saver_volume,
-        denon_vol_cache=denon_vol_cache,
-        receiver_overlay_state=receiver_overlay_state,
-        view_circles_widget_holder=view_circles_widget_holder,
-    )
-
-    _clock_saver_layers = _bind_deps(
-        _core_saver_state._clock_saver_layers,
-        _clock_saver_volume_raw=_clock_saver_volume_raw,
-        _volume_lines=_volume_lines,
-        clock_saver_composite_bgra=clock_saver_composite_bgra,
-        render_audio_meter_composite_bgra=render_audio_meter_composite_bgra,
-    )
-
-    _rasterize_clock_saver_window_bgr = _bind_deps(
-        _core_saver_state._rasterize_clock_saver_window_bgr,
+    # Setup runs as 4 phases in pigeon/core/boot/ (m*.py, see BootContext);
+    # the rest of main() and bootstrap() read their results back below.
+    _main_ctx = _BootContext(
+        ClockSaverVolumeHold=ClockSaverVolumeHold,
         DESIGN_H=DESIGN_H,
         DESIGN_W=DESIGN_W,
+        DISPLAY_H=DISPLAY_H,
+        DISPLAY_W=DISPLAY_W,
+        FALLBACK_SPLASH_FRAME_COUNT=FALLBACK_SPLASH_FRAME_COUNT,
+        PAUSED_COMPOSITE_MS=PAUSED_COMPOSITE_MS,
+        SPLASH_CLOCK_REVEAL_FRAME=SPLASH_CLOCK_REVEAL_FRAME,
+        SPLASH_FADE_OUT_FRAMES=SPLASH_FADE_OUT_FRAMES,
+        SPLASH_FPS=SPLASH_FPS,
+        SPLASH_MAX_DURATION_S=SPLASH_MAX_DURATION_S,
         UI_TARGET_H=UI_TARGET_H,
         UI_TARGET_W=UI_TARGET_W,
+        VolumeLineReveal=VolumeLineReveal,
         WINDOW_H=WINDOW_H,
         WINDOW_W=WINDOW_W,
-        _clock_saver_layers=_clock_saver_layers,
+        _LAUNCH_WINDOW_SCALE=_LAUNCH_WINDOW_SCALE,
+        _PIGEON_EXT=_PIGEON_EXT,
+        _PROJECT_DIR=_PROJECT_DIR,
+        __file__=__file__,
+        _bgr_to_tk_image=_bgr_to_tk_image,
+        _bgra_to_display_window=_bgra_to_display_window,
         _present_frame_to_display=_present_frame_to_display,
         alpha_blend_bgra_over_bgr=alpha_blend_bgra_over_bgr,
+        apply_splash_global_alpha=apply_splash_global_alpha,
+        builtin_splash_bgra_frame=builtin_splash_bgra_frame,
         clock_saver_composite_bgra=clock_saver_composite_bgra,
+        flatten_bgra_over_bg_to_rgb=flatten_bgra_over_bg_to_rgb,
+        load_splash_bgra=load_splash_bgra,
+        render_audio_meter_composite_bgra=render_audio_meter_composite_bgra,
+        resolve_splash_media=resolve_splash_media,
+        splash_effective_frame_count=splash_effective_frame_count,
+        splash_end_fade_factor=splash_end_fade_factor,
+        splash_keep_alpha_for_live_clock=splash_keep_alpha_for_live_clock,
+        stop_audio_meter_capture=stop_audio_meter_capture,
     )
+    _boot_m01_window.run(_main_ctx)
+    _boot_m02_shell.run(_main_ctx)
+    _boot_m03_volume_and_reveal.run(_main_ctx)
+    _boot_m04_splash.run(_main_ctx)
 
-    _apply_clock_to_bridge_label = _bind_deps(
-        _core_startup._apply_clock_to_bridge_label,
-        _bgr_to_tk_image=_bgr_to_tk_image,
-        _boot_clock_label=_boot_clock_label,
-        _boot_clock_photo=_boot_clock_photo,
-    )
+    _app_startup_mono = _main_ctx._app_startup_mono
+    _apply_clock_to_bridge_label = _main_ctx._apply_clock_to_bridge_label
+    _boot_clock_host = _main_ctx._boot_clock_host
+    _boot_clock_photo = _main_ctx._boot_clock_photo
+    _clock_saver_layers = _main_ctx._clock_saver_layers
+    _clock_saver_receiver_off = _main_ctx._clock_saver_receiver_off
+    _clock_saver_volume = _main_ctx._clock_saver_volume
+    _clock_saver_volume_raw = _main_ctx._clock_saver_volume_raw
+    _finish_post_splash_startup_transition = _main_ctx._finish_post_splash_startup_transition
+    _grid_patched = _main_ctx._grid_patched
+    _kiosk_on = _main_ctx._kiosk_on
+    _live_clock_until_compose = _main_ctx._live_clock_until_compose
+    _note_volume_graphics = _main_ctx._note_volume_graphics
+    _note_zone3_volume_takeover = _main_ctx._note_zone3_volume_takeover
+    _pack_patched = _main_ctx._pack_patched
+    _place_patched = _main_ctx._place_patched
+    _post_splash_startup_hook = _main_ctx._post_splash_startup_hook
+    _remember_clock_saver_volume = _main_ctx._remember_clock_saver_volume
+    _restore_desktop_chrome = _main_ctx._restore_desktop_chrome
+    _reveal_clock_under_splash = _main_ctx._reveal_clock_under_splash
+    _splash_clock_ready_bgr = _main_ctx._splash_clock_ready_bgr
+    _splash_clock_refresh_stop = _main_ctx._splash_clock_refresh_stop
+    _splash_on_reveal_paint = _main_ctx._splash_on_reveal_paint
+    _splash_reveal_clock = _main_ctx._splash_reveal_clock
+    _splash_underlay_bgr = _main_ctx._splash_underlay_bgr
+    _tk_grid_orig = _main_ctx._tk_grid_orig
+    _tk_pack_orig = _main_ctx._tk_pack_orig
+    _tk_place_orig = _main_ctx._tk_place_orig
+    _try_remove_splash_overlay = _main_ctx._try_remove_splash_overlay
+    _volume_lines = _main_ctx._volume_lines
+    bootstrap_done = _main_ctx.bootstrap_done
+    cap = _main_ctx.cap
+    content_host = _main_ctx.content_host
+    denon_vol_cache = _main_ctx.denon_vol_cache
+    paused_interval_ms = _main_ctx.paused_interval_ms
+    post_splash_mono = _main_ctx.post_splash_mono
+    receiver_overlay_state = _main_ctx.receiver_overlay_state
+    receiver_standby_holder = _main_ctx.receiver_standby_holder
+    root = _main_ctx.root
+    shell = _main_ctx.shell
+    splash_anim_done = _main_ctx.splash_anim_done
+    try:
+        splash_tick = _main_ctx.splash_tick
+    except NameError:
+        pass
+    startup_ph = _main_ctx.startup_ph
+    view_circles_widget_holder = _main_ctx.view_circles_widget_holder
 
-    _reveal_clock_under_splash = _bind_deps(
-        _core_startup._reveal_clock_under_splash,
-        _apply_clock_to_bridge_label=_apply_clock_to_bridge_label,
-        _rasterize_clock_saver_window_bgr=_rasterize_clock_saver_window_bgr,
-        _splash_clock_ready_bgr=_splash_clock_ready_bgr,
-        _splash_on_reveal_paint=_splash_on_reveal_paint,
-        _splash_reveal_clock=_splash_reveal_clock,
-        _splash_underlay_bgr=_splash_underlay_bgr,
-        _splash_underlay_paint_mono=_splash_underlay_paint_mono,
-        bootstrap_done=bootstrap_done,
-    )
-
-    _finish_post_splash_startup_transition = _bind_deps(
-        _core_startup._finish_post_splash_startup_transition,
-        _post_splash_startup_hook=_post_splash_startup_hook,
-        _splash_post_hook_ran=_splash_post_hook_ran,
-    )
-
-    # Splash caches, bound up front (were inside ``if _PIGEON_EXT:``) so helpers
-    # defined before that block can take them as dependencies.
-    splash_photo: list[ImageTk.PhotoImage | None] = [None]
-    # Two parallel caches keyed by frame index:
-    #   * _splash_rgb_cache: opaque RGB over black for pre-reveal frames.
-    #   * _splash_bgra_cache: keep alpha for reveal frames so they composite over a live clock.
-    _splash_rgb_cache: dict[int, np.ndarray] = {}
-    _splash_bgra_cache: dict[int, np.ndarray] = {}
-    _splash_photo_cache: dict[int, ImageTk.PhotoImage] = {}
-
-    _try_remove_splash_overlay = _bind_deps(
-        _core_startup._try_remove_splash_overlay,
-        _PIGEON_EXT=_PIGEON_EXT,
-        _app_startup_mono=_app_startup_mono,
-        _finish_post_splash_startup_transition=_finish_post_splash_startup_transition,
-        _reveal_clock_under_splash=_reveal_clock_under_splash,
-        _splash_bgra_cache=_splash_bgra_cache,
-        _splash_photo_cache=_splash_photo_cache,
-        _splash_rgb_cache=_splash_rgb_cache,
-        bootstrap_done=bootstrap_done,
-        post_splash_mono=post_splash_mono,
-        splash_anim_done=splash_anim_done,
-        splash_photo=splash_photo,
-        startup_ph=startup_ph,
-    )
-
-    _live_clock_until_compose = _bind_deps(
-        _core_startup._live_clock_until_compose,
-        _live_clock_until_compose=_late(lambda: _live_clock_until_compose, "_live_clock_until_compose"),
-        _reveal_clock_under_splash=_reveal_clock_under_splash,
-        _splash_clock_refresh_stop=_splash_clock_refresh_stop,
-        _splash_reveal_clock=_splash_reveal_clock,
-        bootstrap_done=bootstrap_done,
-        root=root,
-        splash_anim_done=splash_anim_done,
-    )
-
-    _tk_pack_orig = tk.Widget.pack
-    _tk_grid_orig = tk.Widget.grid
-    _tk_place_orig = tk.Widget.place
-    _splash_pump_next: list[float] = [0.0]
-
-    _splash_pump_maybe = _bind_deps(
-        _core_startup._splash_pump_maybe,
-        _PIGEON_EXT=_PIGEON_EXT,
-        _reveal_clock_under_splash=_reveal_clock_under_splash,
-        _splash_pump_next=_splash_pump_next,
-        _splash_reveal_clock=_splash_reveal_clock,
-        _splash_underlay_paint_mono=_splash_underlay_paint_mono,
-        bootstrap_done=bootstrap_done,
-        root=root,
-        splash_anim_done=splash_anim_done,
-    )
-
-    _pack_patched = _bind_method_deps(
-        _core_startup._pack_patched,
-        _splash_pump_maybe=_splash_pump_maybe,
-        _tk_pack_orig=_tk_pack_orig,
-    )
-
-    _grid_patched = _bind_method_deps(
-        _core_startup._grid_patched,
-        _splash_pump_maybe=_splash_pump_maybe,
-        _tk_grid_orig=_tk_grid_orig,
-    )
-
-    _place_patched = _bind_method_deps(
-        _core_startup._place_patched,
-        _splash_pump_maybe=_splash_pump_maybe,
-        _tk_place_orig=_tk_place_orig,
-    )
-
-    if _PIGEON_EXT:
-        # Stay a direct child of ``shell`` (placed full-size). Do **not** pack into ``video_area`` after
-        # the video ``Label``: two ``pack(..., fill=BOTH, expand=True)`` siblings leave the second with
-        # zero height, so the splash would disappear. Transparent PNG / fade pixels show ``content_host``.
-        splash_overlay = tk.Frame(shell, bg="#000", highlightthickness=0, bd=0, cursor="none")
-        splash_overlay.place(relx=0, rely=0, relwidth=1, relheight=1)
-        # Placed widgets can sit under later-packed siblings (e.g. ``hud_bar``); pin above ``content_host``.
-        try:
-            splash_overlay.lift(content_host)
-        except tk.TclError:
-            try:
-                splash_overlay.lift()
-            except tk.TclError:
-                pass
-        startup_ph[0] = splash_overlay
-        # Opaque black label: splash frames are always composited to RGB (never Tk alpha punch-through).
-        splash_label = tk.Label(splash_overlay, bg="#000", bd=0, cursor="none")
-        splash_label.pack(expand=True, fill="both")
-        splash_idx = [0]
-        # Set after a lead buffer is baked so the Pi does not skip/hitch on PNG decode.
-        splash_t0: list[float | None] = [None]
-        _splash_wait_deadline: list[float | None] = [None]
-        _splash_bg_bgr = (0, 0, 0)
-        # Black underlay until frame 90 — early PNG frames are transparent and must not reveal the clock.
-        _splash_underlay_bgr[0] = np.zeros((WINDOW_H, WINDOW_W, 3), dtype=np.uint8)
-        try:
-            _boot_clock_photo[0] = _bgr_to_tk_image(_splash_underlay_bgr[0])
-            _boot_clock_label.configure(image=_boot_clock_photo[0])
-            _boot_clock_label.image = _boot_clock_photo[0]  # type: ignore[attr-defined]
-        except Exception:
-            pass
-        # Keep rasterizing the live saver off the UI thread so splash reveal (and the
-        # post-splash bridge) show wall-clock time and the current color — not a
-        # frame frozen at process start.
-        _prewarm_splash_clock_worker = _bind_deps(
-            _core_splash._prewarm_splash_clock_worker,
-            _rasterize_clock_saver_window_bgr=_rasterize_clock_saver_window_bgr,
-            _splash_clock_ready_bgr=_splash_clock_ready_bgr,
-            _splash_clock_refresh_stop=_splash_clock_refresh_stop,
-            bootstrap_done=bootstrap_done,
-        )
-
-        try:
-            threading.Thread(
-                target=_prewarm_splash_clock_worker,
-                name="pigeon-splash-clock-prewarm",
-                daemon=True,
-            ).start()
-        except Exception:
-            shown = _rasterize_clock_saver_window_bgr()
-            if shown is not None:
-                _splash_clock_ready_bgr[0] = shown
-
-        # Resolve total frame count AND native fps up front. The PNG / built-in paths lock to
-        # SPLASH_FPS, but a video drives its own cadence (e.g. 59.94) so the splash plays at
-        # authored speed instead of being stretched or sped up by a hardcoded 30 Hz scheduler.
-        _splash_fps_effective = float(max(1, SPLASH_FPS))
-        if splash_video_path is not None:
-            try:
-                _probe = cv2.VideoCapture(str(splash_video_path))
-                _vc_total = int(_probe.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
-                _vc_fps = float(_probe.get(cv2.CAP_PROP_FPS) or 0.0)
-                _probe.release()
-            except Exception:
-                _vc_total = 0
-                _vc_fps = 0.0
-            splash_total_frames = max(1, _vc_total) if _vc_total > 0 else FALLBACK_SPLASH_FRAME_COUNT
-            # Reject obviously-bogus fps values (VideoCapture sometimes returns 0 or 1000 on bad files).
-            if 1.0 < _vc_fps < 240.0:
-                _splash_fps_effective = _vc_fps
-        elif splash_png_paths:
-            splash_total_frames = len(splash_png_paths)
-            # Drop trailing empty PNG frames (often 1s+ of held "last frame" after the art is gone).
-            if callable(splash_effective_frame_count):
-                try:
-                    _trimmed = int(
-                        splash_effective_frame_count(
-                            splash_png_paths, reveal_frame=int(SPLASH_CLOCK_REVEAL_FRAME)
-                        )
-                    )
-                    if 1 <= _trimmed < splash_total_frames:
-                        sys.stderr.write(
-                            f"pigeon: splash trim frames {splash_total_frames} → {_trimmed} "
-                            f"(trailing transparent)\n"
-                        )
-                        sys.stderr.flush()
-                        splash_total_frames = _trimmed
-                except Exception:
-                    pass
-        else:
-            splash_total_frames = FALLBACK_SPLASH_FRAME_COUNT
-
-        frame_dt = 1.0 / _splash_fps_effective
-        frame_ms = max(1, int(round(1000.0 * frame_dt)))
-
-        # Cap by SPLASH_MAX_DURATION_S so a pathological asset can't block startup.
-        _max_frames_for_duration = int(float(SPLASH_MAX_DURATION_S) * _splash_fps_effective)
-        if _max_frames_for_duration > 0:
-            splash_total_frames = min(splash_total_frames, _max_frames_for_duration)
-
-        # Optional software fade-out (0 = none). Scale with source fps when configured.
-        _splash_fade_frames = int(
-            round(float(SPLASH_FADE_OUT_FRAMES) * _splash_fps_effective / float(max(1, SPLASH_FPS)))
-        )
-        if _splash_fade_frames < 0:
-            _splash_fade_frames = 0
-        _splash_fade_zone_start = max(
-            0, splash_total_frames - min(_splash_fade_frames, splash_total_frames)
-        )
-        _splash_reveal_i = int(SPLASH_CLOCK_REVEAL_FRAME)
-
-        _splash_frame_keeps_live_clock = _bind_deps(
-            _core_splash._splash_frame_keeps_live_clock,
-            _splash_reveal_i=_splash_reveal_i,
-            splash_keep_alpha_for_live_clock=splash_keep_alpha_for_live_clock,
-            splash_png_paths=splash_png_paths,
-        )
-
-        _splash_prebake_done = [False]
-
-        _splash_photo_from_rgb = _core_splash._splash_photo_from_rgb
-
-        _splash_prebuild_photos = _bind_deps(
-            _core_splash._splash_prebuild_photos,
-            _splash_frame_keeps_live_clock=_splash_frame_keeps_live_clock,
-            _splash_photo_cache=_splash_photo_cache,
-            _splash_photo_from_rgb=_splash_photo_from_rgb,
-            _splash_rgb_cache=_splash_rgb_cache,
-            splash_total_frames=splash_total_frames,
-        )
-        _splash_video_cap_holder: list[cv2.VideoCapture | None] = [None]
-
-        _splash_raw_bgra = _bind_deps(
-            _core_splash._splash_raw_bgra,
-            UI_TARGET_H=UI_TARGET_H,
-            UI_TARGET_W=UI_TARGET_W,
-            builtin_splash_bgra_frame=builtin_splash_bgra_frame,
-            load_splash_bgra=load_splash_bgra,
-            splash_png_paths=splash_png_paths,
-            splash_total_frames=splash_total_frames,
-        )
-
-        _splash_bgra_over_bgr_to_rgb = _core_splash._splash_bgra_over_bgr_to_rgb
-
-        _splash_store_prebaked = _bind_deps(
-            _core_splash._splash_store_prebaked,
-            _splash_bg_bgr=_splash_bg_bgr,
-            _splash_bgra_cache=_splash_bgra_cache,
-            _splash_fade_frames=_splash_fade_frames,
-            _splash_fade_zone_start=_splash_fade_zone_start,
-            _splash_frame_keeps_live_clock=_splash_frame_keeps_live_clock,
-            _splash_rgb_cache=_splash_rgb_cache,
-            flatten_bgra_over_bg_to_rgb=flatten_bgra_over_bg_to_rgb,
-        )
-
-        _splash_prebake_reveal_bgra = _bind_deps(
-            _core_splash._splash_prebake_reveal_bgra,
-            _bgra_to_display_window=_bgra_to_display_window,
-            _splash_bgra_cache=_splash_bgra_cache,
-            _splash_photo_cache=_splash_photo_cache,
-            _splash_raw_bgra=_splash_raw_bgra,
-            _splash_reveal_i=_splash_reveal_i,
-            _splash_rgb_cache=_splash_rgb_cache,
-            splash_total_frames=splash_total_frames,
-        )
-
-        _splash_prebake_worker_pngs = _bind_deps(
-            _core_splash._splash_prebake_worker_pngs,
-            _bgra_to_display_window=_bgra_to_display_window,
-            _splash_bgra_cache=_splash_bgra_cache,
-            _splash_prebake_done=_splash_prebake_done,
-            _splash_prebake_reveal_bgra=_splash_prebake_reveal_bgra,
-            _splash_raw_bgra=_splash_raw_bgra,
-            _splash_rgb_cache=_splash_rgb_cache,
-            _splash_store_prebaked=_splash_store_prebaked,
-            splash_total_frames=splash_total_frames,
-        )
-
-        _splash_prebake_worker_video = _bind_deps(
-            _core_splash._splash_prebake_worker_video,
-            UI_TARGET_H=UI_TARGET_H,
-            UI_TARGET_W=UI_TARGET_W,
-            _bgra_to_display_window=_bgra_to_display_window,
-            _splash_bgra_cache=_splash_bgra_cache,
-            _splash_fade_zone_start=_splash_fade_zone_start,
-            _splash_prebake_done=_splash_prebake_done,
-            _splash_rgb_cache=_splash_rgb_cache,
-            _splash_video_cap_holder=_splash_video_cap_holder,
-            splash_total_frames=splash_total_frames,
-            splash_video_path=splash_video_path,
-        )
-
-        # Kick off the prebake thread immediately so frames are warm before ``splash_tick``
-        # starts pulling from the cache post-``after_idle``.
-        try:
-            _worker = _splash_prebake_worker_video if splash_video_path is not None else _splash_prebake_worker_pngs
-            _splash_prebake_thread = threading.Thread(
-                target=_worker, name="pigeon-splash-prebake", daemon=True
-            )
-            _splash_prebake_thread.start()
-        except Exception:
-            # Fall back to on-demand decode inside ``splash_tick``.
-            _splash_prebake_done[0] = True
-
-        _splash_fallback_frame_sync = _bind_deps(
-            _core_splash._splash_fallback_frame_sync,
-            _bgra_to_display_window=_bgra_to_display_window,
-            _splash_raw_bgra=_splash_raw_bgra,
-            _splash_store_prebaked=_splash_store_prebaked,
-            splash_video_path=splash_video_path,
-        )
-
-        _splash_composite_bgra_to_photo = _bind_deps(
-            _core_splash._splash_composite_bgra_to_photo,
-            _splash_bg_bgr=_splash_bg_bgr,
-            _splash_bgra_over_bgr_to_rgb=_splash_bgra_over_bgr_to_rgb,
-            _splash_underlay_bgr=_splash_underlay_bgr,
-            apply_splash_global_alpha=apply_splash_global_alpha,
-            flatten_bgra_over_bg_to_rgb=flatten_bgra_over_bg_to_rgb,
-            splash_photo=splash_photo,
-        )
-
-        splash_tick = _bind_deps(
-            _core_splash.splash_tick,
-            SPLASH_MAX_DURATION_S=SPLASH_MAX_DURATION_S,
-            WINDOW_H=WINDOW_H,
-            WINDOW_W=WINDOW_W,
-            _app_startup_mono=_app_startup_mono,
-            _reveal_clock_under_splash=_reveal_clock_under_splash,
-            _splash_bg_bgr=_splash_bg_bgr,
-            _splash_bgra_cache=_splash_bgra_cache,
-            _splash_composite_bgra_to_photo=_splash_composite_bgra_to_photo,
-            _splash_fade_frames=_splash_fade_frames,
-            _splash_fallback_frame_sync=_splash_fallback_frame_sync,
-            _splash_frame_keeps_live_clock=_splash_frame_keeps_live_clock,
-            _splash_photo_cache=_splash_photo_cache,
-            _splash_photo_from_rgb=_splash_photo_from_rgb,
-            _splash_prebake_done=_splash_prebake_done,
-            _splash_prebake_reveal_bgra=_splash_prebake_reveal_bgra,
-            _splash_prebuild_photos=_splash_prebuild_photos,
-            _splash_reveal_clock=_splash_reveal_clock,
-            _splash_reveal_i=_splash_reveal_i,
-            _splash_rgb_cache=_splash_rgb_cache,
-            _splash_wait_deadline=_splash_wait_deadline,
-            _try_remove_splash_overlay=_try_remove_splash_overlay,
-            content_host=content_host,
-            flatten_bgra_over_bg_to_rgb=flatten_bgra_over_bg_to_rgb,
-            frame_dt=frame_dt,
-            frame_ms=frame_ms,
-            root=root,
-            splash_anim_done=splash_anim_done,
-            splash_end_fade_factor=splash_end_fade_factor,
-            splash_idx=splash_idx,
-            splash_label=splash_label,
-            splash_photo=splash_photo,
-            splash_t0=splash_t0,
-            splash_tick=_late(lambda: splash_tick, "splash_tick"),
-            splash_total_frames=splash_total_frames,
-            startup_ph=startup_ph,
-        )
-
-    else:
-        loading = tk.Label(
-            content_host,
-            text="Starting Pigeon…\n\n"
-            "Tab / Shift+Tab / F9 toggle settings ↔ off. "
-            "Key 5 shows grid overlay (press 5 again to toggle detail lines). "
-            "Return opens the command bar in settings or grid overlay (5). "
-            "Esc closes the bar or quits. F10 / double-click toggles the display. "
-            "Space = activate in settings; else play/pause on the selected Player "
-            "(Apple TV / Roku) when set; else TMDb backdrop + logo when loaded; else landing brightness pulse.",
-            justify="center",
-            fg="#ddd",
-            bg="#111",
-            cursor="none",
-            wraplength=WINDOW_W - 40,
-        )
-        loading.pack(expand=True, fill="both")
-        startup_ph[0] = loading
-
-    root.update_idletasks()
-    root.update()
-    if _PIGEON_EXT and startup_ph[0] is not None:
-        try:
-            startup_ph[0].lift(content_host)
-        except tk.TclError:
-            try:
-                startup_ph[0].lift()
-            except tk.TclError:
-                pass
-
-    # Keep idle/paused composites intentionally slower to reduce Tk PhotoImage upload pressure.
-    paused_interval_ms = max(67, PAUSED_COMPOSITE_MS)
 
     def bootstrap() -> None:
         # Startup runs as 14 phases in pigeon/core/boot/ (see BootContext). Seed the
