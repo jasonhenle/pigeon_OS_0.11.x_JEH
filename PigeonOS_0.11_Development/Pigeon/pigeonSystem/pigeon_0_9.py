@@ -1,6 +1,5 @@
 import argparse
 import os
-import queue
 import sys
 import threading
 import time
@@ -16,7 +15,7 @@ import tkinter.scrolledtext as scrolledtext
 import tkinter.simpledialog as simpledialog
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont, ImageTk
+from PIL import Image, ImageTk
 import cv2
 
 # Status bar: one black pill cols 3–17, bar-shaped mask hole + translucent bar; rows 6–8 gradient.
@@ -59,39 +58,14 @@ if not os.path.isdir(os.path.join(_PROJECT_DIR, "pigeonAssets")):
     if os.path.isdir(os.path.join(_parent, "pigeonAssets")):
         _PROJECT_DIR = _parent
 
-from pigeon.app_state import (
-    merge_legacy_saved_receivers_into_av_slot,
-    migrate_device_slots_from_legacy_if_needed,
-    read_app_state,
-    read_last_apple_tv,
-    read_last_receiver,
-    read_saved_av_receiver,
-    read_saved_streaming_device,
-    write_saved_game,
-    write_saved_other,
-    write_saved_projector,
-    write_saved_tv,
-    write_app_state,
-    write_last_receiver,
-)
-from pigeon.media_folders import (
-    consolidate_legacy_pigeondata_media_folders,
-)
+from pigeon.app_state import read_app_state, write_app_state
 from pigeon.compositing import cv_resize_interp
-from pigeon.stage_background import bgr_to_tk_hex, get_stage_bgr
-from pigeon.tmdb_tt_contrast import GRADIENT_BGR_DARK
+from pigeon.stage_background import get_stage_bgr
 from pigeon.version import version_string
 from pigeon.core.binding import bind_deps as _bind_deps
 from pigeon.core.binding import bind_method_deps as _bind_method_deps
 from pigeon.core.binding import late as _late
-from pigeon.core import settings_ui as _core_settings_ui
 from pigeon.core import saver_state as _core_saver_state
-from pigeon.core import now_playing as _core_now_playing
-from pigeon.core import stage_render as _core_stage_render
-from pigeon.core import view_four as _core_view_four
-from pigeon.core import tmdb_flow as _core_tmdb_flow
-from pigeon.core import input_keys as _core_input_keys
-from pigeon.core import device_control as _core_device_control
 from pigeon.core.boot.context import BootContext as _BootContext
 from pigeon.core.boot import p01_state as _boot_p01_state
 from pigeon.core.boot import p02_video_surface as _boot_p02_video_surface
@@ -109,9 +83,7 @@ from pigeon.core.boot import p13_hardware_inputs as _boot_p13_hardware_inputs
 from pigeon.core.boot import p14_first_render as _boot_p14_first_render
 from pigeon.core import splash as _core_splash
 from pigeon.core import app_shell as _core_app_shell
-from pigeon.core import pairing as _core_pairing
 from pigeon.core import startup as _core_startup
-from pigeon.core import view_one as _core_view_one
 
 try:
     from pigeon.tmdb_retry_log import append_entry as _tmdb_retry_log_append
@@ -249,19 +221,7 @@ try:
 except ImportError as _exc:
     _log_optional_import_failure("core_compositing", _exc)
 
-from pigeon.linux_kiosk import (
-    apply_kiosk_fullscreen,
-    enforce_kiosk,
-    linux_kiosk_enabled,
-    release_kiosk,
-    schedule_kiosk_guard,
-    window_covers_display,
-)
-from pigeon.clock_saver_policy import (
-    pausesaver_hold_from_metadata_class,
-    player_reports_playing,
-    tick_pause_hold,
-)
+from pigeon.linux_kiosk import apply_kiosk_fullscreen, linux_kiosk_enabled, schedule_kiosk_guard
 
 try:
     from pigeon.widgets.clock_calendar import (

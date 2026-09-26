@@ -341,3 +341,22 @@ were called from nowhere else and are removed too:
 `_read_tmdb_quality_counts` (tmdb_flow), `set_current_receiver_only`
 (device_control). `_format_tmdb_match_quality_glance` and
 `_device_row_matches_saved` keep their core functions (tests use them).
+
+## Pass 15: prune to a fixpoint
+
+`prune.py` repeats, until nothing changes: drop side-effect-free phase
+bindings nobody reads (including `x = ctx.x` prologue reads left over from
+pass 14), then drop `ctx.x = x` writes and bootstrap() seeds no phase reads.
+
+```bash
+python3 $T/prune.py pigeon_0_9.py
+```
+
+This round removed 8 phase bindings, and with them the old Tk settings
+mouse-wheel handlers `_settings_mousewheel`, `_settings_is_under_scroll_surface`
+and `_settings_wheel_target_should_ignore` (pigeon/core/settings_ui.py): the
+functions that bound them to the wheel (`_settings_bind_wheel_globals`, pass 14)
+were never called, so they could never run. pigeon_0_9.py also drops the 30
+top-level imports it no longer uses (unconditional imports only; the
+`tkinter.*` submodule imports stay, because importing them is what makes
+`tk.messagebox` etc. available to other modules).

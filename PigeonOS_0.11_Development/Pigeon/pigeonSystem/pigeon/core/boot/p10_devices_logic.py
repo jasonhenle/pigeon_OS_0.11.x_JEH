@@ -394,8 +394,6 @@ def run(ctx) -> None:
         streaming_slot_holder=streaming_slot_holder,
     )
 
-    _device_addr_key = _core_settings_ui._device_addr_key
-
     _verify_added_devices_after_save = _bind_deps(
         _core_pairing._verify_added_devices_after_save,
         root=root,

@@ -1,4 +1,4 @@
-"""Live status for Pigeon's data sources (Wi‑Fi, player metadata, HDMI, audio).
+"""Live status for Pigeon's data sources (Wi‑Fi, player metadata, audio).
 
 The four source tiles in settings_pigeon only *report* whether each source is
 active; they are no longer on/off switches. Every source is always used.
@@ -12,13 +12,11 @@ from typing import Any
 
 
 def apply_source_status_to_settings_state(state: Any) -> None:
-    """Refresh the live HDMI / audio flags that drive the tile LEDs."""
-    try:
-        from pigeon.hdmi_capture import hdmi_capture_available
+    """Refresh the live audio flag that drives its tile LED.
 
-        state.pigeon_hdmi_ok = hdmi_capture_available()
-    except Exception:
-        pass
+    (The HDMI tile's LED is retired; HDMI presence is still tracked by
+    ``pigeon.hdmi_capture`` for now-playing and the frame-change clock saver.)
+    """
     try:
         from pigeon.widgets.audio_meter_saver import program_audio_present
 

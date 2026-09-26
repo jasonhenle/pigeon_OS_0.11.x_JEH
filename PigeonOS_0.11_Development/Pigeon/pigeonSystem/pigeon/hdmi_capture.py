@@ -3,8 +3,9 @@
 Pigeon no longer reads text off the HDMI feed (OCR was retired). The capture
 card is still used to:
 
-- tell whether an HDMI signal is present (settings LED, keeping now-playing up
-  when an app is foreground but the player gives no title), and
+- tell whether an HDMI signal is present (keeping now-playing up when an app is
+  foreground but the player gives no title; the metadata inspector's HDMI
+  page), and
 - fingerprint a frame every few seconds so ``CLOCK_SAVER_FRAME_STREAK``
   unchanged frames in a row can arm the HDMI-driven clock saver.
 
@@ -219,7 +220,7 @@ def _is_hdmi_camera(name: str, dtype: str = "") -> bool:
 
 
 def note_hdmi_present(present: bool) -> None:
-    """Remember whether HDMI can currently deliver a video frame (settings LED)."""
+    """Remember whether HDMI can currently deliver a video frame."""
     global _hdmi_present, _hdmi_no_signal_hits
     _hdmi_present = bool(present)
     if present:

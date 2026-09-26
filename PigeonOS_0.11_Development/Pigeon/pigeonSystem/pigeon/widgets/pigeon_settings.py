@@ -191,16 +191,12 @@ _PIGEON_TILE_CHROME_IDS: tuple[str, ...] = (
 _STATUS_ICONS: tuple[tuple[str, str], ...] = (
     ("wifi", "settings_pigeon_06_wifi_status_icon"),
     ("metadata", "settings_pigeon_07_metadata_status_icon"),
-    ("hdmi", "settings_pigeon_08_hdmi_status_icon"),
     ("audio", "settings_pigeon_09_audio_status_icon"),
 )
-
-_SOURCE_TILE_KINDS: dict[str, str] = {
-    "wifi_button": "wifi",
-    "metadata_button": "metadata",
-    "hdmi_button": "hdmi",
-    "audio_button": "audio",
-}
+# Retired status LEDs: hidden on every render. The HDMI tile no longer reports
+# signal presence (the capture card still drives presence and the frame-change
+# clock saver elsewhere).
+_RETIRED_STATUS_ICONS: tuple[str, ...] = ("settings_pigeon_08_hdmi_status_icon",)
 
 _UPDATE_BADGE_ID = "settings_pigeon_05_update_icon-2"
 
@@ -333,23 +329,6 @@ def _metadata_status_ok(state: MainSettingsState) -> bool:
         return False
 
 
-def _hdmi_device_present(state: MainSettingsState) -> bool:
-    """True when HDMI can currently deliver a video frame to Pigeon."""
-    try:
-        from pigeon.hdmi_capture import hdmi_capture_available
-
-        present = hdmi_capture_available()
-        state.pigeon_hdmi_ok = present
-        return present
-    except Exception:
-        return bool(getattr(state, "pigeon_hdmi_ok", False))
-
-
-def _hdmi_status_ok(state: MainSettingsState) -> bool:
-    """Green when a live HDMI signal can reach Pigeon."""
-    return _hdmi_device_present(state)
-
-
 def _audio_status_ok(state: MainSettingsState) -> bool:
     """Green when program audio is above the capture gate."""
     try:
@@ -367,14 +346,14 @@ def _status_ok_for(kind: str, state: MainSettingsState) -> bool:
         return _wifi_status_ok(state)
     if kind == "metadata":
         return _metadata_status_ok(state)
-    if kind == "hdmi":
-        return _hdmi_status_ok(state)
     if kind == "audio":
         return _audio_status_ok(state)
     return False
 
 
 def _sync_status_icons(root: ET.Element, state: MainSettingsState) -> None:
+    for lid in _RETIRED_STATUS_ICONS:
+        _set_visible(_find_by_logical_id(root, lid), False)
     for kind, lid in _STATUS_ICONS:
         el = _find_by_logical_id(root, lid)
         if el is None:
@@ -464,17 +443,9 @@ def apply_pigeon_settings_svg_state(root: ET.Element, state: MainSettingsState) 
             options and str(getattr(state, "options_focused_id", "") or "") == "pigeon_back"
         )
         _sync_back_button(root, selected=back_on)
-    hdmi_present = _hdmi_device_present(state)
     for fid, _tg, _b, _t in _SELECTABLE_TILES:
-        kind = _SOURCE_TILE_KINDS.get(fid)
-        dimmed = kind == "hdmi" and not hdmi_present
-        _sync_selectable_tile(
-            root,
-            fid,
-            selected=(focused == fid),
-            dimmed=dimmed,
-        )
-    _sync_hdmi_icon(root, dimmed=not hdmi_present)
+        _sync_selectable_tile(root, fid, selected=(focused == fid))
+    _sync_hdmi_icon(root, dimmed=False)
     _sync_info_label(root)
     _sync_status_icons(root, state)
     _sync_update_badge(root, state)

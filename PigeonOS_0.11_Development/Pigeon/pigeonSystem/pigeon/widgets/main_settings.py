@@ -520,9 +520,9 @@ class MainSettingsState:
     pigeon_focus_index: int = 0
     # Silent GitHub poll when opening settings_pigeon (badge without popup).
     pigeon_needs_update_prefetch: bool = False
-    # Status LEDs for tiles 6–9 (None → derive wifi/metadata; hdmi/audio are live).
+    # Status LEDs for source tiles 6, 7, 9 (None → derive wifi/metadata; audio is
+    # live). The HDMI tile (8) no longer has an LED.
     pigeon_metadata_ok: bool | None = None
-    pigeon_hdmi_ok: bool = False
     pigeon_audio_ok: bool = False
     show_preferences: bool = False
     # Metadata inspector ([4]): pages 0=player, 1=hdmi, 2=pigeon.
@@ -1040,13 +1040,6 @@ class MainSettingsState:
         except Exception:
             pass
         try:
-            from pigeon.hdmi_capture import hdmi_capture_available, probe_hdmi_presence
-
-            self.pigeon_hdmi_ok = hdmi_capture_available()
-            probe_hdmi_presence(force=True)
-        except Exception:
-            pass
-        try:
             from pigeon.widgets.audio_meter_saver import program_audio_present
 
             self.pigeon_audio_ok = bool(program_audio_present())
@@ -1116,13 +1109,6 @@ class MainSettingsState:
         ring = preferences_zone_focus_ring()
         # Land on zone1 — first editable target.
         self.preferences_focus_index = ring.index("zone1") if "zone1" in ring else 0
-        try:
-            from pigeon.hdmi_capture import hdmi_capture_available, probe_hdmi_presence
-
-            self.pigeon_hdmi_ok = hdmi_capture_available()
-            probe_hdmi_presence(force=True)
-        except Exception:
-            pass
 
     def close_preferences(self) -> None:
         self.close_ui_color()
@@ -6624,13 +6610,6 @@ class MainSettingsWidget:
         st = self._state
         if st.show_pigeon_settings or st.show_preferences:
             try:
-                from pigeon.hdmi_capture import hdmi_capture_available, probe_hdmi_presence
-
-                st.pigeon_hdmi_ok = hdmi_capture_available()
-                probe_hdmi_presence()
-            except Exception:
-                pass
-            try:
                 from pigeon.widgets.audio_meter_saver import program_audio_present
 
                 st.pigeon_audio_ok = bool(program_audio_present())
@@ -6708,7 +6687,6 @@ class MainSettingsWidget:
             int(st.pigeon_focus_index),
             bool(st.pigeon_needs_update_prefetch),
             st.pigeon_metadata_ok,
-            bool(st.pigeon_hdmi_ok),
             bool(st.pigeon_audio_ok),
             bool(st.wifi_configured),
             bool(st.show_preferences),
@@ -6831,7 +6809,6 @@ class MainSettingsWidget:
             int(st.box3_devices.scroll),
             st.box3_devices.picked,
             bool(st.show_pigeon_settings),
-            bool(st.pigeon_hdmi_ok),
             bool(st.pigeon_audio_ok),
             bool(st.show_preferences),
             str(st.preferences_nav or ""),
