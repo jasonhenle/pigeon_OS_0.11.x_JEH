@@ -77,7 +77,6 @@ from pigeon.np_layout import (
     TT_COUNTDOWN_TEXT_SIZE_PX,
     TT_COUNTDOWN_VIEW_H,
     TT_COUNTDOWN_VIEW_W,
-    VOLUME_FORMAT_LOCAL,
     VOLUME_FORMAT_SIZE_PX,
     VOLUME_INNER_R,
     VOLUME_LOCAL_CX,
@@ -95,7 +94,6 @@ from pigeon.np_layout import (
     now_playing_header_clock_text,
     header_clock_baseline_y,
     header_clock_center_x,
-    np_label_baseline_y,
     status_bar_elapsed_left_x,
     status_bar_elapsed_opacity,
     status_bar_handoff_alphas,
@@ -404,7 +402,7 @@ _CLOCK_DATE_SIZE_PX = 32
 # Usable radius as a fraction of the inner disc — leaves padding around the number.
 _VOLUME_TEXT_INNER_FIT = 0.88
 # Gap between the disc volume number and the HH:MM sitting under it.
-_VOLUME_CLOCK_GAP_PX = 6.0
+_VOLUME_INPUT_GAP_PX = 6.0
 
 # Zone4 cast columns (center x, actor baseline y, character baseline y) — SVG geometry.
 _CAST_COLS_Z4: tuple[tuple[float, float, float], ...] = (
@@ -1231,37 +1229,35 @@ def _volume_readout_patch(
     return best
 
 
-def _volume_hhmm_patch(
-    now: datetime | None,
+def _volume_input_patch(
+    label: str,
     *,
-    max_w: int,
+    top_dy: float,
+    inner_r: float,
     max_h: int,
     fill_rgb: tuple[int, int, int] | None = None,
 ) -> tuple[np.ndarray, int, int]:
-    """HH:MM fitted under the volume number — never larger than ``max_w`` × ``max_h``."""
-    label = _clock_hhmm(now)
-    if not label:
-        return np.zeros((1, 1, 4), dtype=np.uint8), 0, 0
-    mw = max(0, int(max_w))
-    mh = max(0, int(max_h))
-    if mw < 12 or mh < 10:
-        return np.zeros((1, 1, 4), dtype=np.uint8), 0, 0
-    hi = max(10, min(int(mw), int(mh) * 3, 120))
-    lo = 10
-    best: tuple[np.ndarray, int, int] | None = None
-    while lo <= hi:
-        mid = (lo + hi) // 2
-        patch, w, h = _text_patch_digital7(
-            label, size_px=mid, fill_rgb=fill_rgb
+    """AVR input label fitted under the volume number, inside the disc.
+
+    ``top_dy`` is the label's top edge below the disc center; the width is
+    clipped to the disc chord at the label's bottom edge.
+    """
+    text = str(label or "").strip().upper()
+    empty = (np.zeros((1, 1, 4), dtype=np.uint8), 0, 0)
+    if not text or int(max_h) < 10:
+        return empty
+    r = float(inner_r)
+    size = int(VOLUME_FORMAT_SIZE_PX)
+    while size >= 12:
+        patch, w, h = _text_patch_font(
+            text, font=_load_sharp_extrabold(size), fill_rgb=fill_rgb
         )
-        if w <= mw and h <= mh:
-            best = (patch, w, h)
-            lo = mid + 1
-        else:
-            hi = mid - 1
-    if best is None:
-        return np.zeros((1, 1, 4), dtype=np.uint8), 0, 0
-    return best
+        dy = float(top_dy) + float(h)
+        chord = 2.0 * math.sqrt(max(0.0, r * r - dy * dy))
+        if h <= int(max_h) and w <= chord:
+            return patch, w, h
+        size -= 2
+    return empty
 
 
 def _apply_zone_visibility(root: ET.Element, vis: dict[str, bool]) -> None:
@@ -5269,49 +5265,6 @@ class ViewCirclesWidget:
         """Deprecated separator between in-ring volume/config — no-op."""
         return
 
-    def _draw_input_caption(self, out: np.ndarray, *, zone: int) -> None:
-        """AVR input label above the volume disc or levels well."""
-        z = _zone_spec(int(zone))
-        caption = volume_widget_format_label(
-            self._state.incoming,
-            self._state.config,
-            receiver_input=str(self._state.receiver_input or "").strip(),
-        )
-        if not caption:
-            return
-        label = caption.upper()
-        fx, _fy = design_xy_from_local(
-            z,
-            VOLUME_LOCAL_CX,
-            VOLUME_FORMAT_LOCAL[1],
-            view_w=VOLUME_VIEW_W,
-            view_h=VOLUME_VIEW_H,
-        )
-        fy = np_label_baseline_y()
-        max_w = max(40, int(round(z.w - 40)))
-        theme = self._effective_np_theme().cache_key
-        key = (label, int(max_w), theme, int(zone))
-        cached = self._input_caption_patch_cache
-        if cached is not None and cached[0] == key:
-            patch, font, drawn = cached[1]  # type: ignore[misc]
-        else:
-            size = int(VOLUME_FORMAT_SIZE_PX)
-            font = _load_sharp_extrabold(size)
-            patch, pw, _ph = _text_patch_font(
-                label, font=font, fill_rgb=_look_chrome_rgb()
-            )
-            while pw > max_w and size > 18:
-                size -= 2
-                font = _load_sharp_extrabold(size)
-                patch, pw, _ph = _text_patch_font(
-                    label, font=font, fill_rgb=_look_chrome_rgb()
-                )
-            drawn = label
-            self._input_caption_patch_cache = (key, (patch, font, drawn))
-        _paste_baseline_centered(
-            out, patch, fx, fy, bbox_top=_font_bbox_top(drawn, font)
-        )
-
     def _draw_audio_group(
         self,
         out: np.ndarray,
@@ -5320,7 +5273,7 @@ class ViewCirclesWidget:
         cy: float = _ZONE1_CY,
         zone: int | None = None,
     ) -> None:
-        """AVR input above the disc; volume number centered; HH:MM under it."""
+        """Volume number centered in the disc; AVR input label under it."""
         del cx, cy
         assignments = self._assignments()
         vol_zone = int(zone) if zone is not None else _zone_for_widget(assignments, "volume")
@@ -5328,7 +5281,6 @@ class ViewCirclesWidget:
             return
         z = _zone_spec(vol_zone)
         st = self._state
-        self._draw_input_caption(out, zone=int(vol_zone))
         vol_value = volume_widget_value_text(st.volume)
         muted = vol_value.strip().lower() in ("mute", "muted", "off") or st.volume_muted
 
@@ -5347,19 +5299,27 @@ class ViewCirclesWidget:
             )
             _paste_centered(out, vol_p, cx_v, cy_v)
             inner_r = float(VOLUME_INNER_R) * float(_VOLUME_TEXT_INNER_FIT)
-            vol_bottom = float(cy_v) + float(vh) * 0.5
-            room_h = (float(cy_v) + inner_r) - vol_bottom - float(_VOLUME_CLOCK_GAP_PX)
-            clock_p, _cw, ch = _volume_hhmm_patch(
-                self._clock_now_for_display(),
-                max_w=max(12, int(vw)),
-                max_h=max(10, int(room_h)),
-                fill_rgb=_look_ink_rgb(),
+            top_dy = float(vh) * 0.5 + float(_VOLUME_INPUT_GAP_PX)
+            label = volume_widget_format_label(
+                st.incoming,
+                st.config,
+                receiver_input=str(st.receiver_input or "").strip(),
             )
-            if ch > 1:
-                clock_cy = (
-                    vol_bottom + float(_VOLUME_CLOCK_GAP_PX) + float(ch) * 0.5
+            key = (label, int(vh), self._effective_np_theme().cache_key)
+            cached = self._input_caption_patch_cache
+            if cached is not None and cached[0] == key:
+                in_p, _iw, ih = cached[1]  # type: ignore[misc]
+            else:
+                in_p, _iw, ih = _volume_input_patch(
+                    label,
+                    top_dy=top_dy,
+                    inner_r=inner_r,
+                    max_h=max(0, int(inner_r - top_dy)),
+                    fill_rgb=_look_ink_rgb(),
                 )
-                _paste_centered(out, clock_p, cx_v, clock_cy)
+                self._input_caption_patch_cache = (key, (in_p, _iw, ih))
+            if ih > 1:
+                _paste_centered(out, in_p, cx_v, cy_v + top_dy + float(ih) * 0.5)
 
     def _draw_circular_now_playing(
         self,

@@ -1474,7 +1474,7 @@ class VolumeWidgetCaptionTests(unittest.TestCase):
         self.assertLessEqual(half_diag, VOLUME_INNER_R + 2.0)
         self.assertGreater(half_diag, VOLUME_INNER_R * _VOLUME_TEXT_INNER_FIT * 0.55)
 
-    def test_format_sits_above_circle_and_value_is_centered(self) -> None:
+    def test_no_input_label_above_circle_and_value_is_centered(self) -> None:
         from pigeon.np_layout import (
             NOW_PLAYING_ZONES,
             VOLUME_INNER_R,
@@ -1511,15 +1511,15 @@ class VolumeWidgetCaptionTests(unittest.TestCase):
         cy = int(round(VOLUME_LOCAL_CY))
         baseline = int(round(header_clock_baseline_y()))
         header = frame[max(0, baseline - 48) : baseline + 4, zx : zx + zw]
-        self.assertTrue(
+        self.assertFalse(
             (header[:, :, :3].max(axis=2) > 40).any(),
-            "input label should paint on the shared header baseline",
+            "input label moved into the disc; nothing on the header baseline",
         )
         r = int(round(VOLUME_INNER_R * 0.55))
         disc = ink[cy - r : cy + r, cx - r : cx + r]
         self.assertTrue(disc.any(), "volume number should sit in the disc center")
 
-    def test_hhmm_sits_under_volume_number_without_moving_it(self) -> None:
+    def test_input_label_sits_under_volume_number_without_moving_it(self) -> None:
         from datetime import datetime
 
         from pigeon.np_layout import (
@@ -1530,27 +1530,28 @@ class VolumeWidgetCaptionTests(unittest.TestCase):
         )
         from pigeon.widgets.view_circles import (
             ViewCirclesWidget,
-            _VOLUME_CLOCK_GAP_PX,
+            _VOLUME_INPUT_GAP_PX,
             _VOLUME_TEXT_INNER_FIT,
-            _volume_hhmm_patch,
+            _volume_input_patch,
             _volume_readout_patch,
         )
 
-        when = datetime(2026, 9, 20, 15, 4, 0)
+        inner_r = VOLUME_INNER_R * _VOLUME_TEXT_INNER_FIT
         vol_p, vw, vh = _volume_readout_patch("-22.5")
         self.assertGreater(vh, 8)
-        clock_p, cw, ch = _volume_hhmm_patch(
-            when,
-            max_w=vw,
-            max_h=max(10, int(VOLUME_INNER_R * _VOLUME_TEXT_INNER_FIT - vh / 2.0)),
+        top_dy = vh / 2.0 + _VOLUME_INPUT_GAP_PX
+        in_p, iw, ih = _volume_input_patch(
+            "Apple TV", top_dy=top_dy, inner_r=inner_r, max_h=int(inner_r - top_dy)
         )
-        self.assertGreater(ch, 8)
-        self.assertLessEqual(cw, vw + 2)
-        self.assertLess(ch, vh)
+        self.assertGreater(ih, 8)
+        self.assertLess(ih, vh)
+        dy = top_dy + ih
+        self.assertLessEqual(iw, 2.0 * (inner_r**2 - dy**2) ** 0.5)
 
         _force_default_np_zones()
         assets = Path(__file__).resolve().parents[2] / "pigeonAssets"
         widget = ViewCirclesWidget(assets_dir=assets)
+        when = datetime(2026, 9, 20, 15, 4, 0)
         widget._clock_now_for_display = lambda: when  # type: ignore[method-assign]
         widget.update_state(
             progress=0.4,
@@ -1574,10 +1575,10 @@ class VolumeWidgetCaptionTests(unittest.TestCase):
         cy = int(round(VOLUME_LOCAL_CY))
         core = gray[cy - 18 : cy + 18, cx - 40 : cx + 40]
         self.assertTrue((core > 40).any(), "volume number should stay disc-centered")
-        under_y0 = cy + int(round(vh / 2.0 + _VOLUME_CLOCK_GAP_PX))
-        under_y1 = min(zh, under_y0 + max(12, ch + 4))
-        under = gray[under_y0:under_y1, cx - max(20, cw // 2) : cx + max(20, cw // 2)]
-        self.assertTrue((under > 40).any(), "HH:MM should sit under the volume number")
+        under_y0 = cy + int(round(top_dy))
+        under_y1 = min(zh, under_y0 + ih + 4)
+        under = gray[under_y0:under_y1, cx - iw // 2 : cx + iw // 2]
+        self.assertTrue((under > 40).any(), "input label should sit under the volume number")
 
 
 class SixteenByNinePosterTests(unittest.TestCase):
