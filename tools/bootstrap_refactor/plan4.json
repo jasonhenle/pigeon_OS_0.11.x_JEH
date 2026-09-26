@@ -1,0 +1,10 @@
+{
+ "view_one": ["_view_one_uses_now_playing_screen"],
+ "settings_ui": ["_settings_is_native_1280", "_settings_menu_is_static", "_sync_settings_zone2_tt"],
+ "now_playing": ["_sync_now_playing_screen_state_for_frame", "_clear_now_playing_view_caches", "_playback_display_title"],
+ "startup": ["_warm_view_one_splash_chrome_only"],
+ "stage_render": ["_info_cluster_compose_active"],
+ "tmdb_flow": ["_active_tmdb_poster_bgra", "_active_tmdb_tt_src_bgra", "_vv_has_tmdb_tt", "_perform_tmdb_artwork_retry", "submit_command_entry"],
+ "saver_state": ["_paused_screen_active"],
+ "input_keys": ["on_dev_series_title_training_hotkey"]
+}

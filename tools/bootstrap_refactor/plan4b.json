@@ -1,0 +1,5 @@
+{
+ "stage_render": ["_effective_display_view", "_design_grid_overlay_active"],
+ "now_playing": ["_np_drawing_live_audio"],
+ "startup": ["_warm_view_one_under_splash"]
+}

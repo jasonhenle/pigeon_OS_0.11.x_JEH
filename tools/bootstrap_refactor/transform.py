@@ -1,5 +1,11 @@
 import ast, io, json, os, sys, tokenize, inspect, re, copy
 sys.path.insert(0, os.path.expanduser("~/an"))
+# ``--scope=main`` (pass 10) lifts helpers defined directly in main() instead of bootstrap().
+SCOPE = "bootstrap"
+if any(a.startswith("--scope=") for a in sys.argv):
+    SCOPE = next(a for a in sys.argv if a.startswith("--scope="))[len("--scope="):]
+    sys.argv = [a for a in sys.argv if not a.startswith("--scope=")]
+assert SCOPE in ("bootstrap", "main", "main-if"), SCOPE
 ROOT = sys.argv[1]  # pigeonSystem dir
 PLAN = json.load(open(sys.argv[2]))  # {module: [names]}
 ROWS = {r["name"]: r for r in json.load(open(sys.argv[3]))}
@@ -10,7 +16,12 @@ lines = src.splitlines(keepends=True)
 tree = ast.parse(src)
 main = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "main")
 boot = next(n for n in main.body if isinstance(n, ast.FunctionDef) and n.name == "bootstrap")
-defs = {s.name: s for s in boot.body if isinstance(s, ast.FunctionDef)}
+parent = boot if SCOPE == "bootstrap" else main
+if SCOPE == "main-if":
+    # pass 12: defs that are direct statements of an ``if`` body at main()'s top level
+    defs = {s.name: s for top in main.body if isinstance(top, ast.If) for s in top.body if isinstance(s, ast.FunctionDef)}
+else:
+    defs = {s.name: s for s in parent.body if isinstance(s, ast.FunctionDef)}
 
 # module-level import statements usable directly
 direct = {}
@@ -23,7 +34,7 @@ for s in tree.body:
         for a in s.names:
             direct[a.asname or a.name] = f"from {s.module} import {a.name}" + (f" as {a.asname}" if a.asname else "")
 
-IND = " " * 8
+IND = " " * (4 if SCOPE == "main" else 8)
 
 def add_kwonly(text, fn, deps):
     """Insert keyword-only params before the def's closing paren."""
@@ -42,6 +53,16 @@ def add_kwonly(text, fn, deps):
         if depth >= 1 and tk.type not in (tokenize.NL, tokenize.NEWLINE, tokenize.COMMENT, tokenize.INDENT, tokenize.DEDENT):
             last_sig = tk
     a = fn.args
+    if a.kwarg:
+        # pass 11: deps go right before ``**kwargs`` so kwargs keeps the same keys
+        tl = text.splitlines(keepends=True)
+        dstar = next(tk for tk in toks if tk.type == tokenize.OP and tk.string == "**")
+        ins = ", ".join(deps) + ", "
+        if not (a.vararg or a.kwonlyargs):
+            ins = "*, " + ins
+        r, c = dstar.start
+        tl[r - 1] = tl[r - 1][:c] + ins + tl[r - 1][c:]
+        return "".join(tl)
     has_params = bool(a.posonlyargs or a.args or a.vararg or a.kwonlyargs)
     star_present = bool(a.vararg or a.kwonlyargs)
     trailing_comma = last_sig is not None and last_sig.string == "," and has_params
@@ -65,8 +86,11 @@ def add_kwonly(text, fn, deps):
 
 def norm(fn):
     fn = copy.deepcopy(fn)
-    if fn.body and isinstance(fn.body[0], ast.Expr) and isinstance(getattr(fn.body[0], "value", None), ast.Constant) and isinstance(fn.body[0].value.value, str):
-        fn.body[0].value.value = inspect.cleandoc(fn.body[0].value.value)
+    # Docstrings (of the helper and of anything nested in it) are compared after
+    # cleandoc: dedenting the moved text legitimately changes their indentation.
+    for d in ast.walk(fn):
+        if isinstance(d, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and d.body and isinstance(d.body[0], ast.Expr) and isinstance(getattr(d.body[0], "value", None), ast.Constant) and isinstance(d.body[0].value.value, str):
+            d.body[0].value.value = inspect.cleandoc(d.body[0].value.value)
     for n in ast.walk(fn):
         for k in ("lineno", "col_offset", "end_lineno", "end_col_offset"):
             if hasattr(n, k): setattr(n, k, 0)
@@ -95,14 +119,26 @@ for mod, names in PLAN.items():
         chk.args.kwonlyargs = chk.args.kwonlyargs[: len(chk.args.kwonlyargs) - k]
         chk.args.kw_defaults = chk.args.kw_defaults[: len(chk.args.kw_defaults) - k]
         assert norm(chk) == norm(fn), f"AST mismatch {name}"
+        # Names used only in the def's annotations (e.g. ``np.ndarray``, ``tk.Event``)
+        # never show up as free variables; import them too so the module is lint-clean.
+        ann = set()
+        for a in fn.args.posonlyargs + fn.args.args + fn.args.kwonlyargs + [x for x in (fn.args.vararg, fn.args.kwarg) if x]:
+            if a.annotation is not None:
+                ann |= {x.id for x in ast.walk(a.annotation) if isinstance(x, ast.Name)}
+        if fn.returns is not None:
+            ann |= {x.id for x in ast.walk(fn.returns) if isinstance(x, ast.Name)}
+        imps = list(set(imps) | {x for x in ann if x in direct})
         modules_out.setdefault(mod, []).append((name, new, set(r["imps"]) | set(imps)))
         if deps:
-            b = f"{IND}{name} = _bind_deps(\n{IND}    _core_{mod}.{name},\n" + "".join(f"{IND}    {d}={d},\n" for d in deps) + f"{IND})\n"
-            one = f"{IND}{name} = _bind_deps(_core_{mod}.{name}, " + ", ".join(f"{d}={d}" for d in deps) + ")\n"
+            late = set(r.get("late", ()))
+            val = lambda d: f'_late(lambda: {d}, "{d}")' if d in late else d
+            bind = "_bind_method_deps" if r.get("method") else "_bind_deps"
+            b = f"{IND}{name} = {bind}(\n{IND}    _core_{mod}.{name},\n" + "".join(f"{IND}    {d}={val(d)},\n" for d in deps) + f"{IND})\n"
+            one = f"{IND}{name} = {bind}(_core_{mod}.{name}, " + ", ".join(f"{d}={val(d)}" for d in deps) + ")\n"
             if len(one) <= 100: b = one
         else:
             b = f"{IND}{name} = _core_{mod}.{name}\n"
-        if r.get("bind_after") is None:
+        if r.get("bind_after") is None and r.get("bind_after_line") is None:
             replacements.append((fn.lineno, fn.end_lineno, b))
         else:
             # pass 3: bind later, after the last forward dep; comments above the def move too
@@ -111,7 +147,7 @@ for mod, names in PLAN.items():
                 start -= 1
             moved = "".join(lines[start - 1: fn.lineno - 1])
             replacements.append((start, fn.end_lineno, ""))
-            after = boot.body[r["bind_after"]].end_lineno
+            after = r["bind_after_line"] or parent.body[r["bind_after"]].end_lineno
             inserts.append((after, fn.lineno, "\n" + moved + b))
         report.append((mod, name, fn.end_lineno - fn.lineno + 1, len(deps)))
 
@@ -142,6 +178,17 @@ while k <= len(lines):
     k += 1
 src2 = "".join(out)
 # add module imports
+if any(ROWS[n].get("late") for names in PLAN.values() for n in names):
+    imp = "from pigeon.core.binding import late as _late\n"
+    if imp not in src2:
+        anchor = "from pigeon.core.binding import bind_deps as _bind_deps\n"
+        assert anchor in src2
+        src2 = src2.replace(anchor, anchor + imp, 1)
+if any(ROWS[n].get("method") for names in PLAN.values() for n in names):
+    imp = "from pigeon.core.binding import bind_method_deps as _bind_method_deps\n"
+    if imp not in src2:
+        anchor = "from pigeon.core.binding import bind_deps as _bind_deps\n"
+        src2 = src2.replace(anchor, anchor + imp, 1)
 for mod in PLAN:
     imp = f"from pigeon.core import {mod} as _core_{mod}\n"
     if imp not in src2:
@@ -167,7 +214,7 @@ for mod, fns in modules_out.items():
         cl[last_imp:last_imp] = [a + "\n" for a in add]
         cur = "".join(cl).rstrip("\n") + "\n"
     else:
-        cur = f'"""{NEW_DOCS[mod]}\n\nExtracted verbatim from ``bootstrap()`` in ``pigeon_0_9.py``. Each function\ntakes the app state it used to close over as keyword-only arguments;\n``bootstrap()`` binds them once with ``bind_deps`` so call sites are unchanged.\n"""\n\nfrom __future__ import annotations\n\n'
+        cur = f'"""{NEW_DOCS[mod]}\n\nExtracted verbatim from ``{SCOPE.split("-")[0]}()`` in ``pigeon_0_9.py``. Each function\ntakes the app state it used to close over as keyword-only arguments;\n``{SCOPE.split("-")[0]}()`` binds them once with ``bind_deps`` so call sites are unchanged.\n"""\n\nfrom __future__ import annotations\n\n'
         cur += "".join(sorted(x + "\n" for x in needed))
     for n, t, _i in fns:
         cur += "\n\n" + t.rstrip("\n") + "\n"

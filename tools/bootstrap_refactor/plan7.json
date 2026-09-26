@@ -1,0 +1,60 @@
+{
+ "settings_ui": [
+  "_handle_main_settings_action",
+  "_apply_location_rename",
+  "_schedule_periodic_update_check",
+  "_composite_settings_on_canvas",
+  "_refresh_location_selector",
+  "_force_advanced_feature_try",
+  "on_reset_pigeon_devices_and_media",
+  "_enter_main_settings_for_rotary"
+ ],
+ "pairing": [
+  "_remove_streaming_device_at",
+  "_remove_receiver_device_at",
+  "_remove_aux_slot_device_at",
+  "_schedule_refresh_pairing_leds"
+ ],
+ "now_playing": [
+  "_has_playback_position",
+  "_metadata_activity_fingerprint",
+  "_player_metadata_class",
+  "_sync_now_playing_screen_state",
+  "_circles_poster_bgra",
+  "_spawn_youtube_thumb_fetch",
+  "_content_key_from_metadata",
+  "_sync_trt_text_to_true_once",
+  "_playback_ui_tick",
+  "_sync_streaming_badge_from_playback_sources",
+  "_metadata_debug_provider"
+ ],
+ "saver_state": [
+  "_bump_clock_saver_significant_device_from_metadata",
+  "_idle_audio_listen",
+  "_nudge_clock_saver_volume"
+ ],
+ "stage_render": [
+  "_warm_info_cluster_blits",
+  "compose_display_from_source",
+  "_layout_chrome",
+  "cycle_dev_phase"
+ ],
+ "view_four": [
+  "_view_four_has_value"
+ ],
+ "device_control": [
+  "_apple_tv_auto_poll_tick",
+  "_receiver_volume_worker",
+  "_receiver_volume_poll_tick"
+ ],
+ "tmdb_flow": [
+  "_perform_tmdb_error_flag_retry"
+ ],
+ "input_keys": [
+  "_on_label_button_release_peek_or_bump",
+  "on_display_view_digit",
+  "on_arrow_remote",
+  "_on_par_chord_press",
+  "_on_rotary_action"
+ ]
+}

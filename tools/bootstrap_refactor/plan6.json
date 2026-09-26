@@ -1,0 +1,35 @@
+{
+ "settings_ui": [
+  "_check_for_updates"
+ ],
+ "saver_state": [
+  "_atv_idle_monochrome_active"
+ ],
+ "stage_render": [
+  "_refresh_stage_from_poster",
+  "_compose_shown_frame"
+ ],
+ "now_playing": [
+  "_warm_status_bar_blits"
+ ],
+ "tmdb_flow": [
+  "_refresh_tmdb_tt_gradient_tint"
+ ],
+ "view_four": [
+  "_collect_view_four_playback_lines"
+ ],
+ "pairing": [
+  "_verify_added_devices_after_save",
+  "_start_airplay_pairing_sequence",
+  "_run_sequential_player_pairing_wizard",
+  "_open_find_device_dialog"
+ ],
+ "device_control": [
+  "on_apple_tv_selected_then_tmdb",
+  "on_debug_streaming_slot_apple_tv",
+  "_send_player_play_pause_hotkey",
+  "_commit_receiver_volume",
+  "_on_denon_telnet_volume",
+  "_quick_receiver_volume_poll"
+ ]
+}

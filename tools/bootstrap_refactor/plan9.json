@@ -1,0 +1,19 @@
+{
+ "settings_ui": [
+  "_sync_update_button_style",
+  "_run_github_apply_worker",
+  "_on_updates_button",
+  "_settings_audio_led_listen",
+  "_maybe_exit_settings_menus_on_idle",
+  "_sync_preferences_now_playing_progress"
+ ],
+ "device_control": [
+  "set_apple_tv_controls_enabled"
+ ],
+ "saver_state": [
+  "_clock_saver_for_compose"
+ ],
+ "now_playing": [
+  "_np_wants_live_audio"
+ ]
+}

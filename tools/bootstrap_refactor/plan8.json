@@ -1,0 +1,48 @@
+{
+ "device_control": [
+  "_apple_tv_is_off",
+  "_update_atv_interaction_from_poll_metadata",
+  "set_current_apple_tv",
+  "_apply_persisted_location_to_runtime"
+ ],
+ "view_one": [
+  "_view_one_layout_effective",
+  "_stage_is_view_one_video_layout"
+ ],
+ "saver_state": [
+  "_update_idle_dim_strength",
+  "_paused_screen_backdrop_bgr",
+  "_toggle_clock_saver_force",
+  "_return_to_landing_if_atv_idle"
+ ],
+ "tmdb_flow": [
+  "_warm_tmdb_logo_patch",
+  "_vv_has_tmdb_bd",
+  "_clear_displayed_tmdb_art_for_content_change",
+  "_apply_rawtitle_text_tt_fallback",
+  "_tmdb_info_current_and_available",
+  "spawn_tmdb_poster_fetch",
+  "apply_saved_tmdb_backdrop_to_display"
+ ],
+ "stage_render": [
+  "_refresh_clock_patch_bgra",
+  "toggle_play",
+  "_open_landing_scene",
+  "toggle_scene",
+  "_apply_shell_size",
+  "_warm_playback_overlay_blits",
+  "compose_display_fast_no_grid",
+  "f10_cycle_scene_grid",
+  "render_once",
+  "_apply_netflix_backdrop_when_running"
+ ],
+ "now_playing": [
+  "_enable_now_playing_screen"
+ ],
+ "startup": [
+  "_activate_now_playing_after_splash"
+ ],
+ "input_keys": [
+  "on_space_play"
+ ]
+}

@@ -1,0 +1,7 @@
+{
+ "saver_state": ["_clock_saver_active"],
+ "tmdb_flow": ["_clear_tmdb_quality_flag"],
+ "settings_ui": ["_remove_saved_receiver_device"],
+ "device_control": ["set_current_receiver_only"],
+ "now_playing": ["_refresh_trt_progress_only", "_refresh_extrapolated_timecodes"]
+}
