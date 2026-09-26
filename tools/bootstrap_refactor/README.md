@@ -281,12 +281,12 @@ python3 $T/transform.py . $T/plan12.json /tmp/p12.json $T/new_module_docs.json -
 `plan12.json` lifts all 14 into the new `pigeon/core/splash.py` (the clock
 prewarm worker, frame decode / prebake workers, `splash_tick`,
 `_bootstrap_after_splash`). `smoke_bootstrap.py` now finds `bootstrap` through
-a `bind_deps` partial too. Check the splash path as well as the default:
+a `bind_deps` partial too.
 
-```bash
-sed 's/"PIGEON_NO_SPLASH", "1"/"PIGEON_NO_SPLASH", "0"/' $T/smoke_bootstrap.py > /tmp/smoke_on.py
-HOME=$(mktemp -d) SMOKE_TICKS=1 python3 /tmp/smoke_on.py
-```
+(Correction, found in the 0.11.37 review: the "splash off / on" smoke runs
+reported for passes 12-16 used a `PIGEON_NO_SPLASH` variable that Pigeon
+never reads, so both took the splash path. The non-splash path is covered by
+`tests/test_startup_trace.py`'s `no_ext` trace.)
 
 Still inline in `main()`: the two null-object classes (`_NullClockSaverVolumeHold`,
 `_NullVolumeLineReveal`) and `bootstrap()` itself, whose ~700 top-level
@@ -388,3 +388,12 @@ Additions for this scope:
 
 `tests/test_boot_phases.py` checks both groups (`m*` seeded by `_main_ctx`,
 `p*` by bootstrap()'s `ctx`). pigeon_0_9.py: 1,748 -> 1,191 lines.
+
+## Review of 0.11.37 (no code moved)
+
+See `docs/STARTUP_REVIEW_0.11.37.md` and `docs/PI_SMOKE_CHECKS.md`.
+`tests/startup_trace_harness.py` records every Tk call startup makes (plus
+two rounds of scheduled callbacks and every bound handler fired once);
+`tests/test_startup_trace.py` traces four configurations from the current
+code and from 0.11.34 (extracted from git, same machine) and compares them.
+Use it, not `smoke_bootstrap.py`, to check any future startup change.

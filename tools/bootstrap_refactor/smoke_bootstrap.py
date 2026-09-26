@@ -52,7 +52,8 @@ def make_root(*a, **k):
     r.mainloop.side_effect = mainloop
     return r
 tkinter.Tk = make_root
-os.environ.setdefault("PIGEON_NO_SPLASH", "1")
+# Note: Pigeon has no PIGEON_NO_SPLASH switch; with the extensions loaded this always
+# runs the splash path. tests/startup_trace_harness.py --no-ext covers the other path.
 import pigeon_0_9
 sys.argv = ["pigeon_0_9.py"]
 def watchdog():
