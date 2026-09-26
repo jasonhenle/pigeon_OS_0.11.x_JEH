@@ -42,7 +42,8 @@ and the wifi / metadata / audio lights are not selectable.
 - **Colors** preview live while focused; activating commits. Leaving the row
   falls back to the committed color. Theme hexes are the `ui_color_*_icon` fills.
 - **Options** toggle `time_format`, `temp_format`, `color_format` (dark = red
-  monochrome). `toggle_a` / `toggle_b` layers show per their names.
+  monochrome). The knob shown is the circle nearest the active label (the export's
+  `toggle_a` / `toggle_b` names are swapped relative to their labels).
 - **Lights**: wifi green while associated; metadata / audio green when seen in
   the last 60 s (`pigeon/source_status.py`).
 

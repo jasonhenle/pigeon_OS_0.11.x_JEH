@@ -126,14 +126,27 @@ class PageStateTests(_IsolatedStateTest):
         root = self._root(MainSettingsState())
         self.assertEqual("".join(ps._by_id(root, "zipcode_00000_text").itertext()), "21710")
 
-    def test_option_toggles_follow_layer_names(self) -> None:
+    def test_toggle_knob_sits_beside_active_label(self) -> None:
         root = self._root(MainSettingsState(options_values={"time_format": "24"}))
-        group = ps._option_group(root, 1)
-        self.assertEqual(ps._child_with(group, "toggle_a_shape").get("display"), "none")
-        self.assertNotEqual(ps._child_with(group, "toggle_b_shape").get("display"), "none")
-        group = ps._option_group(root, 2)
-        self.assertNotEqual(ps._child_with(group, "toggle_a_shape").get("display"), "none")
-        self.assertEqual(ps._child_with(group, "toggle_b_shape").get("display"), "none")
+        for n, is_b in ((1, True), (2, False), (3, False)):
+            group = ps._option_group(root, n)
+            knobs = [
+                ps._child_with(group, "toggle_a_shape"),
+                ps._child_with(group, "toggle_b_shape"),
+            ]
+            shown = [k for k in knobs if k.get("display") != "none"]
+            self.assertEqual(len(shown), 1, n)
+            label_y = ps._svg_y(ps._option_label(group, "b" if is_b else "a"))
+            nearest = min(knobs, key=lambda k: abs(ps._svg_y(k) - label_y))
+            self.assertIs(shown[0], nearest, n)
+
+    def test_toggle_wells_stay_grey_on_white_theme(self) -> None:
+        for key, well in (("white", "#777777"), ("grey", "#777777"), ("blue", "#4B9EEC")):
+            theme = ucs.theme_from_color_keys({"accent": "white", "ui": key, "button": "black"})
+            root = self._root(MainSettingsState(theme=theme))
+            for n in ps.OPTION_NUMBERS:
+                shape = ps._child_with(ps._option_group(root, n), "shape_ui_color")
+                self.assertEqual(shape.get("fill", "").upper(), well, (key, n))
 
     def test_selected_tile_gets_white_stroke(self) -> None:
         st = MainSettingsState()

@@ -55,6 +55,8 @@ _COLOR_BLACK = "#000000"
 _COLOR_BUTTON = "#231F20"
 _COLOR_STATUS_OK = "#58FF00"
 _COLOR_STATUS_BAD = "#FF0000"
+# White knobs vanish in a white well, so the white theme borrows grey's fill.
+_COLOR_TOGGLE_WELL_ON_WHITE = "#777777"
 
 UI_COLOR_KEYS: tuple[str, ...] = (
     "blue",
@@ -304,6 +306,48 @@ def _sync_status_lights(root: ET.Element, state: MainSettingsState) -> None:
         _set_paint(middle, fill=_COLOR_STATUS_OK if audio_ok else _COLOR_BLACK, stroke="none")
 
 
+def _svg_y(el: ET.Element | None) -> float | None:
+    """Vertical anchor of a knob (path start / circle center) or label (translate y)."""
+    if el is None:
+        return None
+    if el.get("cy") is not None:
+        try:
+            return float(el.get("cy"))
+        except ValueError:
+            return None
+    m = re.match(r"\s*M\s*[-\d.]+[,\s]+([-\d.]+)", el.get("d") or "")
+    if m:
+        return float(m.group(1))
+    m = re.search(r"translate\(\s*[-\d.]+[,\s]+([-\d.]+)", el.get("transform") or "")
+    return float(m.group(1)) if m else None
+
+
+def _option_label(group: ET.Element, side: str) -> ET.Element | None:
+    for el in group.iter():
+        name = str(el.get("id") or "")
+        if el.tag.endswith("text") and f"_{side}_" in name:
+            return el
+    return None
+
+
+def _sync_toggle_knob(group: ET.Element, *, is_b: bool) -> None:
+    """Show the knob circle that sits beside the active option's label.
+
+    In the 0.11 export ``toggle_a`` sits beside the B label and vice versa,
+    so the knob is picked by position, not by layer name.
+    """
+    knob_a = _child_with(group, "toggle_a_shape")
+    knob_b = _child_with(group, "toggle_b_shape")
+    label_y = _svg_y(_option_label(group, "b" if is_b else "a"))
+    ya, yb = _svg_y(knob_a), _svg_y(knob_b)
+    if label_y is None or ya is None or yb is None:
+        show_a = not is_b
+    else:
+        show_a = abs(ya - label_y) <= abs(yb - label_y)
+    _set_visible(knob_a, show_a)
+    _set_visible(knob_b, not show_a)
+
+
 def apply_pigeon_settings_svg_state(root: ET.Element, state: MainSettingsState) -> None:
     from pigeon.pigeon_locale import timezone_abbrev
     from pigeon.widgets.options_settings import option_is_b
@@ -343,6 +387,7 @@ def apply_pigeon_settings_svg_state(root: ET.Element, state: MainSettingsState) 
         _sync_stroke_button(_child_with(group, "_butt"), selected=focused == f"color:{key}")
 
     ui_hex = str(getattr(state.theme, "ui", "") or _COLOR_WHITE)
+    well_hex = _COLOR_TOGGLE_WELL_ON_WHITE if ui_hex.upper() == _COLOR_WHITE else ui_hex
     values = getattr(state, "options_values", None) or None
     for n in OPTION_NUMBERS:
         group = _option_group(root, n)
@@ -351,10 +396,8 @@ def apply_pigeon_settings_svg_state(root: ET.Element, state: MainSettingsState) 
         _sync_stroke_button(_child_with(group, "_button"), selected=focused == f"option:{n}")
         shape = _child_with(group, "shape_ui_color")
         if shape is not None:
-            _set_paint(shape, fill=ui_hex)
-        is_b = option_is_b(n, values)
-        _set_visible(_child_with(group, "toggle_a_shape"), not is_b)
-        _set_visible(_child_with(group, "toggle_b_shape"), is_b)
+            _set_paint(shape, fill=well_hex)
+        _sync_toggle_knob(group, is_b=option_is_b(n, values))
 
     _sync_stroke_button(_by_id(root, "settings_reset_button"), selected=focused == "reset")
     _sync_stroke_button(
