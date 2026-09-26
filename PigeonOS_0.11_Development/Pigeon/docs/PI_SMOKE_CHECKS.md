@@ -4,7 +4,7 @@ The automated tests run Pigeon under a fake Tk. They prove that startup makes
 the same calls, in the same order, as 0.11.34. They cannot see real drawing,
 timing, GPIO, serial, the receiver, the Apple TV or the HDMI capture card.
 Run these checks on one Pi after any build that touches startup
-(`pigeon/core/boot/`, `pigeon_0_9.py`), before updating the second Pi.
+(`pigeon/core/boot/`, `pigeon_0_11.py`), before updating the second Pi.
 
 Takes about 20 minutes. Check the ☐ boxes; anything that fails, note the time
 and grab the log (see "What to send back").
@@ -26,7 +26,7 @@ and grab the log (see "What to send back").
 Restart Pigeon (`sudo systemctl restart pigeon`), or reboot for a true cold
 start.
 
-- ☐ The log starts with `pigeon: running script …/pigeon_0_9.py`. It names
+- ☐ The log starts with `pigeon: running script …/pigeon_0_11.py`. It names
   the script, not a `pigeon/core/boot/…` file.
 - ☐ Kiosk: the window covers the whole screen, with no desktop bar or window
   frame. About a second in, the log shows `pigeon: kiosk WxH+0+0 screen=WxH`.

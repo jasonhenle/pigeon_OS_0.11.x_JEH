@@ -1,7 +1,7 @@
 # PigeonOS 0.11
 
 **Pigeon** is a fixed-resolution (800×480) “Now Playing” display app.  
-Version **0.11** keeps the `pigeon_0_9.py` entrypoint filename for compatibility.
+The entry point is `pigeon_0_11.py` (named after the MAJOR_MINOR version; `pigeon_0_9.py` remains as a small compatibility shim for older updaters).
 
 ## What it does
 
@@ -23,7 +23,7 @@ python3 -m pip install -r requirements.txt
 
 Typical app tree:
 
-- **`pigeonSystem/`** — this app (`pigeon_0_9.py`, `pigeon/` package).
+- **`pigeonSystem/`** — this app (`pigeon_0_11.py`, `pigeon/` package).
 - **`pigeonAssets/`** — scenes, widgets, logos, and UI media.
 
 Paths are resolved automatically from the script location plus Desktop / iCloud fallbacks. Override anytime with **`PIGEON_SCENE`**, **`PIGEON_POSTER_ART_DIR`**, **`PIGEON_REFORMATTED_POSTER_DIR`**.
@@ -40,7 +40,7 @@ Preferred (installer launchers):
 Or directly from `pigeonSystem/`:
 
 ```bash
-python3 pigeon_0_9.py
+python3 pigeon_0_11.py
 ```
 
 If the default clip was renamed or moved, the app searches for `.mp4` / `.mov` files and picks the best filename match. Check Terminal for `default scene (discovered) → …`.
@@ -48,14 +48,14 @@ If the default clip was renamed or moved, the app searches for `.mp4` / `.mov` f
 Or pass an explicit path:
 
 ```bash
-python3 pigeon_0_9.py --scene "/path/to/your_scene.mp4"
+python3 pigeon_0_11.py --scene "/path/to/your_scene.mp4"
 ```
 
 Or set an environment variable:
 
 ```bash
 export PIGEON_SCENE="/path/to/your_scene.mp4"
-python3 pigeon_0_9.py
+python3 pigeon_0_11.py
 ```
 
 ## Controls

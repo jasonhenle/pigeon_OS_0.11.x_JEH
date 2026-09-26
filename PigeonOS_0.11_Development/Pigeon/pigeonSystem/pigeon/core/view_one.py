@@ -1,6 +1,6 @@
 """View 1 layout and variant selection, streaming-app logo backdrops, and the View 1 canvas.
 
-Extracted verbatim from ``bootstrap()`` in ``pigeon_0_9.py``. Each function
+Extracted verbatim from ``bootstrap()`` in ``pigeon_0_11.py``. Each function
 takes the app state it used to close over as keyword-only arguments;
 ``bootstrap()`` binds them once with ``bind_deps`` so call sites are unchanged.
 """

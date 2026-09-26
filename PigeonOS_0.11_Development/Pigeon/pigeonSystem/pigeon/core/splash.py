@@ -1,6 +1,6 @@
 """Startup splash playback: clock prewarm, frame decode / prebake workers, the frame caches, and the splash_tick animation loop.
 
-Extracted verbatim from ``main()`` in ``pigeon_0_9.py``. Each function
+Extracted verbatim from ``main()`` in ``pigeon_0_11.py``. Each function
 takes the app state it used to close over as keyword-only arguments;
 ``main()`` binds them once with ``bind_deps`` so call sites are unchanged.
 """

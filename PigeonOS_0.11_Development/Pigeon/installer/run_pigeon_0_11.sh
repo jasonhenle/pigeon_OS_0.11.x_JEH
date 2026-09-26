@@ -45,9 +45,9 @@ pick_python_with_tk() {
   return 1
 }
 
-MAIN_PY="${SYSTEM_DIR}/pigeon_0_9.py"
+MAIN_PY="${SYSTEM_DIR}/pigeon_0_11.py"
 if [[ ! -f "${MAIN_PY}" ]]; then
-  echo "pigeon: missing pigeonSystem/pigeon_0_9.py — copy or pull the latest Pigeon build." >&2
+  echo "pigeon: missing pigeonSystem/pigeon_0_11.py — copy or pull the latest Pigeon build." >&2
   exit 1
 fi
 

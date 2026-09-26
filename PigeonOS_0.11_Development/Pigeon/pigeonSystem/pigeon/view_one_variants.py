@@ -14,7 +14,7 @@ default state (returned when the [1] toggle is in its initial position).
     .08 default (BD + TT + appLogo gone) -- no alternate
     .09 default (everything missing)     -- no alternate
 
-This module is self-contained and importable from ``pigeon_0_9.py``. It does
+This module is self-contained and importable from ``pigeon_0_11.py``. It does
 not touch Tk or the compositor; it only resolves which variant should render
 and provides the text/image patches the compositor needs for fallbacks.
 """

@@ -6,7 +6,7 @@ source, what Pigeon knows about the current title. Opened with [4]; forward /
 backward steps player → hdmi → pigeon (no wrap); EXIT returns to the pigeon
 settings grid; [4] again jumps to the legacy metadata view.
 
-Data comes from a provider callback registered by ``pigeon_0_9`` (the widget
+Data comes from a provider callback registered by ``pigeon_0_11`` (the widget
 layer has no access to pyatv / HDMI state).
 """
 
@@ -69,7 +69,7 @@ _SVG_TREE_TEMPLATE_MAX = 2
 _THEME_BG_CACHE: dict[tuple[object, ...], np.ndarray] = {}
 _THEME_BG_CACHE_MAX = 4
 
-# Registered by pigeon_0_9; returns the live per-source rows + active flags.
+# Registered by pigeon_0_11; returns the live per-source rows + active flags.
 _DATA_PROVIDER: Callable[[], dict[str, Any]] | None = None
 
 

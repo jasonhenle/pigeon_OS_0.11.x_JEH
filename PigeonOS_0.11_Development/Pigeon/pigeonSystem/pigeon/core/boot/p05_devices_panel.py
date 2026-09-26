@@ -1,6 +1,6 @@
 """Boot phase: device state, the Devices section, the Updates flow, and the Content section.
 
-Phase 5 of ``bootstrap()`` in ``pigeon_0_9.py``, moved verbatim. ``run``
+Phase 5 of ``bootstrap()`` in ``pigeon_0_11.py``, moved verbatim. ``run``
 reads the names it needs from the shared boot context, runs the original
 statements, and writes back the names later phases read.
 """

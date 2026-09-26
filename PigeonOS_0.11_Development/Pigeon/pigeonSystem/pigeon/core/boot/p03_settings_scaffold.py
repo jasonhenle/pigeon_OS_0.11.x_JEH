@@ -1,6 +1,6 @@
 """Boot phase: settings frame, scroll canvas, fonts, mouse-wheel scrolling and activity tracking.
 
-Phase 3 of ``bootstrap()`` in ``pigeon_0_9.py``, moved verbatim. ``run``
+Phase 3 of ``bootstrap()`` in ``pigeon_0_11.py``, moved verbatim. ``run``
 reads the names it needs from the shared boot context, runs the original
 statements, and writes back the names later phases read.
 """

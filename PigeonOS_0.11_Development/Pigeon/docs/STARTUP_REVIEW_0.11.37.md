@@ -46,15 +46,15 @@ network devices, HDMI capture — is covered by the manual checks in
 
 ## How shared state works (what was traced)
 
-- `main()` seeds `_main_ctx` (`pigeon_0_9.py:893`) and runs `m01`–`m04`
+- `main()` seeds `_main_ctx` (`pigeon_0_11.py:893`) and runs `m01`–`m04`
   (`:930–933`). Then it reads back every name the rest of `main()` and
   `bootstrap()` use (`:935–981`).
-- `bootstrap()` seeds its own `ctx` (`pigeon_0_9.py:987`) and runs `p01`–`p14`
+- `bootstrap()` seeds its own `ctx` (`pigeon_0_11.py:987`) and runs `p01`–`p14`
   in order (`:1149–1162`).
 - Each phase starts with `x = ctx.x` for its inputs, runs its original
   statements verbatim (AST-checked when generated), and ends with `ctx.y = y`
   for anything later phases read.
-- Tk scheduling (`pigeon_0_9.py:1164–1186`) is unchanged. With the splash
+- Tk scheduling (`pigeon_0_11.py:1164–1186`) is unchanged. With the splash
   path, `splash_tick`, `_live_clock_until_compose` and
   `_bootstrap_after_splash` are queued with `after_idle`. Without it,
   `root.after(1, bootstrap)` runs. Then `mainloop()`.
@@ -95,7 +95,7 @@ lambda.
 ### R3 — Values copied when `main()` / `bootstrap()` start (low)
 
 Module globals the phases read are copied into the seeds at
-`pigeon_0_9.py:893` and `:987`. A global rebound after that point would not
+`pigeon_0_11.py:893` and `:987`. A global rebound after that point would not
 reach the phases. Today the only `global` statement rebinds
 `_TK_RGB_SCRATCH`, which is not seeded.
 
@@ -107,11 +107,11 @@ reach the phases. Today the only `global` statement rebinds
 and read back inside `try … except NameError`:
 
 - `m04_splash.py:440–443`
-- `pigeon_0_9.py:976–979`
+- `pigeon_0_11.py:976–979`
 
 On the other path it stays unbound, as before. Its only reader is
 `root.after_idle(splash_tick)` inside the matching `if _PIGEON_EXT:`
-(`pigeon_0_9.py:1176`). The `no_ext` trace confirms the non-splash path
+(`pigeon_0_11.py:1176`). The `no_ext` trace confirms the non-splash path
 matches 0.11.34.
 
 **Guard added:** `test_only_expected_names_are_path_dependent` pins the set of
@@ -153,21 +153,21 @@ two runs.
 
 ### R8 — Import order (checked, no issue)
 
-The phase modules are imported at `pigeon_0_9.py:63–81`, earlier than some
+The phase modules are imported at `pigeon_0_11.py:63–81`, earlier than some
 modules used to be (e.g. `pigeon.linux_kiosk`, `pigeon.media_folders`,
 `pigeon.tmdb_tt_contrast`). None of them does anything at import beyond
 definitions. `sys.path` is set up before them (`:48–50`).
 
 `pigeon/core/stage_render.py:25` imports `DisplayView` / `SceneFit` from
-`pigeon_0_9` only under `TYPE_CHECKING`, so there is no runtime circular
+`pigeon_0_11` only under `TYPE_CHECKING`, so there is no runtime circular
 import.
 
 ### R9 — Troubleshooting (info)
 
 Tracebacks from startup now point into `pigeon/core/boot/m*.py` / `p*.py`
-instead of `pigeon_0_9.py`. The log line
-`pigeon: running script …/pigeon_0_9.py` is unchanged: `__file__` is seeded
-from `pigeon_0_9.py`.
+instead of `pigeon_0_11.py`. The log line
+`pigeon: running script …/pigeon_0_11.py` is unchanged: `__file__` is seeded
+from `pigeon_0_11.py`.
 
 ## Intentional changes since 0.11.34
 

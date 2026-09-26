@@ -15,7 +15,7 @@ LOG_FILE="${STATE_DIR}/pigeon.log"
 INSTALL_DIR="${1:-${PIGEON_INSTALL_ROOT:-}}"
 if [[ -z "${INSTALL_DIR}" ]]; then
   for d in "${HOME}"/Pigeon_*; do
-    if [[ -f "${d}/pigeonSystem/pigeon_0_9.py" || -f "${d}/pigeonSystem/pigeon_0_8.py" || -f "${d}/pigeonSystem/pigeon_0_7.py" ]]; then
+    if [[ -f "${d}/pigeonSystem/pigeon_0_11.py" || -f "${d}/pigeonSystem/pigeon_0_9.py" || -f "${d}/pigeonSystem/pigeon_0_8.py" || -f "${d}/pigeonSystem/pigeon_0_7.py" ]]; then
       INSTALL_DIR="${d}"
       break
     fi
@@ -176,7 +176,7 @@ for candidate in \
   "${EXTRACT}"/*/"${APP_REL}" \
   "${EXTRACT}/${APP_REL}" \
   "${EXTRACT}"/*; do
-  if [[ -f "${candidate}/pigeonSystem/pigeon_0_9.py" || -f "${candidate}/pigeonSystem/pigeon_0_8.py" ]]; then
+  if [[ -f "${candidate}/pigeonSystem/pigeon_0_11.py" || -f "${candidate}/pigeonSystem/pigeon_0_9.py" || -f "${candidate}/pigeonSystem/pigeon_0_8.py" ]]; then
     SRC="${candidate}"
     break
   fi

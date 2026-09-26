@@ -1,6 +1,6 @@
 """Boot phase: mouse and keyboard bindings (Tab, Return, Space, view keys, hotkeys, chords).
 
-Phase 12 of ``bootstrap()`` in ``pigeon_0_9.py``, moved verbatim. ``run``
+Phase 12 of ``bootstrap()`` in ``pigeon_0_11.py``, moved verbatim. ``run``
 reads the names it needs from the shared boot context, runs the original
 statements, and writes back the names later phases read.
 """

@@ -1,6 +1,6 @@
 """Stage / frame rendering helpers and render scheduling.
 
-Extracted verbatim from ``bootstrap()`` in ``pigeon_0_9.py``. Each function
+Extracted verbatim from ``bootstrap()`` in ``pigeon_0_11.py``. Each function
 takes the app state it used to close over as keyword-only arguments;
 ``bootstrap()`` binds them once with ``bind_deps`` so call sites are unchanged.
 """
@@ -22,7 +22,7 @@ from pigeon.stage_background import set_stage_bgr
 import time
 
 if TYPE_CHECKING:
-    from pigeon_0_9 import DisplayView, SceneFit
+    from pigeon_0_11 import DisplayView, SceneFit
 
 
 def _black_screen_bgr(*, display_dims) -> np.ndarray:

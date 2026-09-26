@@ -12,7 +12,7 @@ Pigeon is a full-screen media display and control surface. It can show playback 
   - `installer/run_pigeon_0_11.command`: macOS launch script.
   - `installer/run_pigeon_0_11.sh`: Linux / Pi launch script.
 - `pigeonSystem/`: all runnable code and system modules for this build.
-  - main app entrypoint: `pigeonSystem/pigeon_0_9.py`
+  - main app entrypoint: `pigeonSystem/pigeon_0_11.py`
   - package code: `pigeonSystem/pigeon/`
   - widget code: `pigeonSystem/pigeon/widgets/`
 - `pigeonAssets/`: static art and UI media.
