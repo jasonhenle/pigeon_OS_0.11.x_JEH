@@ -1581,6 +1581,54 @@ class VolumeWidgetCaptionTests(unittest.TestCase):
         self.assertTrue((under > 40).any(), "input label should sit under the volume number")
 
 
+class StatusBarTickTests(unittest.TestCase):
+    def test_remaining_time_does_not_ghost_across_ticks(self) -> None:
+        from pigeon.np_layout import NOW_PLAYING_ZONES
+        from pigeon.widgets.view_circles import ViewCirclesWidget
+
+        assets = Path(__file__).resolve().parents[2] / "pigeonAssets"
+        zones = ("clock", "", "volume", "", "status_bar")
+
+        def widget() -> ViewCirclesWidget:
+            w = ViewCirclesWidget(assets_dir=assets)
+            w._assignments = lambda: zones  # type: ignore[method-assign]
+            return w
+
+        def tick(w: ViewCirclesWidget, remaining: str) -> None:
+            w.update_state(
+                progress=0.4,
+                elapsed_text="1:00:00",
+                remaining_text=remaining,
+                volume_text="-22.5 dB",
+                incoming_audio="pcm",
+                has_now_playing=True,
+                has_position=True,
+                content_active=True,
+            )
+
+        fresh = widget()
+        tick(fresh, "1:28:38")
+        ref = fresh.bgra_frame()
+        assert ref is not None
+        ref_canvas = np.zeros((ref.shape[0], ref.shape[1], 3), dtype=np.uint8)
+        fresh_r = widget()
+        tick(fresh_r, "1:28:38")
+        fresh_r.render(ref_canvas)
+        z = NOW_PLAYING_ZONES[4]
+        rows = slice(int(z.y), None)
+
+        streamed, rendered = widget(), widget()
+        canvas = np.zeros((ref.shape[0], ref.shape[1], 3), dtype=np.uint8)
+        for s in range(49, 37, -1):
+            tick(streamed, f"1:28:{s:02d}")
+            frame = streamed.bgra_frame()
+            tick(rendered, f"1:28:{s:02d}")
+            rendered.render(canvas)
+        assert frame is not None
+        np.testing.assert_array_equal(frame[rows, :, :3], ref[rows, :, :3])
+        np.testing.assert_array_equal(canvas[rows], ref_canvas[rows])
+
+
 class SixteenByNinePosterTests(unittest.TestCase):
     def test_youtube_and_landscape_art_request_16x9(self) -> None:
         from pigeon.np_layout import wants_16x9_poster

@@ -3682,6 +3682,9 @@ class ViewCirclesWidget:
         self._ticking_under_sig: tuple[object, ...] | None = None
         self._svg_chrome_by_key: dict[tuple[object, ...], np.ndarray] = {}
         self._bar_overlay_layer: np.ndarray | None = None
+        # Union of everything the last _draw_status_bar painted (x0, y0, x1, y1);
+        # the timecodes sit below the zone box, so the zone rect alone misses them.
+        self._status_bar_paint_bounds: tuple[int, int, int, int] | None = None
         self._artwork_blur_bgra: np.ndarray | None = None
         self._artwork_blur_poster_id: int | None = None
         self._search_frames: tuple[np.ndarray, ...] | None = None
@@ -4506,6 +4509,10 @@ class ViewCirclesWidget:
                 z = _zone_spec(i + 1)
                 zx, zy, zw, zh = (int(v) for v in z.xywh)
                 rects.append((zx, zy, zw, zh))
+        painted = self._status_bar_paint_bounds
+        if painted is not None:
+            x0, y0, x1, y1 = painted
+            rects.append((x0, y0, x1 - x0, y1 - y0))
         return rects
 
     def _restore_ticking_rects(self, under: np.ndarray) -> None:
@@ -4729,6 +4736,8 @@ class ViewCirclesWidget:
         if bar_zone is None:
             return
         zone = _zone_spec(int(bar_zone))
+        zx, zy, zw, zh = (int(v) for v in zone.xywh)
+        bounds = [zx, zy, zx + zw, zy + zh]
         st = self._state
         pf = max(0.0, min(1.0, float(st.progress)))
         tx, ty, tw, th, trx = design_rect_from_local(
@@ -4809,6 +4818,10 @@ class ViewCirclesWidget:
             paste_x = int(round(x - pw)) if right else int(round(x))
             paste_y = int(round(y - ph))
             _paste_patch_bgra(out, patch, paste_x, paste_y)
+            bounds[0] = min(bounds[0], paste_x)
+            bounds[1] = min(bounds[1], paste_y)
+            bounds[2] = max(bounds[2], paste_x + pw)
+            bounds[3] = max(bounds[3], paste_y + ph)
 
         et_patch, et_w, _et_h = _label_patch(et)
         rt_patch, rt_w, _rt_h = _label_patch(rt, fill_rgb=_look_ink_rgb())
@@ -4851,6 +4864,7 @@ class ViewCirclesWidget:
             _paste_patch(et_patch, elapsed_x, ey, opacity=elapsed_a)
         # Remaining is authored near the right; right-align to the track end.
         _paste_patch(rt_patch, float(tx + tw), ry, right=True)
+        self._status_bar_paint_bounds = (bounds[0], bounds[1], bounds[2], bounds[3])
 
     def _draw_play_overlay(self, out: np.ndarray) -> None:
         if not self._state.paused:
@@ -5951,7 +5965,7 @@ class ViewCirclesWidget:
         z4 = NOW_PLAYING_ZONES[4]
         plate = render_pausesaver_plate_bgra(int(round(z4.w)), int(round(z4.h)))
         _paste_patch_bgra(out, plate, int(round(z4.x)), int(round(z4.y)))
-        self._draw_status_bar(out)
+        # Status bar is stamped by _overlay_ticking; baking it here leaves stale timecodes.
         return out
 
     def _render_static_bgra(self) -> np.ndarray:
@@ -6007,8 +6021,8 @@ class ViewCirclesWidget:
         self._draw_zone4_overlay_text(out)
         if self.content_mode == _CONTENT_MODE_MUSIC or self._state.is_youtube:
             self._draw_track_titles(out)
-        if any(is_status_bar_widget(assignments[i], i + 1) for i in range(5)):
-            self._draw_status_bar(out)
+        # Status bar is stamped by _overlay_ticking; the static sig ignores its
+        # timecodes, so baking it here would leave stale digits under the live ones.
         self._draw_header_clock(out, now)
         for z in (1, 2, 3):
             if assignments[z - 1] == "tt_countdown":
