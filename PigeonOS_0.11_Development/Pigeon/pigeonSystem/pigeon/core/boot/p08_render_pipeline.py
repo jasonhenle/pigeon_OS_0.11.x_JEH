@@ -19,7 +19,6 @@ from pigeon.core import view_one as _core_view_one
 from pigeon.core.binding import bind_deps as _bind_deps
 from pigeon.core.binding import late as _late
 import numpy as np
-import time
 
 
 def run(ctx) -> None:

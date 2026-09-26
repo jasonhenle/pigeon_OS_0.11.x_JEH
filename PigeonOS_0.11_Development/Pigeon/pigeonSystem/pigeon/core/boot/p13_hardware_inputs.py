@@ -68,12 +68,10 @@ def run(ctx) -> None:
     _on_rotary_action = ctx._on_rotary_action
     _paint_boolean_led = ctx._paint_boolean_led
     _present_frame_to_display = ctx._present_frame_to_display
-    _rebuild_paired_devices_panel = ctx._rebuild_paired_devices_panel
     _record_live_audio_timing = ctx._record_live_audio_timing
     _refresh_observed_pairing_led_rows = ctx._refresh_observed_pairing_led_rows
     _remember_clock_saver_volume = ctx._remember_clock_saver_volume
     _render_after_id = ctx._render_after_id
-    _schedule_refresh_pairing_leds = ctx._schedule_refresh_pairing_leds
     _send_player_play_pause_hotkey = ctx._send_player_play_pause_hotkey
     _set_playback_overlay_clock_saver_volume_flag = ctx._set_playback_overlay_clock_saver_volume_flag
     _settings_audio_led_listen = ctx._settings_audio_led_listen
@@ -107,7 +105,6 @@ def run(ctx) -> None:
     clock_saver_peek_until_mono = ctx.clock_saver_peek_until_mono
     current_apple_tv = ctx.current_apple_tv
     denon_vol_cache = ctx.denon_vol_cache
-    describe_current_apple_tv = ctx.describe_current_apple_tv
     dev_phase = ctx.dev_phase
     display_dims = ctx.display_dims
     display_view_holder = ctx.display_view_holder
@@ -122,7 +119,6 @@ def run(ctx) -> None:
     main_settings_widget_holder = ctx.main_settings_widget_holder
     paused_interval_ms = ctx.paused_interval_ms
     playback_overlay_flags = ctx.playback_overlay_flags
-    playback_overlay_widget = ctx.playback_overlay_widget
     playing = ctx.playing
     post_splash_mono = ctx.post_splash_mono
     receiver_http_host = ctx.receiver_http_host

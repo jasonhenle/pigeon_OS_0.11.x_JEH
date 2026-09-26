@@ -67,35 +67,6 @@ def _settings_on_canvas_configure(event: tk.Event, *, _settings_inner_win, _sett
     root.after_idle(lambda: _settings_update_scrollregion(None))
 
 
-def _settings_wheel_target_should_ignore(widget: tk.Misc) -> bool:
-    """Let Listbox/Text/Entry keep their own scroll behavior."""
-    try:
-        w: tk.Misc | None = widget
-        while w is not None:
-            cls = w.winfo_class()
-            if cls in ("Listbox", "Text", "Entry", "TEntry", "TCombobox"):
-                return True
-            master = w.master
-            w = master if isinstance(master, tk.Misc) else None
-    except tk.TclError:
-        pass
-    return False
-
-
-def _settings_is_under_scroll_surface(widget: tk.Misc, *, settings_scroll_outer) -> bool:
-    """True when ``widget`` is the settings canvas, scrollbar, or any descendant."""
-    try:
-        w: tk.Misc | None = widget
-        while w is not None:
-            if w is settings_scroll_outer:
-                return True
-            master = w.master
-            w = master if isinstance(master, tk.Misc) else None
-    except tk.TclError:
-        pass
-    return False
-
-
 def _settings_unbind_wheel_globals(*, root, settings_wheel_all_bound) -> None:
     if not settings_wheel_all_bound[0]:
         return
@@ -426,37 +397,6 @@ def _attach_hover_tooltip(widget: tk.Misc, message: str, *, S_FONT_SMALL, root) 
 
     widget.bind("<Enter>", show)
     widget.bind("<Leave>", hide)
-
-
-def _settings_mousewheel(event: tk.Event, *, _bump_pigeon_user_activity, _settings_is_under_scroll_surface, _settings_wheel_target_should_ignore, root, settings_canvas, settings_frame) -> str | None:
-    _bump_pigeon_user_activity(event)
-    # Legacy Tk settings form is never shown.
-    if not settings_frame.winfo_ismapped():
-        return None
-    try:
-        under = root.winfo_containing(event.x_root, event.y_root)
-    except tk.TclError:
-        under = None
-    if under is None or not _settings_is_under_scroll_surface(under):
-        return None
-    if _settings_wheel_target_should_ignore(under):
-        return None
-    try:
-        if sys.platform == "darwin":
-            d = int(getattr(event, "delta", 0) or 0)
-            if d == 0:
-                return "break"
-            steps = max(1, abs(d) // 120) if abs(d) >= 120 else 1
-            settings_canvas.yview_scroll(-steps if d > 0 else steps, "units")
-        else:
-            num = int(getattr(event, "num", 0) or 0)
-            if num == 4:
-                settings_canvas.yview_scroll(-3, "units")
-            elif num == 5:
-                settings_canvas.yview_scroll(3, "units")
-    except tk.TclError:
-        pass
-    return "break"
 
 
 def _linux_on_updates_button(*, _run_github_apply_worker, root, update_check_state) -> None:

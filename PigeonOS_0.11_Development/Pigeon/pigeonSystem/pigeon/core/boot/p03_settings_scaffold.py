@@ -157,23 +157,6 @@ def run(ctx) -> None:
         streaming_badge_state=streaming_badge_state,
     )
 
-    _settings_wheel_target_should_ignore = _core_settings_ui._settings_wheel_target_should_ignore
-
-    _settings_is_under_scroll_surface = _bind_deps(
-        _core_settings_ui._settings_is_under_scroll_surface,
-        settings_scroll_outer=settings_scroll_outer,
-    )
-
-    _settings_mousewheel = _bind_deps(
-        _core_settings_ui._settings_mousewheel,
-        _bump_pigeon_user_activity=_bump_pigeon_user_activity,
-        _settings_is_under_scroll_surface=_settings_is_under_scroll_surface,
-        _settings_wheel_target_should_ignore=_settings_wheel_target_should_ignore,
-        root=root,
-        settings_canvas=settings_canvas,
-        settings_frame=settings_frame,
-    )
-
     _settings_unbind_wheel_globals = _bind_deps(
         _core_settings_ui._settings_unbind_wheel_globals,
         root=root,
