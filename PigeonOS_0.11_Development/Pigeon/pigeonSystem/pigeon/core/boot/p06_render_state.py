@@ -70,10 +70,6 @@ def run(ctx) -> None:
     startup_ph = ctx.startup_ph
     view_circles_widget_holder = ctx.view_circles_widget_holder
 
-    # Bottom “info bar” HUD removed; Tab toggles settings_main ↔ off.
-    hud_bar = None
-    hud = None
-
     fps_sched = _default_render_fps()
     display_dims = [WINDOW_W, WINDOW_H]
     fit_holder = [SceneFit(target_w=WINDOW_W, target_h=WINDOW_H)]

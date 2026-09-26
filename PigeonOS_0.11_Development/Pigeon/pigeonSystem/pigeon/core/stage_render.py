@@ -51,10 +51,6 @@ def _apply_stage_chrome_colors(*, label, video_area) -> None:
         pass
 
 
-def _design_rect_to_window(wx: int, wy: int, ww: int, wh: int, *, _design_rect_to_target, display_dims) -> tuple[int, int, int, int]:
-    return _design_rect_to_target(wx, wy, ww, wh, display_dims[0], display_dims[1])
-
-
 def _styled_video_content_c_poster(src_bgra: np.ndarray | None) -> np.ndarray | None:
     """Return poster BGRA with rounded corners + faint white border for viewOne.videoContent_c."""
     if src_bgra is None or src_bgra.size == 0 or src_bgra.ndim != 3:

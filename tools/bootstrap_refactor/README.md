@@ -327,3 +327,17 @@ epilogue; the test tells you if a read now comes before its write. The pass
 no longer apply.
 
 pigeon_0_9.py: 5,949 -> 1,788 lines (bootstrap() is 179, mostly the seed).
+
+## Pass 14: dead code
+
+Once bootstrap() was split, pyflakes could see 13 phase locals that were
+bound and never read. Each was a side-effect-free binding (a literal,
+`time.monotonic()`, a `_core_*` reference or a `_bind_deps(...)` over names /
+lambdas), so the binding is removed. The extracted helpers behind 7 of them
+were called from nowhere else and are removed too:
+`_settings_bind_wheel_globals`, `_remove_saved_player_device`,
+`_remove_saved_receiver_device` (settings_ui), `_design_rect_to_window`
+(stage_render), `_vv_music_track_title` (now_playing),
+`_read_tmdb_quality_counts` (tmdb_flow), `set_current_receiver_only`
+(device_control). `_format_tmdb_match_quality_glance` and
+`_device_row_matches_saved` keep their core functions (tests use them).

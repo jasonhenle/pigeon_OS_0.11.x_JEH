@@ -81,7 +81,6 @@ def run(ctx) -> None:
     S_FONT_BODY = (_S, 10)
     S_FONT_STATUS = (_S, 11)
     S_FONT_BTN = (_S, 11)
-    S_FONT_LIST = (_S, 12)
     S_FONT_SMALL = (_S, 9)
     S_FONT_MICRO = (_S, 9)
     S_FONT_CAP_BOLD = (_S, 9, "bold")
@@ -173,13 +172,6 @@ def run(ctx) -> None:
         root=root,
         settings_canvas=settings_canvas,
         settings_frame=settings_frame,
-    )
-
-    _settings_bind_wheel_globals = _bind_deps(
-        _core_settings_ui._settings_bind_wheel_globals,
-        _settings_mousewheel=_settings_mousewheel,
-        root=root,
-        settings_wheel_all_bound=settings_wheel_all_bound,
     )
 
     _settings_unbind_wheel_globals = _bind_deps(

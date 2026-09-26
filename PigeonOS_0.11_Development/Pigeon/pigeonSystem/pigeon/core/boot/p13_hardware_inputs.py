@@ -352,33 +352,6 @@ def run(ctx) -> None:
     )
     ctx.render_once = render_once
 
-    _remove_saved_receiver_device = _bind_deps(
-        _core_settings_ui._remove_saved_receiver_device,
-        _rebuild_paired_devices_panel=_rebuild_paired_devices_panel,
-        _schedule_refresh_pairing_leds=_schedule_refresh_pairing_leds,
-        _warm_playback_overlay_blits=_warm_playback_overlay_blits,
-        apple_tv_busy=apple_tv_busy,
-        avr_slot_holder=avr_slot_holder,
-        describe_current_apple_tv=describe_current_apple_tv,
-        playback_overlay_widget=playback_overlay_widget,
-        receiver_http_host=receiver_http_host,
-        render_once=render_once,
-        root=root,
-        skip_cache=skip_cache,
-    )
-
-    set_current_receiver_only = _bind_deps(
-        _core_device_control.set_current_receiver_only,
-        _rebuild_paired_devices_panel=_rebuild_paired_devices_panel,
-        _schedule_refresh_pairing_leds=_schedule_refresh_pairing_leds,
-        _warm_playback_overlay_blits=_warm_playback_overlay_blits,
-        describe_current_apple_tv=describe_current_apple_tv,
-        playback_overlay_widget=playback_overlay_widget,
-        receiver_http_host=receiver_http_host,
-        render_once=render_once,
-        skip_cache=skip_cache,
-    )
-
     _paint_coalesced_settings_nav = _bind_deps(
         _core_settings_ui._paint_coalesced_settings_nav,
         _nav_coalescer_holder=_nav_coalescer_holder,

@@ -23,11 +23,8 @@ from pigeon.app_state import row_is_playback_apple_tv
 from pigeon.version import version_string
 import sys
 from pigeon.app_state import clear_last_apple_tv
-from pigeon.app_state import read_saved_streaming_device
-from pigeon.app_state import write_saved_streaming_device
 from pigeon.app_state import clear_last_receiver
 from pigeon.app_state import read_saved_av_receiver
-from pigeon.app_state import write_saved_av_receiver
 import threading
 from pigeon.app_state import add_empty_location_v2
 from pigeon.app_state import clear_all_persisted_devices_and_targets
@@ -97,15 +94,6 @@ def _settings_is_under_scroll_surface(widget: tk.Misc, *, settings_scroll_outer)
     except tk.TclError:
         pass
     return False
-
-
-def _settings_bind_wheel_globals(*, _settings_mousewheel, root, settings_wheel_all_bound) -> None:
-    if settings_wheel_all_bound[0]:
-        return
-    root.bind_all("<MouseWheel>", _settings_mousewheel)
-    root.bind_all("<Button-4>", _settings_mousewheel)
-    root.bind_all("<Button-5>", _settings_mousewheel)
-    settings_wheel_all_bound[0] = True
 
 
 def _settings_unbind_wheel_globals(*, root, settings_wheel_all_bound) -> None:
@@ -1025,61 +1013,6 @@ def _ask_pairing_pin_modal(
     return out[0]
 
 
-def _remove_saved_player_device(for_location_id: str | None = None, *, _clear_reported_position_stall_stamp, _rebuild_paired_devices_panel, _schedule_refresh_pairing_leds, _sync_status_bar_visibility_for_playback, apple_tv_auto_state, apple_tv_busy, apple_tv_dashboard_track, apple_tv_playback_clock, current_apple_tv, describe_current_apple_tv, root, streaming_slot_holder) -> None:
-    if apple_tv_busy["active"]:
-        describe_current_apple_tv(suffix="busy")
-        return
-    if not messagebox.askyesno(
-        "Remove Player",
-        "Remove the saved Player device?\n\n"
-        "Playback metadata stops using this Apple TV. "
-        "pyatv credentials on this Mac are not deleted (use Reset to wipe those).",
-        parent=root,
-    ):
-        return
-    lid = (for_location_id or read_current_location_id() or "").strip()
-    write_saved_streaming_device(None, for_location_id=lid or None)
-    cur = read_current_location_id()
-    if lid and cur and lid == cur:
-        streaming_slot_holder[0] = None
-        clear_last_apple_tv()
-        current_apple_tv.clear()
-        current_apple_tv.update(
-            {"identifier": "", "address": "", "name": "", "label": ""}
-        )
-        apple_tv_auto_state["content_key"] = None
-        apple_tv_auto_state["tmdb_key"] = None
-        apple_tv_auto_state["query"] = None
-        apple_tv_auto_state["last_metadata"] = None
-        apple_tv_auto_state["last_tmdb_fetch_input"] = None
-        apple_tv_auto_state["last_tmdb_fetch_refined"] = None
-        apple_tv_auto_state["last_tmdb_fetch_prefer"] = None
-        apple_tv_playback_clock.clear()
-        apple_tv_playback_clock.update(
-            {
-                "has_sync": False,
-                "sync_mono": 0.0,
-                "sync_position": 0.0,
-                "live_mode": False,
-                "playing": False,
-                "latched_total": None,
-                "latched_content_key": None,
-                "last_reported_total": None,
-                "display_played_sec": None,
-                "trt_next_fire_mono": None,
-            }
-        )
-        _clear_reported_position_stall_stamp()
-        apple_tv_dashboard_track["last_poll_ok"] = None
-        apple_tv_dashboard_track["consecutive_fail"] = 0
-        _sync_status_bar_visibility_for_playback(None)
-    else:
-        streaming_slot_holder[0] = read_saved_streaming_device()
-    describe_current_apple_tv()
-    _rebuild_paired_devices_panel()
-    _schedule_refresh_pairing_leds()
-
-
 def _settings_is_native_1280(*, DevPhase, dev_phase, main_settings_widget) -> bool:
     """True when settings is on screen — all current pages are 1280×800."""
     return dev_phase[0] == DevPhase.MAIN_SETTINGS and main_settings_widget is not None
@@ -1142,41 +1075,6 @@ def _request_settings_nav_paint(*, _nav_coalescer_holder, main_settings_widget, 
         render_once()
         return
     coalescer.request()
-
-
-def _remove_saved_receiver_device(for_location_id: str | None = None, *, _rebuild_paired_devices_panel, _schedule_refresh_pairing_leds, _warm_playback_overlay_blits, apple_tv_busy, avr_slot_holder, describe_current_apple_tv, playback_overlay_widget, receiver_http_host, render_once, root, skip_cache) -> None:
-    if apple_tv_busy["active"]:
-        describe_current_apple_tv(suffix="busy")
-        return
-    if not messagebox.askyesno(
-        "Remove Receiver",
-        "Remove the saved Receiver device and stop the overlay status poll for it?",
-        parent=root,
-    ):
-        return
-    lid = (for_location_id or read_current_location_id() or "").strip()
-    write_saved_av_receiver(None, for_location_id=lid or None)
-    cur = read_current_location_id()
-    if lid and cur and lid == cur:
-        avr_slot_holder[0] = None
-        clear_last_receiver()
-        receiver_http_host["host"] = ""
-        if playback_overlay_widget is not None:
-            playback_overlay_widget.clear_cache()
-        try:
-            _warm_playback_overlay_blits()
-        except Exception:
-            pass
-        skip_cache[0] = None
-        try:
-            render_once()
-        except Exception:
-            pass
-    else:
-        avr_slot_holder[0] = read_saved_av_receiver()
-    describe_current_apple_tv()
-    _rebuild_paired_devices_panel()
-    _schedule_refresh_pairing_leds()
 
 
 def _check_for_updates(*, force: bool = False, _UPDATE_CHECK_INTERVAL_S, _finish_update_check, root, update_check_state) -> None:

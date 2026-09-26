@@ -543,11 +543,6 @@ def run(ctx) -> None:
         current_apple_tv=current_apple_tv,
     )
 
-    _read_tmdb_quality_counts = _bind_deps(
-        _core_tmdb_flow._read_tmdb_quality_counts,
-        _PIGEON_EXT=_PIGEON_EXT,
-    )
-
     _cancel_tmdb_quality_auto_unlog_timer = _bind_deps(
         _core_tmdb_flow._cancel_tmdb_quality_auto_unlog_timer,
         root=root,
@@ -573,8 +568,6 @@ def run(ctx) -> None:
     )
 
     _tmdb_match_tier_acceptable = _core_tmdb_flow._tmdb_match_tier_acceptable
-
-    _format_tmdb_match_quality_glance = _core_tmdb_flow._format_tmdb_match_quality_glance
 
     _refresh_match_quality_glance_label = _core_tmdb_flow._refresh_match_quality_glance_label
 

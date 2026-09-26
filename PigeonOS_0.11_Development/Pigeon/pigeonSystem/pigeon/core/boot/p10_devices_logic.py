@@ -396,11 +396,6 @@ def run(ctx) -> None:
 
     _device_addr_key = _core_settings_ui._device_addr_key
 
-    _device_row_matches_saved = _bind_deps(
-        _core_settings_ui._device_row_matches_saved,
-        _device_addr_key=_device_addr_key,
-    )
-
     _verify_added_devices_after_save = _bind_deps(
         _core_pairing._verify_added_devices_after_save,
         root=root,
@@ -731,22 +726,6 @@ def run(ctx) -> None:
         status_bar_widget=status_bar_widget,
     )
     ctx._sync_status_bar_visibility_for_playback = _sync_status_bar_visibility_for_playback
-
-    _remove_saved_player_device = _bind_deps(
-        _core_settings_ui._remove_saved_player_device,
-        _clear_reported_position_stall_stamp=_clear_reported_position_stall_stamp,
-        _rebuild_paired_devices_panel=_rebuild_paired_devices_panel,
-        _schedule_refresh_pairing_leds=_schedule_refresh_pairing_leds,
-        _sync_status_bar_visibility_for_playback=_sync_status_bar_visibility_for_playback,
-        apple_tv_auto_state=apple_tv_auto_state,
-        apple_tv_busy=apple_tv_busy,
-        apple_tv_dashboard_track=apple_tv_dashboard_track,
-        apple_tv_playback_clock=apple_tv_playback_clock,
-        current_apple_tv=current_apple_tv,
-        describe_current_apple_tv=describe_current_apple_tv,
-        root=root,
-        streaming_slot_holder=streaming_slot_holder,
-    )
 
     _sync_streaming_badge_from_playback_sources = _bind_deps(
         _core_now_playing._sync_streaming_badge_from_playback_sources,

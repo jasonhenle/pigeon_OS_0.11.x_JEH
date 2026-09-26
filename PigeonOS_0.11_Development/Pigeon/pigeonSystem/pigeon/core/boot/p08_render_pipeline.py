@@ -141,8 +141,6 @@ def run(ctx) -> None:
     view_circles_widget_holder = ctx.view_circles_widget_holder
     view_four_subview_holder = ctx.view_four_subview_holder
 
-    _pigeon_ui_started_mono = time.monotonic()
-
     clock_patch_bgra: list[np.ndarray | None] = [None]
     status_bar_blits: list[list] = [[]]
     playback_overlay_blits: list[list] = [[]]
@@ -174,12 +172,6 @@ def run(ctx) -> None:
         _core_stage_render._design_rect_to_target,
         DESIGN_H=DESIGN_H,
         DESIGN_W=DESIGN_W,
-    )
-
-    _design_rect_to_window = _bind_deps(
-        _core_stage_render._design_rect_to_window,
-        _design_rect_to_target=_design_rect_to_target,
-        display_dims=display_dims,
     )
 
     _saver_layer_is_full_frame = _core_saver_state._saver_layer_is_full_frame
@@ -431,11 +423,6 @@ def run(ctx) -> None:
         _decode_artwork_bytes_bgra=_decode_artwork_bytes_bgra,
         _music_artwork_track_key=_music_artwork_track_key,
         _vv_is_youtube=_vv_is_youtube,
-        apple_tv_auto_state=apple_tv_auto_state,
-    )
-
-    _vv_music_track_title = _bind_deps(
-        _core_now_playing._vv_music_track_title,
         apple_tv_auto_state=apple_tv_auto_state,
     )
 
