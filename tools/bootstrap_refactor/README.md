@@ -360,3 +360,31 @@ were never called, so they could never run. pigeon_0_9.py also drops the 30
 top-level imports it no longer uses (unconditional imports only; the
 `tkinter.*` submodule imports stay, because importing them is what makes
 `tk.messagebox` etc. available to other modules).
+
+## Pass 16: main()'s setup as phases too
+
+`phases.py --scope=main` phases `main()`'s statements *before* `def bootstrap`
+into `pigeon/core/boot/m01_*.py` .. `m04_*.py` (window + kiosk, shell + splash
+state, volume + reveal helpers, splash). `main()` seeds `_main_ctx`, runs them,
+then reads back every name the rest of `main()` and `bootstrap()` use
+(bootstrap()'s free variables, from symtable). bootstrap() and its phases are
+unchanged.
+
+```bash
+python3 $T/phases.py pigeon_0_9.py $T/plan16.json --scope=main          # analyse
+python3 $T/phases.py pigeon_0_9.py $T/plan16.json --scope=main --write  # rewrite
+python3 -m pyflakes pigeon_0_9.py > /tmp/pf.txt; python3 $T/prune_imports.py pigeon_0_9.py /tmp/pf.txt
+```
+
+Additions for this scope:
+
+- class statements (the null-object classes) are allowed; every outer name
+  their bodies / methods use counts as a (deferred) read;
+- names bound only on one path (`splash_tick` exists only when `_PIGEON_EXT`)
+  are read and written back inside `try: ... except NameError: pass`, so they
+  stay unbound on the other path exactly as before;
+- `__file__` is seeded from pigeon_0_9.py, so the startup log still names the
+  script, not the phase module.
+
+`tests/test_boot_phases.py` checks both groups (`m*` seeded by `_main_ctx`,
+`p*` by bootstrap()'s `ctx`). pigeon_0_9.py: 1,748 -> 1,191 lines.
