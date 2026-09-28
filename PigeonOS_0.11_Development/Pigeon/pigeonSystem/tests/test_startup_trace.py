@@ -1,12 +1,14 @@
-"""Startup must drive Tk exactly as the baseline version did (default: 0.11.34).
+"""Startup must drive Tk exactly as the baseline version did (default: 9cbf40b).
 
 ``startup_trace_harness.py`` runs ``main()`` under a fake ``tkinter`` and records,
 in order, every widget / window call, ``after()`` delay and callback, binding,
 and main-thread thread start. It then runs the scheduled callbacks for two
 rounds and fires every bound handler once.
 
-The baseline is 0.11.34 (commit ``30b2be9``), the last version whose
-``bootstrap()`` was a single function. It is extracted from git into a
+The baseline is commit ``9cbf40b`` (the 251-frame splash, which lifts the
+overlay above all shell children). Before that it was 0.11.34 (``30b2be9``),
+the last version whose ``bootstrap()`` was a single function. It is
+extracted from git into a
 temporary folder and traced **on the same machine**, so platform differences
 (GPIO / pyatv / fonts present or not) cancel out.
 
@@ -36,7 +38,7 @@ import unittest
 
 _SYS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _HARNESS = os.path.join(_SYS, "tests", "startup_trace_harness.py")
-BASELINE = os.environ.get("PIGEON_TRACE_BASELINE", "30b2be9")
+BASELINE = os.environ.get("PIGEON_TRACE_BASELINE", "9cbf40b")
 CONFIGS = {
     "default": [],  # with the extensions loaded this is the splash path
     "no_ext": ["--no-ext"],  # _PIGEON_EXT off: no splash, root.after(1, bootstrap)
