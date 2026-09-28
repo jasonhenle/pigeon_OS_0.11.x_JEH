@@ -224,8 +224,6 @@ TT_COUNTDOWN_TT_TOP_Y = 34.0
 TT_COUNTDOWN_TEXT_SIZE_PX = 80
 # Inset used when a tall 16×9 TT sits beside the countdown.
 TT_COUNTDOWN_BG_PAD = 25.0
-# TT art darker than this luminance is recolored pure white before display.
-TT_COUNTDOWN_DARK_TT_LUMINANCE_MAX = 0.25
 
 # Skeleton shimmer for widgets still waiting on TMDb / artwork.
 WIDGET_SHIMMER_PERIOD_S = 1.35
@@ -958,10 +956,10 @@ def music_title_band_xywh() -> tuple[int, int, int, int]:
 def header_clock_center_x(
     assignments: tuple[str, ...] | list[str] | None = None,
 ) -> float:
-    """Horizontal center for the NP header clock.
+    """Horizontal center of the header slot (TRT, or the music album title).
 
     Aligns with wide TT / album art (zone 6 or 7) when that card is on;
-    otherwise the frame midpoint.
+    otherwise the frame midpoint. The header clock itself sits over zone 3.
     """
     wide = tt_countdown_16x9_zone(assignments or ())
     if wide in (6, 7):

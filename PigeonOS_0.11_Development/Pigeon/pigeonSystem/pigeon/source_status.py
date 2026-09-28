@@ -1,4 +1,4 @@
-"""Live status for Pigeon's data sources (Wi-Fi, player metadata, audio).
+"""Live status for Pigeon's data sources (network, player metadata, audio).
 
 settings_pigeon only *reports* whether each source is active; every source is
 always used. (Older installs may still carry a ``source_toggles`` key in
@@ -39,6 +39,18 @@ def audio_received_within(seconds: float = SOURCE_RECENT_S) -> bool:
 
 
 def apply_source_status_to_settings_state(state: Any) -> None:
-    """Refresh the metadata / audio flags that drive the settings_pigeon lights."""
+    """Refresh the network / metadata / audio flags behind the settings_pigeon lights."""
     state.pigeon_audio_ok = audio_received_within()
     state.pigeon_metadata_ok = metadata_received_within()
+    state.pigeon_network_ok = network_connected()
+
+
+def network_connected() -> bool:
+    """Host is on a network (the SSID alone misses wired links and macOS,
+    which hides the SSID from apps without Location access)."""
+    try:
+        from pigeon.local_ip import has_lan_route
+
+        return has_lan_route()
+    except Exception:
+        return False

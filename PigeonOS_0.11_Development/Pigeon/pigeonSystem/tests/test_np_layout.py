@@ -1259,9 +1259,11 @@ class NowPlayingHeaderClockTests(unittest.TestCase):
             header_clock_baseline_y(),
             (art_top + np_header_ink_height()) * 0.5 + NP_HEADER_BASELINE_NUDGE_PX,
         )
+        # The clock sits over zone 3.
+        z3 = NOW_PLAYING_ZONES[3]
         band = frame[
             max(0, baseline - 56) : baseline + 8,
-            DESIGN_W // 2 - 200 : DESIGN_W // 2 + 200,
+            int(z3.x) : int(z3.x + z3.w),
         ]
         ink = np.where(band[:, :, 3] > 16)
         self.assertGreater(int(ink[0].size), 0)
@@ -1269,6 +1271,23 @@ class NowPlayingHeaderClockTests(unittest.TestCase):
         mid_y = int(ink[0].min() + (int(ink[0].max()) - int(ink[0].min())) / 2)
         side = band[mid_y, 4, :3]
         self.assertLess(int(side.max()), 40)
+        # The TRT takes zone 6's header slot, digits as tall as the clock's,
+        # bottoms on the same baseline.
+        z6 = NOW_PLAYING_ZONES[6]
+        trt = frame[
+            max(0, baseline - 56) : baseline + 8,
+            int(z6.x) : int(z6.x + z6.w),
+        ]
+        trt_ink = np.where(trt[:, :, 3] > 16)
+        self.assertGreater(int(trt_ink[0].size), 0)
+        self.assertLessEqual(abs(int(trt_ink[0].max()) - int(ink[0].max())), 2)
+        self.assertLessEqual(
+            abs(
+                (int(trt_ink[0].max()) - int(trt_ink[0].min()))
+                - (int(ink[0].max()) - int(ink[0].min()))
+            ),
+            3,
+        )
 
     def test_header_clock_hidden_when_zone_has_clock(self) -> None:
         from datetime import datetime
@@ -1474,7 +1493,7 @@ class VolumeWidgetCaptionTests(unittest.TestCase):
         self.assertLessEqual(half_diag, VOLUME_INNER_R + 2.0)
         self.assertGreater(half_diag, VOLUME_INNER_R * _VOLUME_TEXT_INNER_FIT * 0.55)
 
-    def test_format_sits_above_circle_and_value_is_centered(self) -> None:
+    def test_no_input_label_above_circle_and_value_is_centered(self) -> None:
         from pigeon.np_layout import (
             NOW_PLAYING_ZONES,
             VOLUME_INNER_R,
@@ -1511,15 +1530,15 @@ class VolumeWidgetCaptionTests(unittest.TestCase):
         cy = int(round(VOLUME_LOCAL_CY))
         baseline = int(round(header_clock_baseline_y()))
         header = frame[max(0, baseline - 48) : baseline + 4, zx : zx + zw]
-        self.assertTrue(
+        self.assertFalse(
             (header[:, :, :3].max(axis=2) > 40).any(),
-            "input label should paint on the shared header baseline",
+            "input label moved into the disc; nothing on the header baseline",
         )
         r = int(round(VOLUME_INNER_R * 0.55))
         disc = ink[cy - r : cy + r, cx - r : cx + r]
         self.assertTrue(disc.any(), "volume number should sit in the disc center")
 
-    def test_hhmm_sits_under_volume_number_without_moving_it(self) -> None:
+    def test_input_label_sits_under_volume_number_without_moving_it(self) -> None:
         from datetime import datetime
 
         from pigeon.np_layout import (
@@ -1530,27 +1549,28 @@ class VolumeWidgetCaptionTests(unittest.TestCase):
         )
         from pigeon.widgets.view_circles import (
             ViewCirclesWidget,
-            _VOLUME_CLOCK_GAP_PX,
+            _VOLUME_INPUT_GAP_PX,
             _VOLUME_TEXT_INNER_FIT,
-            _volume_hhmm_patch,
+            _volume_input_patch,
             _volume_readout_patch,
         )
 
-        when = datetime(2026, 9, 20, 15, 4, 0)
+        inner_r = VOLUME_INNER_R * _VOLUME_TEXT_INNER_FIT
         vol_p, vw, vh = _volume_readout_patch("-22.5")
         self.assertGreater(vh, 8)
-        clock_p, cw, ch = _volume_hhmm_patch(
-            when,
-            max_w=vw,
-            max_h=max(10, int(VOLUME_INNER_R * _VOLUME_TEXT_INNER_FIT - vh / 2.0)),
+        top_dy = vh / 2.0 + _VOLUME_INPUT_GAP_PX
+        in_p, iw, ih = _volume_input_patch(
+            "Apple TV", top_dy=top_dy, inner_r=inner_r, max_h=int(inner_r - top_dy)
         )
-        self.assertGreater(ch, 8)
-        self.assertLessEqual(cw, vw + 2)
-        self.assertLess(ch, vh)
+        self.assertGreater(ih, 8)
+        self.assertLess(ih, vh)
+        dy = top_dy + ih
+        self.assertLessEqual(iw, 2.0 * (inner_r**2 - dy**2) ** 0.5)
 
         _force_default_np_zones()
         assets = Path(__file__).resolve().parents[2] / "pigeonAssets"
         widget = ViewCirclesWidget(assets_dir=assets)
+        when = datetime(2026, 9, 20, 15, 4, 0)
         widget._clock_now_for_display = lambda: when  # type: ignore[method-assign]
         widget.update_state(
             progress=0.4,
@@ -1574,10 +1594,106 @@ class VolumeWidgetCaptionTests(unittest.TestCase):
         cy = int(round(VOLUME_LOCAL_CY))
         core = gray[cy - 18 : cy + 18, cx - 40 : cx + 40]
         self.assertTrue((core > 40).any(), "volume number should stay disc-centered")
-        under_y0 = cy + int(round(vh / 2.0 + _VOLUME_CLOCK_GAP_PX))
-        under_y1 = min(zh, under_y0 + max(12, ch + 4))
-        under = gray[under_y0:under_y1, cx - max(20, cw // 2) : cx + max(20, cw // 2)]
-        self.assertTrue((under > 40).any(), "HH:MM should sit under the volume number")
+        under_y0 = cy + int(round(top_dy))
+        under_y1 = min(zh, under_y0 + ih + 4)
+        under = gray[under_y0:under_y1, cx - iw // 2 : cx + iw // 2]
+        self.assertTrue((under > 40).any(), "input label should sit under the volume number")
+
+
+class StatusBarTickTests(unittest.TestCase):
+    def test_remaining_time_does_not_ghost_across_ticks(self) -> None:
+        from pigeon.np_layout import NOW_PLAYING_ZONES
+        from pigeon.widgets.view_circles import ViewCirclesWidget
+
+        assets = Path(__file__).resolve().parents[2] / "pigeonAssets"
+        zones = ("clock", "", "volume", "", "status_bar")
+
+        def widget() -> ViewCirclesWidget:
+            w = ViewCirclesWidget(assets_dir=assets)
+            w._assignments = lambda: zones  # type: ignore[method-assign]
+            return w
+
+        def tick(w: ViewCirclesWidget, remaining: str) -> None:
+            w.update_state(
+                progress=0.4,
+                elapsed_text="1:00:00",
+                remaining_text=remaining,
+                volume_text="-22.5 dB",
+                incoming_audio="pcm",
+                has_now_playing=True,
+                has_position=True,
+                content_active=True,
+            )
+
+        fresh = widget()
+        tick(fresh, "1:28:38")
+        ref = fresh.bgra_frame()
+        assert ref is not None
+        ref_canvas = np.zeros((ref.shape[0], ref.shape[1], 3), dtype=np.uint8)
+        fresh_r = widget()
+        tick(fresh_r, "1:28:38")
+        fresh_r.render(ref_canvas)
+        z = NOW_PLAYING_ZONES[4]
+        rows = slice(int(z.y), None)
+
+        streamed, rendered = widget(), widget()
+        canvas = np.zeros((ref.shape[0], ref.shape[1], 3), dtype=np.uint8)
+        for s in range(49, 37, -1):
+            tick(streamed, f"1:28:{s:02d}")
+            frame = streamed.bgra_frame()
+            tick(rendered, f"1:28:{s:02d}")
+            rendered.render(canvas)
+        assert frame is not None
+        np.testing.assert_array_equal(frame[rows, :, :3], ref[rows, :, :3])
+        np.testing.assert_array_equal(canvas[rows], ref_canvas[rows])
+
+
+class TtCountdownTickTests(unittest.TestCase):
+    def test_zone6_trt_advances_every_tick(self) -> None:
+        from pigeon.np_layout import NOW_PLAYING_ZONES
+        from pigeon.widgets.view_circles import ViewCirclesWidget
+
+        assets = Path(__file__).resolve().parents[2] / "pigeonAssets"
+        zones = ("tt_countdown_16x9", "", "volume", "cast_info", "status_bar")
+
+        def widget() -> ViewCirclesWidget:
+            w = ViewCirclesWidget(assets_dir=assets)
+            w._assignments = lambda: zones  # type: ignore[method-assign]
+            return w
+
+        def tick(w: ViewCirclesWidget, s: int) -> None:
+            w.update_state(
+                progress=0.4,
+                elapsed_text="40:00",
+                remaining_text=f"-1:28:{s:02d}",
+                volume_text="-22.5 dB",
+                has_now_playing=True,
+                has_position=True,
+                content_active=True,
+                content_mode="video",
+            )
+
+        z = NOW_PLAYING_ZONES[6]
+        rows, cols = slice(int(z.y), int(z.y + z.h)), slice(int(z.x), int(z.x + z.w))
+        fresh = widget()
+        tick(fresh, 38)
+        ref = fresh.bgra_frame()
+        ref_canvas = np.zeros((800, 1280, 3), dtype=np.uint8)
+        fresh_r = widget()
+        tick(fresh_r, 38)
+        fresh_r.render(ref_canvas)
+        assert ref is not None
+
+        streamed, rendered = widget(), widget()
+        canvas = np.zeros((800, 1280, 3), dtype=np.uint8)
+        for s in range(49, 37, -1):
+            tick(streamed, s)
+            frame = streamed.bgra_frame()
+            tick(rendered, s)
+            rendered.render(canvas)
+        assert frame is not None
+        np.testing.assert_array_equal(frame[rows, cols, :3], ref[rows, cols, :3])
+        np.testing.assert_array_equal(canvas[rows, cols], ref_canvas[rows, cols])
 
 
 class SixteenByNinePosterTests(unittest.TestCase):
@@ -2110,10 +2226,10 @@ class TtCountdownWidgetTests(unittest.TestCase):
         from pigeon.tmdb_tt_contrast import whiten_dark_tt_bgra
 
         dark = np.zeros((10, 10, 4), dtype=np.uint8)
-        dark[:, :, 3] = 255  # opaque black logo
+        dark[1:9, 1:9, 3] = 255  # opaque black logo on a transparent surround
         out = whiten_dark_tt_bgra(dark)
-        self.assertTrue((out[:, :, :3] == 255).all())
-        self.assertTrue((out[:, :, 3] == 255).all())
+        self.assertTrue((out[1:9, 1:9, :3] == 255).all())
+        self.assertTrue(np.array_equal(out[:, :, 3], dark[:, :, 3]))
 
         bright = np.full((10, 10, 4), 255, dtype=np.uint8)
         bright[:, :, 0] = 200  # slightly warm white
@@ -2123,6 +2239,49 @@ class TtCountdownWidgetTests(unittest.TestCase):
         transparent = np.zeros((10, 10, 4), dtype=np.uint8)
         out3 = whiten_dark_tt_bgra(transparent)
         self.assertTrue(np.array_equal(out3, transparent))
+
+    def test_whitening_targets_black_ink_only(self) -> None:
+        from pigeon.tmdb_tt_contrast import whiten_dark_tt_bgra
+
+        def logo(rgb: tuple[int, int, int]) -> np.ndarray:
+            a = np.zeros((20, 40, 4), dtype=np.uint8)
+            a[4:16, 4:36, 2], a[4:16, 4:36, 1], a[4:16, 4:36, 0] = rgb
+            a[4:16, 4:36, 3] = 255
+            return a
+
+        # Dark-grey / textured "black" ink flips too (old mean-luma rule missed it).
+        grey = logo((80, 80, 80))
+        grey[4:16:2, 4:36, :3] = 30
+        self.assertTrue((whiten_dark_tt_bgra(grey)[4:16, 4:36, :3] == 255).all())
+        for level in (0x55, 0x70, 0x80):  # very dark → mid-dark flat grey
+            flat = logo((level, level, level))
+            self.assertTrue((whiten_dark_tt_bgra(flat)[4:16, 4:36, :3] == 255).all(), level)
+        textured = logo((0x55, 0x55, 0x55))
+        textured[4:16:2, 4:36, :3] = 0x7D
+        self.assertTrue((whiten_dark_tt_bgra(textured)[4:16, 4:36, :3] == 255).all())
+        light = logo((0xA0, 0xA0, 0xA0))  # light grey reads fine on black
+        self.assertIs(whiten_dark_tt_bgra(light), light)
+
+        # Black logotype with a small red accent: black turns white, red stays.
+        accent = logo((0, 0, 0))
+        accent[6:9, 30:34, :3] = (0, 0, 220)  # BGR red
+        out = whiten_dark_tt_bgra(accent)
+        self.assertTrue((out[10, 8, :3] == 255).all())
+        self.assertEqual(tuple(int(v) for v in out[7, 31, :3]), (0, 0, 220))
+
+        # White text on a black plate (The Office): left alone, not a white box.
+        plate = logo((0, 0, 0))
+        plate[7:13, 8:28, :3] = 255
+        self.assertIs(whiten_dark_tt_bgra(plate), plate)
+
+        # Dark red logo is colored, not black.
+        red = logo((110, 10, 10))
+        self.assertIs(whiten_dark_tt_bgra(red), red)
+
+        # Fully opaque art (photo / poster) is not a logo.
+        photo = np.zeros((20, 40, 4), dtype=np.uint8)
+        photo[:, :, 3] = 255
+        self.assertIs(whiten_dark_tt_bgra(photo), photo)
 
     def test_colored_tt_yields_theme_hex_gray_tt_does_not(self) -> None:
         from pigeon.tmdb_tt_contrast import theme_hex_from_tt_bgra

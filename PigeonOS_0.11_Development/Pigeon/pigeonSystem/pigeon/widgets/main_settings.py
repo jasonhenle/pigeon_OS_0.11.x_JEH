@@ -520,9 +520,11 @@ class MainSettingsState:
     pigeon_focus_index: int = 0
     # Silent GitHub poll when opening settings_pigeon (badge without popup).
     pigeon_needs_update_prefetch: bool = False
-    # settings_pigeon status lights: metadata / audio seen in the last 60 s.
+    # settings_pigeon status lights: metadata / audio seen in the last 60 s,
+    # and whether the host has a network route (wifi light).
     pigeon_metadata_ok: bool | None = None
     pigeon_audio_ok: bool = False
+    pigeon_network_ok: bool = False
     # UI color the page falls back to when focus leaves the color row.
     ui_color_committed_key: str = ""
     # Timezone dropdown under the settings_pigeon timezone pill.
@@ -1039,7 +1041,7 @@ class MainSettingsState:
         self.pigeon_needs_update_prefetch = True
 
     def refresh_pigeon_status(self) -> None:
-        """Metadata / audio lights (seen in the last 60 s)."""
+        """Network / metadata / audio lights."""
         try:
             from pigeon.source_status import apply_source_status_to_settings_state
 
@@ -6445,6 +6447,7 @@ class MainSettingsWidget:
             locale,
             bool(st.pigeon_metadata_ok),
             bool(st.pigeon_audio_ok),
+            bool(st.pigeon_network_ok),
             str(st.live_wifi_ssid or ""),
             str(st.ui_color_committed_key or ""),
             tuple(sorted((str(k), str(v)) for k, v in (st.options_values or {}).items())),

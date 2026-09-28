@@ -77,7 +77,6 @@ from pigeon.np_layout import (
     TT_COUNTDOWN_TEXT_SIZE_PX,
     TT_COUNTDOWN_VIEW_H,
     TT_COUNTDOWN_VIEW_W,
-    VOLUME_FORMAT_LOCAL,
     VOLUME_FORMAT_SIZE_PX,
     VOLUME_INNER_R,
     VOLUME_LOCAL_CX,
@@ -95,7 +94,6 @@ from pigeon.np_layout import (
     now_playing_header_clock_text,
     header_clock_baseline_y,
     header_clock_center_x,
-    np_label_baseline_y,
     status_bar_elapsed_left_x,
     status_bar_elapsed_opacity,
     status_bar_handoff_alphas,
@@ -150,6 +148,8 @@ _COLOR_BG_HEX = "#000000"
 _COLOR_ACCENT_BGR = (0, 0, 255)  # #FF0000 — legacy default (mapped to theme.ui)
 _COLOR_UNPLAYED_BGR = (147, 147, 147)  # #939393
 _COLOR_BUTTON_BGR = (35, 35, 35)  # #232323 — legacy; inner discs use pure black
+# ``volume_container`` fill in widget_np_01-02-03_volume.svg; the zone-4 EQ box.
+_VOLUME_CONTAINER_BGR = (35, 35, 35)
 _COLOR_CENTER_BLACK_HEX = "#000000"
 _COLOR_CENTER_BLACK_BGR = (0, 0, 0)
 _COLOR_CHROME_BGR = (147, 147, 147)  # #939393
@@ -404,7 +404,7 @@ _CLOCK_DATE_SIZE_PX = 32
 # Usable radius as a fraction of the inner disc — leaves padding around the number.
 _VOLUME_TEXT_INNER_FIT = 0.88
 # Gap between the disc volume number and the HH:MM sitting under it.
-_VOLUME_CLOCK_GAP_PX = 6.0
+_VOLUME_INPUT_GAP_PX = 6.0
 
 # Zone4 cast columns (center x, actor baseline y, character baseline y) — SVG geometry.
 _CAST_COLS_Z4: tuple[tuple[float, float, float], ...] = (
@@ -1231,37 +1231,35 @@ def _volume_readout_patch(
     return best
 
 
-def _volume_hhmm_patch(
-    now: datetime | None,
+def _volume_input_patch(
+    label: str,
     *,
-    max_w: int,
+    top_dy: float,
+    inner_r: float,
     max_h: int,
     fill_rgb: tuple[int, int, int] | None = None,
 ) -> tuple[np.ndarray, int, int]:
-    """HH:MM fitted under the volume number — never larger than ``max_w`` × ``max_h``."""
-    label = _clock_hhmm(now)
-    if not label:
-        return np.zeros((1, 1, 4), dtype=np.uint8), 0, 0
-    mw = max(0, int(max_w))
-    mh = max(0, int(max_h))
-    if mw < 12 or mh < 10:
-        return np.zeros((1, 1, 4), dtype=np.uint8), 0, 0
-    hi = max(10, min(int(mw), int(mh) * 3, 120))
-    lo = 10
-    best: tuple[np.ndarray, int, int] | None = None
-    while lo <= hi:
-        mid = (lo + hi) // 2
-        patch, w, h = _text_patch_digital7(
-            label, size_px=mid, fill_rgb=fill_rgb
+    """AVR input label fitted under the volume number, inside the disc.
+
+    ``top_dy`` is the label's top edge below the disc center; the width is
+    clipped to the disc chord at the label's bottom edge.
+    """
+    text = str(label or "").strip().upper()
+    empty = (np.zeros((1, 1, 4), dtype=np.uint8), 0, 0)
+    if not text or int(max_h) < 10:
+        return empty
+    r = float(inner_r)
+    size = int(VOLUME_FORMAT_SIZE_PX)
+    while size >= 12:
+        patch, w, h = _text_patch_font(
+            text, font=_load_sharp_extrabold(size), fill_rgb=fill_rgb
         )
-        if w <= mw and h <= mh:
-            best = (patch, w, h)
-            lo = mid + 1
-        else:
-            hi = mid - 1
-    if best is None:
-        return np.zeros((1, 1, 4), dtype=np.uint8), 0, 0
-    return best
+        dy = float(top_dy) + float(h)
+        chord = 2.0 * math.sqrt(max(0.0, r * r - dy * dy))
+        if h <= int(max_h) and w <= chord:
+            return patch, w, h
+        size -= 2
+    return empty
 
 
 def _apply_zone_visibility(root: ET.Element, vis: dict[str, bool]) -> None:
@@ -2802,6 +2800,26 @@ def _cast_line_patch(text: str, *, size_px: int, max_width_px: int) -> np.ndarra
     return _ink_crop_bgra(patch)
 
 
+ZONE4_VISUALIZER_WIDGET = "visualizer"
+
+
+def zone4_visualizer_rect() -> tuple[int, int, int, int, int]:
+    """``(x, y, w, h, r)`` for the zone-4 EQ: the status-bar track's columns
+    and corner radius, from the track's inset below zone 4's top down to the
+    same gap above the zone-5 track (zone 4's box overlaps zone 5)."""
+    tx, ty, tw, _th, tr = design_rect_from_local(
+        _zone_spec(5),
+        STATUS_BAR_TRACK,
+        view_w=STATUS_BAR_VIEW_W,
+        view_h=STATUS_BAR_VIEW_H,
+    )
+    zone = _zone_spec(4)
+    inset = float(STATUS_BAR_TRACK[1]) * float(zone.h) / float(STATUS_BAR_VIEW_H)
+    top = int(round(float(zone.y) + inset))
+    bottom = int(round(float(ty) - inset))
+    return (int(tx), top, int(tw), max(2, bottom - top), int(tr))
+
+
 def _zone4_title_xywh() -> tuple[int, int, int, int]:
     """Zone 4 box clipped so titles stay above zone 5 (the strips overlap in spec)."""
     z4 = _zone_spec(4)
@@ -3499,6 +3517,16 @@ def _draw_circle_pair(
     )
 
 
+@lru_cache(maxsize=1)
+def _header_digital7_size_px() -> int:
+    """Digital-7 size for the header clock / TRT: digit ink as tall as the
+    Sharp Sans header chrome (music album title) it shares the band with."""
+    draw = ImageDraw.Draw(Image.new("RGBA", (4, 4)))
+    _l, t, _r, b = draw.textbbox((0, 0), "0", font=_load_sharp_extrabold(int(NP_HEADER_CLOCK_SIZE_PX)))
+    _l, t7, _r, b7 = draw.textbbox((0, 0), "0", font=_load_digital7(100))
+    return max(12, int(round(100.0 * (b - t) / max(1, b7 - t7))))
+
+
 def _matching_hhmm_patch(
     text: str,
     *,
@@ -3686,6 +3714,12 @@ class ViewCirclesWidget:
         self._ticking_under_sig: tuple[object, ...] | None = None
         self._svg_chrome_by_key: dict[tuple[object, ...], np.ndarray] = {}
         self._bar_overlay_layer: np.ndarray | None = None
+        # Union of everything the last _draw_status_bar painted (x0, y0, x1, y1);
+        # the timecodes sit below the zone box, so the zone rect alone misses them.
+        self._status_bar_paint_bounds: tuple[int, int, int, int] | None = None
+        self._zone4_eq = None
+        # Where _overlay_ticking last stamped TT-countdown digits (x, y, w, h).
+        self._tt_time_paint_rects: list[tuple[int, int, int, int]] = []
         self._artwork_blur_bgra: np.ndarray | None = None
         self._artwork_blur_poster_id: int | None = None
         self._search_frames: tuple[np.ndarray, ...] | None = None
@@ -4226,7 +4260,7 @@ class ViewCirclesWidget:
         if not self._state.content_active:
             return False
         keys = set(self._assignments())
-        return "vu" in keys
+        return "vu" in keys or ZONE4_VISUALIZER_WIDGET in keys
 
     def _assignments(self) -> tuple[str, str, str, str, str]:
         named = sum(1 for actor, _role in (self._state.cast or []) if str(actor or "").strip())
@@ -4268,6 +4302,8 @@ class ViewCirclesWidget:
                 pass
             if not youtube:
                 zones = auto_zones
+        if zones[3] == "cast_info" and self._zone4_eq_on():
+            zones = (zones[0], zones[1], zones[2], ZONE4_VISUALIZER_WIDGET, zones[4])
         if self.volume_takeover_active() and self._state.chrome_visible:
             return (zones[0], zones[1], "volume", zones[3], zones[4])
         return zones
@@ -4510,6 +4546,11 @@ class ViewCirclesWidget:
                 z = _zone_spec(i + 1)
                 zx, zy, zw, zh = (int(v) for v in z.xywh)
                 rects.append((zx, zy, zw, zh))
+        painted = self._status_bar_paint_bounds
+        if painted is not None:
+            x0, y0, x1, y1 = painted
+            rects.append((x0, y0, x1 - x0, y1 - y0))
+        rects.extend(self._tt_time_paint_rects)
         return rects
 
     def _restore_ticking_rects(self, under: np.ndarray) -> None:
@@ -4539,6 +4580,8 @@ class ViewCirclesWidget:
             self._draw_header_clock(out, now)
         self._draw_seconds_bar_zones(out, now)
         self._draw_zone4_overlay_text(out)
+        self._tt_time_paint_rects = []
+        self._draw_tt_countdowns(out, part="time")
         assignments = self._assignments()
         if any(is_status_bar_widget(assignments[i], i + 1) for i in range(5)):
             self._draw_status_bar(out)
@@ -4733,6 +4776,8 @@ class ViewCirclesWidget:
         if bar_zone is None:
             return
         zone = _zone_spec(int(bar_zone))
+        zx, zy, zw, zh = (int(v) for v in zone.xywh)
+        bounds = [zx, zy, zx + zw, zy + zh]
         st = self._state
         pf = max(0.0, min(1.0, float(st.progress)))
         tx, ty, tw, th, trx = design_rect_from_local(
@@ -4763,6 +4808,13 @@ class ViewCirclesWidget:
                 elapsed[:, :, 3] = mask
                 elapsed[:, vis_w:, 3] = 0
                 _paste_patch_bgra(out, elapsed, tx, ty)
+        # White CTI at the playhead while the zone-4 visualizer is up.
+        if ZONE4_VISUALIZER_WIDGET in self._assignments() and tw > 1 and th > 1:
+            cx = max(1, min(tw - 1, int(round(pf * float(tw)))))
+            cti = np.zeros((th, tw, 4), dtype=np.uint8)
+            cti[:, cx - 1 : cx + 1, :3] = 255
+            cti[:, cx - 1 : cx + 1, 3] = _rounded_rect_mask(tw, th, trx)[:, cx - 1 : cx + 1]
+            _paste_patch_bgra(out, cti, tx, ty)
 
         def _bar_xy(local: tuple[float, float]) -> tuple[float, float]:
             return design_xy_from_local(
@@ -4813,6 +4865,10 @@ class ViewCirclesWidget:
             paste_x = int(round(x - pw)) if right else int(round(x))
             paste_y = int(round(y - ph))
             _paste_patch_bgra(out, patch, paste_x, paste_y)
+            bounds[0] = min(bounds[0], paste_x)
+            bounds[1] = min(bounds[1], paste_y)
+            bounds[2] = max(bounds[2], paste_x + pw)
+            bounds[3] = max(bounds[3], paste_y + ph)
 
         et_patch, et_w, _et_h = _label_patch(et)
         rt_patch, rt_w, _rt_h = _label_patch(rt, fill_rgb=_look_ink_rgb())
@@ -4855,6 +4911,7 @@ class ViewCirclesWidget:
             _paste_patch(et_patch, elapsed_x, ey, opacity=elapsed_a)
         # Remaining is authored near the right; right-align to the track end.
         _paste_patch(rt_patch, float(tx + tw), ry, right=True)
+        self._status_bar_paint_bounds = (bounds[0], bounds[1], bounds[2], bounds[3])
 
     def _draw_play_overlay(self, out: np.ndarray) -> None:
         if not self._state.paused:
@@ -4991,6 +5048,16 @@ class ViewCirclesWidget:
         if not _header_clock_enabled():
             return
         if _zone_clock_hides_header(self._assignments()):
+            return
+        if self._header_slot_ticks():
+            # Digital-7 clock over zone 3; zone 6's header slot holds the TRT.
+            z3 = NOW_PLAYING_ZONES[3]
+            self._paste_header_digital7(
+                out,
+                now_playing_header_clock_text(now),
+                float(z3.x) + float(z3.w) * 0.5,
+                fill_rgb=_look_chrome_rgb(),
+            )
             return
         fitted = self._header_slot_fitted(now)
         if fitted is None:
@@ -5269,49 +5336,6 @@ class ViewCirclesWidget:
         """Deprecated separator between in-ring volume/config — no-op."""
         return
 
-    def _draw_input_caption(self, out: np.ndarray, *, zone: int) -> None:
-        """AVR input label above the volume disc or levels well."""
-        z = _zone_spec(int(zone))
-        caption = volume_widget_format_label(
-            self._state.incoming,
-            self._state.config,
-            receiver_input=str(self._state.receiver_input or "").strip(),
-        )
-        if not caption:
-            return
-        label = caption.upper()
-        fx, _fy = design_xy_from_local(
-            z,
-            VOLUME_LOCAL_CX,
-            VOLUME_FORMAT_LOCAL[1],
-            view_w=VOLUME_VIEW_W,
-            view_h=VOLUME_VIEW_H,
-        )
-        fy = np_label_baseline_y()
-        max_w = max(40, int(round(z.w - 40)))
-        theme = self._effective_np_theme().cache_key
-        key = (label, int(max_w), theme, int(zone))
-        cached = self._input_caption_patch_cache
-        if cached is not None and cached[0] == key:
-            patch, font, drawn = cached[1]  # type: ignore[misc]
-        else:
-            size = int(VOLUME_FORMAT_SIZE_PX)
-            font = _load_sharp_extrabold(size)
-            patch, pw, _ph = _text_patch_font(
-                label, font=font, fill_rgb=_look_chrome_rgb()
-            )
-            while pw > max_w and size > 18:
-                size -= 2
-                font = _load_sharp_extrabold(size)
-                patch, pw, _ph = _text_patch_font(
-                    label, font=font, fill_rgb=_look_chrome_rgb()
-                )
-            drawn = label
-            self._input_caption_patch_cache = (key, (patch, font, drawn))
-        _paste_baseline_centered(
-            out, patch, fx, fy, bbox_top=_font_bbox_top(drawn, font)
-        )
-
     def _draw_audio_group(
         self,
         out: np.ndarray,
@@ -5320,7 +5344,7 @@ class ViewCirclesWidget:
         cy: float = _ZONE1_CY,
         zone: int | None = None,
     ) -> None:
-        """AVR input above the disc; volume number centered; HH:MM under it."""
+        """Volume number centered in the disc; AVR input label under it."""
         del cx, cy
         assignments = self._assignments()
         vol_zone = int(zone) if zone is not None else _zone_for_widget(assignments, "volume")
@@ -5328,7 +5352,6 @@ class ViewCirclesWidget:
             return
         z = _zone_spec(vol_zone)
         st = self._state
-        self._draw_input_caption(out, zone=int(vol_zone))
         vol_value = volume_widget_value_text(st.volume)
         muted = vol_value.strip().lower() in ("mute", "muted", "off") or st.volume_muted
 
@@ -5347,19 +5370,27 @@ class ViewCirclesWidget:
             )
             _paste_centered(out, vol_p, cx_v, cy_v)
             inner_r = float(VOLUME_INNER_R) * float(_VOLUME_TEXT_INNER_FIT)
-            vol_bottom = float(cy_v) + float(vh) * 0.5
-            room_h = (float(cy_v) + inner_r) - vol_bottom - float(_VOLUME_CLOCK_GAP_PX)
-            clock_p, _cw, ch = _volume_hhmm_patch(
-                self._clock_now_for_display(),
-                max_w=max(12, int(vw)),
-                max_h=max(10, int(room_h)),
-                fill_rgb=_look_ink_rgb(),
+            top_dy = float(vh) * 0.5 + float(_VOLUME_INPUT_GAP_PX)
+            label = volume_widget_format_label(
+                st.incoming,
+                st.config,
+                receiver_input=str(st.receiver_input or "").strip(),
             )
-            if ch > 1:
-                clock_cy = (
-                    vol_bottom + float(_VOLUME_CLOCK_GAP_PX) + float(ch) * 0.5
+            key = (label, int(vh), self._effective_np_theme().cache_key)
+            cached = self._input_caption_patch_cache
+            if cached is not None and cached[0] == key:
+                in_p, _iw, ih = cached[1]  # type: ignore[misc]
+            else:
+                in_p, _iw, ih = _volume_input_patch(
+                    label,
+                    top_dy=top_dy,
+                    inner_r=inner_r,
+                    max_h=max(0, int(inner_r - top_dy)),
+                    fill_rgb=_look_ink_rgb(),
                 )
-                _paste_centered(out, clock_p, cx_v, clock_cy)
+                self._input_caption_patch_cache = (key, (in_p, _iw, ih))
+            if ih > 1:
+                _paste_centered(out, in_p, cx_v, cy_v + top_dy + float(ih) * 0.5)
 
     def _draw_circular_now_playing(
         self,
@@ -5726,8 +5757,46 @@ class ViewCirclesWidget:
         self._tt_patch_cache[key] = patch
         return patch
 
+    def _draw_tt_countdowns(self, out: np.ndarray, *, part: str = "all") -> None:
+        assignments = self._assignments()
+        for z in (1, 2, 3):
+            if assignments[z - 1] == "tt_countdown":
+                self._draw_tt_countdown(out, zone=z, part=part)
+        wide_tt_zone = tt_countdown_16x9_zone(assignments)
+        if wide_tt_zone is not None and not self._paused_clock_in_zone6():
+            self._draw_tt_countdown(out, zone=int(wide_tt_zone), wide=True, part=part)
+
+    def _paste_header_digital7(
+        self,
+        out: np.ndarray,
+        label: str,
+        cx: float,
+        *,
+        fill_rgb: tuple[int, int, int] = (255, 255, 255),
+    ) -> tuple[int, int, int, int] | None:
+        """Digital-7 header text (clock / TRT) centered on ``cx``, ink bottom on
+        the header baseline. Returns the painted ``(x, y, w, h)``."""
+        patch = _matching_hhmm_patch(
+            label, size_px=_header_digital7_size_px(), fill_rgb=fill_rgb
+        )
+        rows = np.where(patch[:, :, 3] > 8)[0]
+        if rows.size == 0:
+            return None
+        patch = patch[int(rows.min()) : int(rows.max()) + 1]
+        ph, pw = patch.shape[:2]
+        px = int(round(cx - pw / 2.0))
+        py = int(round(header_clock_baseline_y() - ph))
+        _paste_patch_bgra(out, patch, px, py)
+        return (px, py, int(pw), int(ph))
+
+    def _draw_header_trt(self, out: np.ndarray, z: NowPlayingZone, label: str) -> None:
+        """White Digital-7 TRT in the header slot over ``z``."""
+        rect = self._paste_header_digital7(out, label, float(z.x) + float(z.w) * 0.5)
+        if rect is not None:
+            self._tt_time_paint_rects.append(rect)
+
     def _draw_tt_countdown(
-        self, out: np.ndarray, *, zone: int, wide: bool = False
+        self, out: np.ndarray, *, zone: int, wide: bool = False, part: str = "all"
     ) -> None:
         """TT art anchored above the divider guide, live countdown hanging below.
 
@@ -5742,6 +5811,10 @@ class ViewCirclesWidget:
         is vertically centered in the widget. Portrait TTs (too tall to
         width-fit) go side-by-side: left-aligned art, right-aligned TRT.
         Music skips the countdown and centers album art in the widget.
+
+        ``part`` limits what is pasted: ``"art"`` (static frame) or ``"time"``
+        (ticking overlay, so the TRT advances every second). Layout always
+        uses both, so the halves line up exactly.
         """
         if wide:
             tt_box_fn = tt_countdown_16x9_tt_box
@@ -5755,7 +5828,12 @@ class ViewCirclesWidget:
         tpatch = None
         if not music:
             label = format_countdown_timecode(st.remaining_text)
-            if label:
+            if label and wide:
+                # 16:9 TRT lives in the header slot above the art, so the art
+                # lays out alone below.
+                if part in ("all", "time"):
+                    self._draw_header_trt(out, z, label)
+            elif label:
                 sx = float(z.w) / view_w
                 size_px = max(12, int(round(TT_COUNTDOWN_TEXT_SIZE_PX * sx)))
                 tpatch = _tt_countdown_time_patch(label, size_px=size_px)
@@ -5813,7 +5891,14 @@ class ViewCirclesWidget:
                     for img, px, py in pastes
                 ]
             for img, px, py in pastes:
+                is_time = tpatch is not None and img is tpatch
+                if (part == "art" and is_time) or (part == "time" and not is_time):
+                    continue
                 _paste_patch_bgra(out, img, px, py)
+                if is_time and part == "time":
+                    self._tt_time_paint_rects.append(
+                        (px, py, int(img.shape[1]), int(img.shape[0]))
+                    )
                 if shimmer_id is not None and id(img) == shimmer_id:
                     self._record_shimmer(
                         px, py, int(img.shape[1]), int(img.shape[0]), shimmer_radius
@@ -5991,7 +6076,7 @@ class ViewCirclesWidget:
         z4 = NOW_PLAYING_ZONES[4]
         plate = render_pausesaver_plate_bgra(int(round(z4.w)), int(round(z4.h)))
         _paste_patch_bgra(out, plate, int(round(z4.x)), int(round(z4.y)))
-        self._draw_status_bar(out)
+        # Status bar is stamped by _overlay_ticking; baking it here leaves stale timecodes.
         return out
 
     def _render_static_bgra(self) -> np.ndarray:
@@ -6047,15 +6132,12 @@ class ViewCirclesWidget:
         self._draw_zone4_overlay_text(out)
         if self.content_mode == _CONTENT_MODE_MUSIC or self._state.is_youtube:
             self._draw_track_titles(out)
-        if any(is_status_bar_widget(assignments[i], i + 1) for i in range(5)):
-            self._draw_status_bar(out)
+        # Status bar is stamped by _overlay_ticking; the static sig ignores its
+        # timecodes, so baking it here would leave stale digits under the live ones.
         self._draw_header_clock(out, now)
-        for z in (1, 2, 3):
-            if assignments[z - 1] == "tt_countdown":
-                self._draw_tt_countdown(out, zone=z)
-        wide_tt_zone = tt_countdown_16x9_zone(assignments)
-        if wide_tt_zone is not None and not self._paused_clock_in_zone6():
-            self._draw_tt_countdown(out, zone=int(wide_tt_zone), wide=True)
+        # TRT digits are stamped by _overlay_ticking (_draw_tt_countdown_times);
+        # the static sig ignores remaining_text, so baking them here froze them.
+        self._draw_tt_countdowns(out, part="art")
         if self.content_mode != _CONTENT_MODE_MUSIC and not self._state.is_youtube:
             for z in (1, 2, 3, 4, 5):
                 if assignments[z - 1] == "cast_info":
@@ -6121,6 +6203,28 @@ class ViewCirclesWidget:
         keys = self._assignments()
         return "vu" in keys or zone6_span_widget(keys) == "vu"
 
+    def _zone4_eq_on(self) -> bool:
+        """Settings option4 = visualizer (see ``pigeon/zone4_eq.py``)."""
+        if not self._state.content_active:
+            return False
+        from pigeon import zone4_eq
+
+        return zone4_eq.enabled()
+
+    def _draw_zone4_eq(self, out: np.ndarray) -> None:
+        if self._assignments()[3] != ZONE4_VISUALIZER_WIDGET:
+            return
+        from pigeon.zone4_eq import Zone4EQ
+
+        if self._zone4_eq is None:
+            self._zone4_eq = Zone4EQ()
+        self._zone4_eq.render_into(
+            out,
+            zone4_visualizer_rect(),
+            float(self._state.progress),
+            track_bgr=_VOLUME_CONTAINER_BGR,
+        )
+
     def bgra_frame(self) -> np.ndarray | None:
         if not self._state.chrome_visible:
             return None
@@ -6146,6 +6250,7 @@ class ViewCirclesWidget:
         frame = work
         if self._live_audio_widgets_on():
             self._draw_live_audio_widgets(work)
+        self._draw_zone4_eq(work)
         if not self._shimmer_rects:
             return frame
         self._paint_live_shimmers(work)
@@ -6202,3 +6307,4 @@ class ViewCirclesWidget:
         canvas_bgr[:] = under
         if self._live_audio_widgets_on():
             self._draw_live_audio_widgets(canvas_bgr)
+        self._draw_zone4_eq(canvas_bgr)

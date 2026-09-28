@@ -6,6 +6,7 @@ import platform
 import re
 import socket
 import subprocess
+import time
 from functools import lru_cache
 
 _IPV4_RE = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
@@ -23,6 +24,35 @@ def local_ipv4_address() -> str:
         if ip and not ip.startswith("127."):
             return ip
     return ""
+
+
+_ROUTE_CACHE_TTL_S = 5.0
+_route_cache: tuple[float, bool] | None = None
+
+
+def has_lan_route() -> bool:
+    """True when the host has a non-loopback IPv4 route out (Wi-Fi or wired).
+
+    UDP ``connect`` only picks a source address — nothing is sent. Cached for
+    a few seconds; cheap enough to call while painting.
+    """
+    global _route_cache
+    now = time.monotonic()
+    if _route_cache is not None and now - _route_cache[0] < _ROUTE_CACHE_TTL_S:
+        return _route_cache[1]
+    ok = False
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            sock.connect(("8.8.8.8", 80))
+            ip = str(sock.getsockname()[0])
+            ok = bool(_IPV4_RE.match(ip)) and not ip.startswith(("127.", "0.", "169.254."))
+        finally:
+            sock.close()
+    except OSError:
+        ok = False
+    _route_cache = (now, ok)
+    return ok
 
 
 def _candidate_ipv4_addresses() -> tuple[str, ...]:
