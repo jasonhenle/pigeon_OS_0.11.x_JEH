@@ -2665,14 +2665,10 @@ class TtCountdown16x9WidgetTests(unittest.TestCase):
         )
         self.assertAlmostEqual(200.0 + dy_bot, 522.0)
 
-    def test_plate_aligns_to_volume_disc_center(self) -> None:
-        from pigeon.np_layout import (
-            NOW_PLAYING_ZONES,
-            VOLUME_LOCAL_CY,
-            header_clock_baseline_y,
-        )
+    def test_tt_centers_on_zone_even_with_volume(self) -> None:
+        from pigeon.np_layout import NOW_PLAYING_ZONES, header_clock_baseline_y
         from pigeon.widgets import view_circles as vc
-        from pigeon.widgets.view_circles import ViewCirclesWidget, _zone_volume_center
+        from pigeon.widgets.view_circles import ViewCirclesWidget
 
         assets = Path(__file__).resolve().parents[2] / "pigeonAssets"
         widget = ViewCirclesWidget(assets_dir=assets)
@@ -2715,9 +2711,10 @@ class TtCountdown16x9WidgetTests(unittest.TestCase):
         ink_rows = np.where(luma[skip:, :].max(axis=1) > 200)[0] + skip
         self.assertGreater(len(ink_rows), 10)
         content_cy = zy + (int(ink_rows[0]) + int(ink_rows[-1])) / 2.0
-        _vcx, vcy = _zone_volume_center(3)
-        self.assertAlmostEqual(content_cy, vcy, delta=12.0)
-        self.assertAlmostEqual(vcy, z6.y + VOLUME_LOCAL_CY, delta=1.0)
+        self.assertAlmostEqual(content_cy, zy + zh / 2.0, delta=2.0)
+        ink_cols = np.where(luma[skip:, :].max(axis=0) > 200)[0]
+        content_cx = zx + (int(ink_cols[0]) + int(ink_cols[-1])) / 2.0
+        self.assertAlmostEqual(content_cx, zx + zw / 2.0, delta=2.0)
 
     def test_zone_1_or_2_opens_slot_6_zone_3_opens_slot_7(self) -> None:
         from pigeon.np_layout import (
@@ -2799,8 +2796,8 @@ class TtCountdown16x9WidgetTests(unittest.TestCase):
         mid = (int(rows.min()) + int(rows.max())) / 2.0
         self.assertLess(mid, zh * 0.55)
 
-    def test_portrait_tt_draws_left_trt_right(self) -> None:
-        from pigeon.np_layout import NOW_PLAYING_ZONES
+    def test_portrait_tt_centers_below_header_trt(self) -> None:
+        from pigeon.np_layout import NOW_PLAYING_ZONES, header_clock_baseline_y
         from pigeon.widgets import view_circles as vc
         from pigeon.widgets.view_circles import ViewCirclesWidget
 
@@ -2835,9 +2832,15 @@ class TtCountdown16x9WidgetTests(unittest.TestCase):
         zx, zy, zw, zh = z6.xywh
         region = frame[zy : zy + zh, zx : zx + zw]
         bright = region[:, :, :3].max(axis=2) > 200
-        left = bright[:, : zw // 2]
-        right = bright[:, zw // 2 :]
-        self.assertGreater(int(left.sum()), int(right.sum()))
+        # Rows under the header TRT belong to the TT alone.
+        skip = int(round(header_clock_baseline_y() - zy + 4.0))
+        rows = np.where(bright[skip:, :].any(axis=1))[0] + skip
+        cols = np.where(bright[skip:, :].any(axis=0))[0]
+        self.assertGreater(len(rows), 100)
+        self.assertAlmostEqual((cols[0] + cols[-1]) / 2.0, zw / 2.0, delta=2.0)
+        self.assertAlmostEqual((rows[0] + rows[-1]) / 2.0, zh / 2.0, delta=2.0)
+        # The tall TT shrinks to stay clear of the header TRT baseline.
+        self.assertGreater(zy + int(rows[0]), header_clock_baseline_y())
 
 
 class WidgetShimmerTests(unittest.TestCase):

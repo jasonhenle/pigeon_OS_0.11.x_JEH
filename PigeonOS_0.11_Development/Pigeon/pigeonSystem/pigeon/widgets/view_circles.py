@@ -102,13 +102,13 @@ from pigeon.np_layout import (
     strip_cast_columns,
     tabular_time_layout,
     tt_countdown_16x9_content_lift,
-    tt_countdown_16x9_portrait_rects,
     tt_countdown_16x9_time_anchor,
     tt_countdown_16x9_tt_box,
     tt_countdown_16x9_tt_is_portrait,
     tt_countdown_16x9_zone,
     zone6_span_widget,
     tt_countdown_centered_art_rect,
+    TT_COUNTDOWN_BG_PAD,
     tt_countdown_portrait_content_lift,
     layout_shows_tt_countdown_and_volume,
     tt_countdown_volume_align_dy,
@@ -5867,7 +5867,11 @@ class ViewCirclesWidget:
             zx, zy, zw, zh = z.xywh
             dy = 0.0
             art_min_top = float(zy) + float(NP_ZONE6_ART_MIN_TOP_PX)
-            if layout_shows_tt_countdown_and_volume(self._assignments()):
+            if wide:
+                # Zone 6/7: the TRT lives in the header slot, so the art is
+                # always centered on the zone (no volume alignment / clamps).
+                dy = float(zy) + float(zh) * 0.5 - (y0 + y1) * 0.5
+            elif layout_shows_tt_countdown_and_volume(self._assignments()):
                 vol_zone = _zone_for_widget(self._assignments(), "volume")
                 if vol_zone is not None:
                     _vcx, vcy = _zone_volume_center(int(vol_zone))
@@ -5952,22 +5956,18 @@ class ViewCirclesWidget:
             portrait_wide = tt_countdown_16x9_tt_is_portrait(sw, sh)
 
         if portrait_wide:
-            scale_y = view_h / max(float(z.h), 1.0)
-            trt_w_l = (
-                float(tpatch.shape[1]) * scale_y
-                if tpatch is not None and tpatch.size > 0
-                else 0.0
+            # Centered, shrunk symmetrically so its top clears the header TRT.
+            header_clear_d = float(header_clock_baseline_y()) + 8.0 - float(z.y)
+            pad = max(
+                float(TT_COUNTDOWN_BG_PAD),
+                header_clear_d * view_h / max(float(z.h), 1.0),
             )
-            trt_h_l = (
-                float(tpatch.shape[0]) * scale_y
-                if tpatch is not None and tpatch.size > 0
-                else 0.0
-            )
-            tt_rect, trt_rect = tt_countdown_16x9_portrait_rects(
+            tt_rect = tt_countdown_centered_art_rect(
                 float(src.shape[1]),
                 float(src.shape[0]),
-                trt_w_l,
-                trt_h_l,
+                view_w=view_w,
+                view_h=view_h,
+                pad=pad,
             )
             x0, y0 = design_xy_from_local(
                 z, tt_rect[0], tt_rect[1], view_w=view_w, view_h=view_h
@@ -5986,12 +5986,10 @@ class ViewCirclesWidget:
             )
             pastes: list[tuple[np.ndarray, int, int]] = []
             if patch is not None and patch.size > 0:
-                pastes.append((patch, int(round(x0)), int(round(y0))))
-            if tpatch is not None and tpatch.size > 0:
-                tx, ty = design_xy_from_local(
-                    z, trt_rect[0], trt_rect[1], view_w=view_w, view_h=view_h
-                )
-                pastes.append((tpatch, int(round(tx)), int(round(ty))))
+                ph, pw = int(patch.shape[0]), int(patch.shape[1])
+                px = int(round(x0 + (dest_w - pw) / 2.0))
+                py = int(round(y0 + (dest_h - ph) / 2.0))
+                pastes.append((patch, px, py))
             _paste_group(pastes)
             return
 
