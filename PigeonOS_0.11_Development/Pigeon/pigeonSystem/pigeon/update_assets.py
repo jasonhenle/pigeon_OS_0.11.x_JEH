@@ -47,7 +47,7 @@ REQUIRED_ASSET_PATHS: tuple[str, ...] = (
     "pigeonAssets/pigeonNowPlaying_TC_remaining.png",
     "pigeonAssets/App logos/AppLogo_Pigeon.png",
     "pigeonAssets/pigeonSplash/widget_pigeon_splash_00000.png",
-    "pigeonAssets/pigeonSplash/widget_pigeon_splash_00090.png",
+    "pigeonAssets/pigeonSplash/widget_pigeon_splash_00251.png",
 )
 
 _REPO_APP_PREFIXES: tuple[str, ...] = (

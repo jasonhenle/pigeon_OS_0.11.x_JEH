@@ -100,7 +100,7 @@ class RequiredAssetPathsTests(unittest.TestCase):
 
         self.assertIn("pigeonAssets/App logos/AppLogo_Pigeon.png", REQUIRED_ASSET_PATHS)
         self.assertIn(
-            "pigeonAssets/pigeonSplash/widget_pigeon_splash_00090.png",
+            "pigeonAssets/pigeonSplash/widget_pigeon_splash_00251.png",
             REQUIRED_ASSET_PATHS,
         )
 

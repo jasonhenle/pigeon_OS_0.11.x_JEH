@@ -13,6 +13,11 @@ from pigeon.core import startup as _core_startup
 from pigeon.core.binding import bind_deps as _bind_deps
 from pigeon.core.binding import bind_method_deps as _bind_method_deps
 from pigeon.core.binding import late as _late
+from pigeon.splash_sequence import (
+    SPLASH_HOLD_LOGO_FRAME,
+    SPLASH_PREBAKE_AHEAD_FRAMES,
+    SPLASH_START_LEAD_FRAMES,
+)
 import cv2
 import numpy as np
 import sys
@@ -55,6 +60,7 @@ def run(ctx) -> None:
     root = ctx.root
     shell = ctx.shell
     splash_anim_done = ctx.splash_anim_done
+    splash_bootstrap_go = ctx.splash_bootstrap_go
     splash_effective_frame_count = ctx.splash_effective_frame_count
     splash_end_fade_factor = ctx.splash_end_fade_factor
     splash_keep_alpha_for_live_clock = ctx.splash_keep_alpha_for_live_clock
@@ -157,7 +163,7 @@ def run(ctx) -> None:
         splash_t0: list[float | None] = [None]
         _splash_wait_deadline: list[float | None] = [None]
         _splash_bg_bgr = (0, 0, 0)
-        # Black underlay until frame 90 — early PNG frames are transparent and must not reveal the clock.
+        # Black underlay until the reveal frame — transparent early PNG pixels must not show the UI.
         _splash_underlay_bgr[0] = np.zeros((WINDOW_H, WINDOW_W, 3), dtype=np.uint8)
         try:
             _boot_clock_photo[0] = _bgr_to_tk_image(_splash_underlay_bgr[0])
@@ -297,6 +303,7 @@ def run(ctx) -> None:
             _splash_raw_bgra=_splash_raw_bgra,
             _splash_reveal_i=_splash_reveal_i,
             _splash_rgb_cache=_splash_rgb_cache,
+            splash_idx=splash_idx,
             splash_total_frames=splash_total_frames,
         )
 
@@ -304,13 +311,27 @@ def run(ctx) -> None:
             _core_splash._splash_prebake_worker_pngs,
             _bgra_to_display_window=_bgra_to_display_window,
             _splash_bgra_cache=_splash_bgra_cache,
+            _splash_prebake_ahead=int(SPLASH_PREBAKE_AHEAD_FRAMES),
             _splash_prebake_done=_splash_prebake_done,
             _splash_prebake_reveal_bgra=_splash_prebake_reveal_bgra,
             _splash_raw_bgra=_splash_raw_bgra,
             _splash_rgb_cache=_splash_rgb_cache,
             _splash_store_prebaked=_splash_store_prebaked,
+            splash_anim_done=splash_anim_done,
+            splash_idx=splash_idx,
             splash_total_frames=splash_total_frames,
         )
+
+        _splash_hold_released_now = _bind_deps(
+            _core_splash._splash_hold_released_now,
+            _splash_bgra_cache=_splash_bgra_cache,
+            _splash_prebake_done=_splash_prebake_done,
+            _splash_rgb_cache=_splash_rgb_cache,
+            bootstrap_done=bootstrap_done,
+            splash_png_paths=splash_png_paths,
+            splash_total_frames=splash_total_frames,
+        )
+        _splash_hold_since: dict[int, float | None] = {}
 
         _splash_prebake_worker_video = _bind_deps(
             _core_splash._splash_prebake_worker_video,
@@ -358,6 +379,7 @@ def run(ctx) -> None:
 
         splash_tick = _bind_deps(
             _core_splash.splash_tick,
+            SPLASH_HOLD_LOGO_FRAME=int(SPLASH_HOLD_LOGO_FRAME),
             SPLASH_MAX_DURATION_S=SPLASH_MAX_DURATION_S,
             WINDOW_H=WINDOW_H,
             WINDOW_W=WINDOW_W,
@@ -369,6 +391,8 @@ def run(ctx) -> None:
             _splash_fade_frames=_splash_fade_frames,
             _splash_fallback_frame_sync=_splash_fallback_frame_sync,
             _splash_frame_keeps_live_clock=_splash_frame_keeps_live_clock,
+            _splash_hold_released_now=_splash_hold_released_now,
+            _splash_hold_since=_splash_hold_since,
             _splash_photo_cache=_splash_photo_cache,
             _splash_photo_from_rgb=_splash_photo_from_rgb,
             _splash_prebake_done=_splash_prebake_done,
@@ -377,6 +401,7 @@ def run(ctx) -> None:
             _splash_reveal_clock=_splash_reveal_clock,
             _splash_reveal_i=_splash_reveal_i,
             _splash_rgb_cache=_splash_rgb_cache,
+            _splash_start_lead=int(SPLASH_START_LEAD_FRAMES),
             _splash_wait_deadline=_splash_wait_deadline,
             _try_remove_splash_overlay=_try_remove_splash_overlay,
             content_host=content_host,
@@ -385,6 +410,7 @@ def run(ctx) -> None:
             frame_ms=frame_ms,
             root=root,
             splash_anim_done=splash_anim_done,
+            splash_bootstrap_go=splash_bootstrap_go,
             splash_end_fade_factor=splash_end_fade_factor,
             splash_idx=splash_idx,
             splash_label=splash_label,

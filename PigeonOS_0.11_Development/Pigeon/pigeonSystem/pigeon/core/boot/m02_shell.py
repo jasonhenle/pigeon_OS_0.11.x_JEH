@@ -47,9 +47,11 @@ def run(ctx) -> None:
 
     bootstrap_done: list[bool] = [False]
     splash_anim_done: list[bool] = [False]
-    # Live underlay composited under splash PNG alpha. Stays black until frame 90.
+    # Set when the splash parks on its logo hold; bootstrap runs underneath it.
+    splash_bootstrap_go: list[bool] = [False]
+    # Live underlay composited under splash PNG alpha. Stays black until the reveal frame.
     _splash_underlay_bgr: list[np.ndarray | None] = [None]
-    # Live clock buffer (background thread); copied under the splash from frame 90.
+    # Live clock buffer (background thread); copied under the splash from the reveal frame.
     _splash_clock_ready_bgr: list[np.ndarray | None] = [None]
     # Stop the live-clock worker once compose owns the display.
     _splash_clock_refresh_stop: list[bool] = [False]
@@ -79,6 +81,7 @@ def run(ctx) -> None:
     ctx.post_splash_mono = post_splash_mono
     ctx.shell = shell
     ctx.splash_anim_done = splash_anim_done
+    ctx.splash_bootstrap_go = splash_bootstrap_go
     ctx.splash_png_paths = splash_png_paths
     ctx.splash_video_path = splash_video_path
     ctx.startup_ph = startup_ph

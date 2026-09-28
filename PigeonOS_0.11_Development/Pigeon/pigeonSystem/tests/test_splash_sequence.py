@@ -14,8 +14,12 @@ if _SYS_ROOT not in sys.path:
 
 from pigeon.splash_sequence import (  # noqa: E402
     SPLASH_CLOCK_REVEAL_FRAME,
+    SPLASH_HOLD_BARS_FRAME,
+    SPLASH_HOLD_LOGO_FRAME,
+    SPLASH_PREBAKE_AHEAD_FRAMES,
     SPLASH_SEQUENCE_DIRNAME,
     list_splash_png_paths,
+    splash_hold_released,
     splash_keep_alpha_for_live_clock,
 )
 
@@ -49,6 +53,51 @@ class SplashLiveClockRevealTests(unittest.TestCase):
         self.assertTrue(splash_keep_alpha_for_live_clock(SPLASH_CLOCK_REVEAL_FRAME))
         self.assertTrue(splash_keep_alpha_for_live_clock(SPLASH_CLOCK_REVEAL_FRAME + 12))
         self.assertTrue(splash_keep_alpha_for_live_clock(40, reveal_frame=40))
+
+
+class SplashHoldTests(unittest.TestCase):
+    N = 252
+
+    def _released(self, held, *, cached=(), prebake_done=False, bootstrap_done=False, n=None):
+        cached = set(cached)
+        return splash_hold_released(
+            held,
+            total_frames=self.N if n is None else n,
+            is_cached=lambda k: k in cached,
+            prebake_done=prebake_done,
+            bootstrap_done=bootstrap_done,
+        )
+
+    def test_hold_frames_match_the_authored_sequence(self) -> None:
+        self.assertEqual(SPLASH_HOLD_BARS_FRAME, 73)
+        self.assertEqual(SPLASH_HOLD_LOGO_FRAME, 148)
+        # UI must be under the splash by 238.
+        self.assertLessEqual(SPLASH_CLOCK_REVEAL_FRAME, 238)
+        self.assertGreater(SPLASH_CLOCK_REVEAL_FRAME, SPLASH_HOLD_LOGO_FRAME)
+
+    def test_non_hold_frames_never_park(self) -> None:
+        for held in (0, 72, 74, 147, 149, 237):
+            self.assertTrue(self._released(held))
+
+    def test_bars_hold_waits_for_logo_run_decode(self) -> None:
+        self.assertFalse(self._released(73, cached=range(74, 148)))
+        self.assertTrue(self._released(73, cached=range(74, 149)))
+        self.assertTrue(self._released(73, prebake_done=True))
+
+    def test_logo_hold_waits_for_bootstrap_then_decode(self) -> None:
+        rest = range(149, self.N)
+        self.assertFalse(self._released(148, cached=rest, prebake_done=True))
+        self.assertFalse(self._released(148, cached=range(149, 200), bootstrap_done=True))
+        self.assertTrue(self._released(148, cached=rest, bootstrap_done=True))
+
+    def test_short_sequences_skip_holds(self) -> None:
+        self.assertTrue(self._released(73, n=72))
+        self.assertTrue(self._released(148, n=149))
+
+    def test_prebake_window_covers_each_hold(self) -> None:
+        # The decode look-ahead must reach every frame a hold waits on.
+        self.assertGreaterEqual(SPLASH_PREBAKE_AHEAD_FRAMES, SPLASH_HOLD_LOGO_FRAME - SPLASH_HOLD_BARS_FRAME)
+        self.assertGreaterEqual(SPLASH_PREBAKE_AHEAD_FRAMES, self.N - 1 - SPLASH_HOLD_LOGO_FRAME)
 
 
 if __name__ == "__main__":
