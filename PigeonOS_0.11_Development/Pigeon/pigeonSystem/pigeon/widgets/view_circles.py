@@ -4408,6 +4408,9 @@ class ViewCirclesWidget:
             self._zone3_clock_is_analog_fallback(),
             self.volume_takeover_active(),
             self._state.zone4_overlay_text,
+            # Service ↔ elapsed fade: rebuild until it settles, or a static
+            # bar (LIVE) freezes mid-handoff with both labels drawn.
+            round(float(self._bar_handoff), 3),
             self._zone10_pausesaver_active(),
             (
                 self._pausesaver_backdrop_id()
@@ -4823,6 +4826,9 @@ class ViewCirclesWidget:
 
         et = format_status_bar_timecode(st.elapsed_text, remaining=False)
         rt = format_status_bar_timecode(st.remaining_text, remaining=True)
+        if et.upper() == "LIVE" and rt.upper() == "LIVE":
+            # One LIVE (right) is enough; the left one sat on the service name.
+            et = ""
         svc = str(st.service_name or "").strip()
         if svc.lower() in ("", "unknown", "none", "n/a", "na", "--"):
             svc = str(st.incoming or "").strip()
@@ -4889,7 +4895,7 @@ class ViewCirclesWidget:
             remaining_left_x=remaining_left,
         )
         if svc:
-            ready = status_bar_service_has_room(
+            ready = (not et) or status_bar_service_has_room(
                 service_x=float(sx),
                 service_w=float(svc_w),
                 elapsed_x=float(elapsed_x),
