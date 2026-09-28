@@ -4329,19 +4329,45 @@ class ViewCirclesWidget:
             return None
         return bg
 
+    def _theme_sources(self) -> tuple[np.ndarray | None, np.ndarray | None]:
+        """``(tt, poster)`` for the UI color — TMDb art only.
+
+        Music album art and YouTube thumbnails are not TMDb art, so they never
+        set the color.
+        """
+        if self.content_mode == _CONTENT_MODE_MUSIC or self._state.is_youtube:
+            return None, None
+        tt = self._tt_bgra
+        if tt is not None and getattr(tt, "size", 0) == 0:
+            tt = None
+        poster = self._poster_bgra
+        if poster is not None and getattr(poster, "size", 0) == 0:
+            poster = None
+        return tt, poster
+
     def _effective_np_theme(self) -> _NpTheme:
-        """Settings theme, with UI hue replaced by the TMDb backdrop's peak sat."""
+        """Settings theme, with the UI hue taken from TMDb art.
+
+        TT logo color first, then the poster (backdrops are often production
+        stills that miss the title's palette), then the settings UI color.
+        White / black / gray art has no hue and falls through.
+        """
         base = np_theme_from_settings()
         if not _NP_UI_FROM_TT:
             return base
-        backdrop = self._live_tmdb_backdrop_bgr()
-        sid = id(backdrop) if backdrop is not None else None
+        tt, poster = self._theme_sources()
+        sid = (
+            id(tt) if tt is not None else None,
+            id(poster) if poster is not None else None,
+        )
         if sid != self._tt_theme_src_id:
             self._tt_theme_src_id = sid
             try:
-                from pigeon.tmdb_tt_contrast import theme_hex_from_backdrop_bgr
+                from pigeon.tmdb_tt_contrast import theme_hex_from_tt_bgra
 
-                self._tt_theme_hex = theme_hex_from_backdrop_bgr(backdrop)
+                self._tt_theme_hex = theme_hex_from_tt_bgra(tt) or theme_hex_from_tt_bgra(
+                    poster
+                )
             except Exception:
                 self._tt_theme_hex = None
         hex_c = str(self._tt_theme_hex or "").strip()
