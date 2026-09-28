@@ -5,7 +5,8 @@ Toggle with [1] while the idle clock saver is up. Does not replace
 capture thread also publishes a log-spaced FFT spectrum for the zone-6
 visualizer.
 
-Capture runs off the Tk thread (``arecord`` → hw:2,0, 48 kHz S16_LE stereo).
+Capture runs off the Tk thread (``arecord`` → first ALSA capture device, USB
+preferred, 48 kHz S16_LE stereo).
 Green bars scale vertically from the authored bottom. Brown ``LFE_group``
 slabs sit at a fixed height equal to the meter bar *width* and grow *outward*
 from the meters to the screen edges with mono bass energy (4-pole IIR lowpass,
@@ -77,7 +78,7 @@ FRAMES_PER_CHUNK = 384  # 8 ms at 48 kHz; matched to arecord -F 8000
 RMS_WINDOW_FRAMES = 384  # unused for display; chunk length only
 FULL_SCALE = 32768.0
 DIAG_PERIOD_S = 8.0
-DEFAULT_ALSA_DEVICE = "hw:2,0"
+ASOUND_ROOT = Path("/proc/asound")
 ALSA_PERIOD_US = 8_000  # keep USB capture from arriving in 100 ms+ lumps
 ALSA_BUFFER_US = 32_000
 # LFE width: 4 cascaded one-poles ~60 Hz on a mono (L+R)/2 mix, run at
@@ -102,6 +103,7 @@ _start_lock = threading.Lock()
 _capture_gen = 0
 _keep_capture_until = 0.0
 _logged_capture_fail = False
+_logged_no_device = False
 _logged_banner = False
 _last_capture_busy_log = 0.0
 CAPTURE_HOLD_AFTER_UNWANTED_S = 2.5
@@ -1499,16 +1501,50 @@ def _normalized_rms(x: np.ndarray) -> float:
     return float(np.sqrt(np.mean(x * x)))
 
 
-def _alsa_device() -> str:
-    return os.environ.get("PIGEON_ALSA_CAPTURE_DEVICE", DEFAULT_ALSA_DEVICE).strip() or DEFAULT_ALSA_DEVICE
+def _capture_devices(root: Path = ASOUND_ROOT) -> list[str]:
+    """ALSA capture PCMs as ``hw:CARD=<id>,DEV=<n>``, USB cards first.
+
+    Card indexes shift when the USB interface is missing (on the Pi an HDMI
+    output took ``hw:2`` and the bars sat static), so address cards by name.
+    """
+    found: list[tuple[int, int, int, str]] = []
+    try:
+        cards = [c for c in root.glob("card[0-9]*") if c.name[4:].isdigit()]
+    except OSError:
+        return []
+    for card in cards:
+        try:
+            card_id = (card / "id").read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        if not card_id:
+            continue
+        usb_rank = 0 if (card / "usbid").exists() else 1
+        for pcm in card.glob("pcm[0-9]*c"):
+            dev = pcm.name[3:-1]
+            if dev.isdigit():
+                found.append(
+                    (usb_rank, int(card.name[4:]), int(dev), f"hw:CARD={card_id},DEV={dev}")
+                )
+    found.sort()
+    return [name for *_, name in found]
 
 
-def _arecord_argv(arecord: str, *, low_latency: bool) -> list[str]:
+def _alsa_device() -> str | None:
+    """``PIGEON_ALSA_CAPTURE_DEVICE`` if set, else the first capture device found."""
+    forced = os.environ.get("PIGEON_ALSA_CAPTURE_DEVICE", "").strip()
+    if forced:
+        return forced
+    devices = _capture_devices()
+    return devices[0] if devices else None
+
+
+def _arecord_argv(arecord: str, device: str, *, low_latency: bool) -> list[str]:
     cmd = [
         arecord,
         "-q",
         "-D",
-        _alsa_device(),
+        device,
         "-f",
         "S16_LE",
         "-c",
@@ -1541,7 +1577,8 @@ def _print_banner_once() -> None:
     _logged_banner = True
     _log(
         "pigeon: diagnostic stereo meter — ALSA "
-        f"{_alsa_device()} 48 kHz S16_LE 2ch; [1] toggles clock saver while idle"
+        f"{_alsa_device() or '(no capture device)'} 48 kHz S16_LE 2ch; "
+        "[1] toggles clock saver while idle"
     )
     _log(
         f"pigeon: meter calibration {CALIBRATION_GAIN_DB:g} dB; "
@@ -1606,22 +1643,27 @@ def _proc_ppid_from_stat(stat_text: str) -> int:
         return 0
 
 
-def _cmdline_looks_like_arecord(cmdline: str, device: str) -> bool:
-    return "arecord" in cmdline and device in cmdline
+def _cmdline_looks_like_arecord(cmdline: str) -> bool:
+    """Match our own capture argv (the device can change between runs)."""
+    return (
+        "arecord" in cmdline
+        and f"-r {SAMPLE_RATE}" in cmdline
+        and "-f S16_LE" in cmdline
+        and "-t raw" in cmdline
+    )
 
 
 def _reap_arecord_children() -> int:
     """Kill leaked ``arecord`` on our ALSA device so capture can reopen.
 
     A second capture thread used to overwrite ``_proc`` and leave the first
-    ``arecord`` holding ``hw:2,0``. Incoming audio then never reached Python.
+    ``arecord`` holding the capture device. Incoming audio then never reached Python.
     """
     my_pid = os.getpid()
     keep: int | None = None
     proc = _proc
     if proc is not None:
         keep = int(proc.pid)
-    device = _alsa_device()
     killed = 0
     try:
         names = os.listdir("/proc")
@@ -1645,7 +1687,7 @@ def _reap_arecord_children() -> int:
             cmd = raw.replace(b"\x00", b" ").decode("utf-8", "replace")
         except Exception:
             continue
-        if not _cmdline_looks_like_arecord(cmd, device):
+        if not _cmdline_looks_like_arecord(cmd):
             continue
         try:
             os.kill(pid, signal.SIGKILL)
@@ -1696,7 +1738,7 @@ def _capture_loop_body(
     use_low_latency: bool,
 ) -> None:
     global _proc, _logged_capture_fail, _last_pcm_mono, _pcm_ever, _capture_dead
-    global _last_capture_busy_log
+    global _last_capture_busy_log, _logged_no_device
     last_diag = 0.0
     while _still_this_capture(gen):
         _kill_proc()
@@ -1706,7 +1748,22 @@ def _capture_loop_body(
             _stop.wait(0.4)
             if not _still_this_capture(gen):
                 break
-        cmd = _arecord_argv(arecord, low_latency=use_low_latency)
+        device = _alsa_device()
+        if device is None:
+            # Rescan every 2 s so a replugged interface is picked up live.
+            _capture_dead = True
+            if not _logged_no_device:
+                _logged_no_device = True
+                _log(
+                    "pigeon: meter capture: no ALSA capture device "
+                    "(USB audio interface unplugged?); visualizer has no input"
+                )
+            _stop.wait(2.0)
+            continue
+        if _logged_no_device:
+            _logged_no_device = False
+            _log(f"pigeon: meter capture: found capture device {device}")
+        cmd = _arecord_argv(arecord, device, low_latency=use_low_latency)
         try:
             _proc = subprocess.Popen(
                 cmd,
@@ -1755,7 +1812,7 @@ def _capture_loop_body(
             _capture_dead = False
             if last_diag <= 0.0:
                 last_diag = time.monotonic()
-                _log(f"pigeon: meter capture started ({_alsa_device()}{period_note})")
+                _log(f"pigeon: meter capture started ({device}{period_note})")
             pcm = np.frombuffer(raw, dtype="<i2")
             if pcm.size < CHANNELS:
                 continue
