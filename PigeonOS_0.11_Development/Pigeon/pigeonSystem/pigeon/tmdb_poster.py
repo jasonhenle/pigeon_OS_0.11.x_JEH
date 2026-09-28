@@ -592,6 +592,20 @@ def last_trt_comparison() -> dict[str, float | None]:
     return dict(_LAST_TRT)
 
 
+# What the most recent :func:`apply_tmdb_movie_query` call searched and pulled
+# (TMDb ids + image ``file_path``s) for the accuracy report. One worker runs at
+# a time, so a module global is enough.
+_LAST_FETCH_TRACE: dict[str, object] = {}
+
+
+def last_fetch_trace() -> dict[str, object]:
+    return dict(_LAST_FETCH_TRACE)
+
+
+def _trace_fetch(**fields: object) -> None:
+    _LAST_FETCH_TRACE.update(fields)
+
+
 def remember_trt_comparison(
     *,
     player_s: float | None,
@@ -3113,7 +3127,10 @@ def apply_tmdb_movie_query(
     from pigeon.display_confidence import parse_duration_seconds, trt_confidence, trt_is_reject
 
     q = query.strip()
+    _LAST_FETCH_TRACE.clear()
+    _trace_fetch(query=q, prefer_in=prefer, forgiving=forgiving)
     if not q:
+        _trace_fetch(outcome="empty")
         return False, "Empty search.", None, 0
     # Protocol: keep ORIGINAL as transient staging only; clear leftovers before each new TMDB pull.
     try:
@@ -3128,6 +3145,13 @@ def apply_tmdb_movie_query(
     service_first = _service_first_enabled(hint)
     duration = parse_duration_seconds(player_duration_s)
     remember_trt_comparison(player_s=duration, tmdb_s=None, similarity=None)
+    _trace_fetch(
+        service_hint=hint,
+        kids_bias=kids,
+        prefer=pref,
+        forgiving_mode=fg,
+        trt_player_s=duration,
+    )
 
     try:
         with player_duration_hint(duration):
@@ -3172,17 +3196,26 @@ def apply_tmdb_movie_query(
                         if item is not None:
                             break
     except RuntimeError as e:
+        _trace_fetch(outcome="error", failure=str(e))
         return False, str(e), None, 0
     except urllib.error.HTTPError as e:
+        _trace_fetch(outcome="error", failure=f"TMDb API error ({e.code}): {e.reason}")
         return False, f"TMDb API error ({e.code}): {e.reason}", None, 0
     except urllib.error.URLError as e:
+        _trace_fetch(outcome="error", failure=f"TMDb network error: {e.reason}")
         return False, f"TMDb network error: {e.reason}", None, 0
     except (json.JSONDecodeError, OSError, ValueError) as e:
+        _trace_fetch(outcome="error", failure=str(e))
         return False, str(e), None, 0
 
     if item is None or kind is None:
         variants = _service_augmented_search_queries(
             q, service_hint=hint, forgiving=fg, service_first=service_first
+        )
+        _trace_fetch(
+            outcome="no_match",
+            failure="No movie or TV show found",
+            variants=list(variants),
         )
         tried_line = (
             "Variants tried: " + ", ".join(repr(x) for x in variants) + "\n"
@@ -3213,7 +3246,19 @@ def apply_tmdb_movie_query(
         tmdb_s = None
     similarity = trt_confidence(duration, runtime_opts)
     remember_trt_comparison(player_s=duration, tmdb_s=tmdb_s, similarity=similarity)
+    _trace_fetch(
+        kind=kind,
+        tmdb_id=item.get("id"),
+        tmdb_title=_display_title(item, kind),
+        tmdb_year=str(item.get("release_date") or item.get("first_air_date") or "")[:4],
+        trt_tmdb_s=tmdb_s,
+        trt_similarity=similarity,
+    )
     if duration is not None and trt_is_reject(duration, runtime_opts):
+        _trace_fetch(
+            outcome="runtime_reject",
+            failure="TMDb runtime does not match the Apple TV duration",
+        )
         return (
             False,
             "TMDb runtime does not match the Apple TV duration.\n\n"
@@ -3236,6 +3281,7 @@ def apply_tmdb_movie_query(
             display_title = canon
     tk = title_key(display_title)
     parts: list[str] = [display_title]
+    _trace_fetch(match_tier=match_tier, display_title=display_title, title_key=tk)
 
     # --- Cast (enough for two 3-up strips: zone4 + zone5) ---
     try:
@@ -3258,6 +3304,15 @@ def apply_tmdb_movie_query(
 
     # --- Poster: routinely pull/cache alongside TT + BD ---
     pp = _poster_path_from_item_or_images(item, images)
+    _trace_fetch(
+        poster_path=pp,
+        logo_path=_logo_path_from_images(images),
+        logo_count=len(images.get("logos") or []),
+        backdrop_count=len(images.get("backdrops") or []),
+        poster_ok=False,
+        logo_ok=False,
+        backdrop_ok=False,
+    )
     if not pp:
         parts.append("poster: none")
     else:
@@ -3272,6 +3327,7 @@ def apply_tmdb_movie_query(
                 parts.append(f"poster: cache failed ({e})")
             else:
                 parts.append(f"poster: {p_pulled.name}")
+                _trace_fetch(poster_ok=True)
             _maybe_delete_pulled(p_pulled)
         else:
             parts.append(f"poster: download failed ({msg_p})")
@@ -3280,6 +3336,7 @@ def apply_tmdb_movie_query(
     logo_cached = find_cached_reformatted_asset(tk, ASSET_LOGO_EN)
     if logo_cached is not None:
         parts.append("logo: en cache")
+        _trace_fetch(logo_ok=True, logo_source="cache", logo_file=str(logo_cached))
     else:
         lp = _logo_path_from_images(images)
         if lp:
@@ -3288,6 +3345,7 @@ def apply_tmdb_movie_query(
                 try:
                     copy_pulled_to_reformatted(logo_path, tk, ASSET_LOGO_EN)
                     parts.append(f"logo: {logo_path.name}")
+                    _trace_fetch(logo_ok=True, logo_source="download")
                 except OSError as e:
                     parts.append(f"logo: copy failed ({e})")
                 _maybe_delete_pulled(logo_path)
@@ -3298,6 +3356,7 @@ def apply_tmdb_movie_query(
 
     # --- Backdrop: always random from API ---
     bp = _random_backdrop_path(images)
+    _trace_fetch(backdrop_path=bp)
     if not bp:
         parts.append("backdrop: none")
     else:
@@ -3310,11 +3369,13 @@ def apply_tmdb_movie_query(
             else:
                 parts.append(f"backdrop: {bd_pulled.name}")
             backdrop_master = backdrop_master_bgr_from_file(bd_pulled)
+            _trace_fetch(backdrop_ok=backdrop_master is not None)
             _maybe_delete_pulled(bd_pulled)
         else:
             parts.append(f"backdrop: download failed ({msg_b})")
 
     summary = " | ".join(parts)
     trim_pulled_media_dir()
+    _trace_fetch(outcome="match", summary=summary)
     # Prefix title_key + display_title so the UI can render a text fallback when no English logo exists.
     return True, f"{tk}::{display_title}::{summary}", backdrop_master, match_tier

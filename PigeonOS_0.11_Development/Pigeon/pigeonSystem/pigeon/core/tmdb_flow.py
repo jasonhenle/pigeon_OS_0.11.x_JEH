@@ -741,6 +741,12 @@ def on_tmdb_quality_error_report_hotkey(event: tk.Event, *, TMDB_QUALITY_UNLOG_W
         )
     except Exception:
         pass
+    try:
+        from pigeon.accuracy_report import report_flag
+
+        report_flag(display_title=active_tmdb_display_title[0])
+    except Exception:
+        pass
     # One full rule cycle only (auto-chained on failure in finish_tmdb).
     tmdb_error_flag_retry_active[0] = True
     tmdb_error_flag_retry_rule_idx[0] = 0
@@ -1002,6 +1008,44 @@ def _tmdb_info_current_and_available(*, _tmdb_spawn_identity, active_tmdb_title_
     return False
 
 
+def _streaming_service_label(apple_tv_auto_state, streaming_badge_state) -> str:
+    lab = str((streaming_badge_state or {}).get("label") or "").strip()
+    if lab:
+        return lab
+    md = apple_tv_auto_state.get("last_metadata")
+    if isinstance(md, dict):
+        return str(md.get("app_name") or md.get("app_id") or "").strip()
+    return ""
+
+
+def _report_live_state(
+    state: str,
+    *,
+    apple_tv_auto_state,
+    streaming_badge_state,
+    query: str = "",
+    refined_query: str = "",
+    prefer: str = "",
+) -> None:
+    """Now-playing snapshot for the Mac accuracy report's live view."""
+    try:
+        from pigeon.accuracy_report import report_live
+
+        md = apple_tv_auto_state.get("last_metadata")
+        report_live(
+            state=state,
+            metadata=md if isinstance(md, dict) else None,
+            streaming_service=_streaming_service_label(
+                apple_tv_auto_state, streaming_badge_state
+            ),
+            query=query,
+            refined_query=refined_query,
+            prefer=prefer,
+        )
+    except Exception:
+        pass
+
+
 def spawn_tmdb_poster_fetch(
     query: str, *, prefer: str = "auto", force: bool = False
 , BACKDROP_BRIGHTNESS, TMDB_ERROR_FLAG_RETRY_RULES, _PIGEON_EXT, _append_tmdb_quality_event_report_log, _apply_netflix_backdrop_when_running, _apply_rawtitle_text_tt_fallback, _backdrop_master_from_streaming_app_logo, _cancel_tmdb_quality_auto_unlog_timer, _clear_now_playing_view_caches, _clear_tmdb_missing_art, _mark_tmdb_missing_art, _perform_tmdb_error_flag_retry, _save_persisted_scene_enabled, _sync_now_playing_screen_state, _tmdb_match_tier_acceptable, _tmdb_spawn_identity, _tmdb_spawn_identity_changed, _view_one_uses_now_playing_screen, _vv_is_music, _vv_is_youtube, _warm_status_bar_blits, _warm_tmdb_logo_patch, active_tmdb_display_title, active_tmdb_title_key, apple_tv_auto_state, apple_tv_playback_clock, backdrop_app_logo_letterbox_fit, backdrop_master_bgr, brightness_current, brightness_from, brightness_t0, brightness_target, cap, last_frame, playing, render_once, root, saved_backdrop_app_logo_letterbox_fit, saved_backdrop_master_bgr, scaled_display, scaled_version, scene_enabled, skip_cache, spawn_tmdb_poster_fetch, status_bar_widget, streaming_badge_state, tmdb_error_flag_retry_active, tmdb_error_flag_retry_rule_idx, tmdb_logo_app_fallback_active, tmdb_logo_widget, tmdb_logo_widget_view_six, tmdb_quality_error_flag, tmdb_quality_last_scored_event_key, use_backdrop_scene) -> None:
@@ -1025,6 +1069,11 @@ def spawn_tmdb_poster_fetch(
     del force  # kept for call-site compat; queueing replaces concurrent force
 
     if _vv_is_music() or _vv_is_youtube():
+        _report_live_state(
+            "youtube" if _vv_is_youtube() else "music",
+            apple_tv_auto_state=apple_tv_auto_state,
+            streaming_badge_state=streaming_badge_state,
+        )
         # Clear any prior fetch breadcrumbs so the debug view doesn't
         # show stale values carried over from the previous track/video.
         apple_tv_auto_state["last_tmdb_fetch_input"] = None
@@ -1115,6 +1164,53 @@ def spawn_tmdb_poster_fetch(
         append_pigeon_log(f"tmdb fetch started: {q!r} prefer={prefer_n!r}")
     except Exception:
         pass
+    fetch_t0 = time.monotonic()
+    fetch_trigger = "flag_retry" if tmdb_error_flag_retry_active[0] else "auto"
+    _report_live_state(
+        "searching",
+        apple_tv_auto_state=apple_tv_auto_state,
+        streaming_badge_state=streaming_badge_state,
+        query=q_in,
+        refined_query=q,
+        prefer=prefer_n,
+    )
+
+    def _report_fetch(
+        ok_r: bool,
+        msg_r: str,
+        tier_r: int,
+        tier_ok_r: bool,
+        used_q_r: str,
+        attempts_r: list[dict] | None,
+        *,
+        tt_source: str,
+        backdrop_source: str,
+    ) -> None:
+        try:
+            from pigeon.accuracy_report import report_fetch_event
+
+            md_r = apple_tv_auto_state.get("last_metadata")
+            report_fetch_event(
+                metadata=md_r if isinstance(md_r, dict) else None,
+                streaming_service=_streaming_service_label(
+                    apple_tv_auto_state, streaming_badge_state
+                ),
+                query_in=q_in,
+                refined_query=q,
+                used_query=used_q_r or q,
+                prefer=prefer_n,
+                trigger=fetch_trigger,
+                ok=ok_r,
+                message=msg_r,
+                match_tier=tier_r,
+                tier_ok=tier_ok_r,
+                attempts=attempts_r,
+                tt_source=tt_source,
+                backdrop_source=backdrop_source,
+                started_mono=fetch_t0,
+            )
+        except Exception:
+            pass
     # Show searching spinner in the poster immediately.
     if _view_one_uses_now_playing_screen():
         _sync_now_playing_screen_state()
@@ -1140,6 +1236,7 @@ def spawn_tmdb_poster_fetch(
         backdrop_master: np.ndarray | None = None,
         match_tier: int = 0,
         search_query: str = "",
+        attempts: list[dict] | None = None,
     ) -> None:
         apple_tv_auto_state["tmdb_fetch_in_flight"] = False
         sys.stderr.write(f"pigeon: tmdb → {msg_m}\n")
@@ -1200,6 +1297,24 @@ def spawn_tmdb_poster_fetch(
                 )
             except Exception:
                 pass
+            # The error-flag path retries the next rule before any fallback.
+            retrying = bool(
+                tmdb_error_flag_retry_active[0]
+                and tmdb_error_flag_retry_rule_idx[0] < len(TMDB_ERROR_FLAG_RETRY_RULES)
+            )
+            text_tt = False if retrying else _apply_rawtitle_text_tt_fallback()
+            _report_fetch(
+                False,
+                msg_m,
+                int(match_tier),
+                tier_ok,
+                search_query,
+                attempts,
+                tt_source=(
+                    "retrying" if retrying else "text_fallback" if text_tt else "app_logo"
+                ),
+                backdrop_source="none",
+            )
             # Error-flag path: auto-advance through one full rule cycle, then give up.
             if tmdb_error_flag_retry_active[0]:
                 if tmdb_error_flag_retry_rule_idx[0] < len(TMDB_ERROR_FLAG_RETRY_RULES):
@@ -1215,7 +1330,7 @@ def spawn_tmdb_poster_fetch(
                 _mark_tmdb_missing_art(
                     identity=_tmdb_spawn_identity(q_in, prefer_n)
                 )
-            if _apply_rawtitle_text_tt_fallback():
+            if text_tt:
                 if tmdb_logo_widget is not None:
                     tmdb_logo_widget.clear_cache()
                 if tmdb_logo_widget_view_six is not None:
@@ -1311,6 +1426,32 @@ def spawn_tmdb_poster_fetch(
                         if status_bar_widget.set_accent_from_backdrop_bgr(bd_arr):
                             _warm_status_bar_blits()
                             skip_cache[0] = None
+        win_trace: dict = {}
+        for a in attempts or []:
+            if isinstance(a, dict) and a.get("query") == (search_query or q):
+                win_trace = a
+        if not tier_ok:
+            tt_src = "text_fallback"
+        elif win_trace.get("logo_ok"):
+            tt_src = "tmdb_logo"
+        else:
+            tt_src = "title_text"
+        if backdrop_master is not None:
+            bd_src = "tmdb"
+        elif bd_use is not None:
+            bd_src = "app_logo"
+        else:
+            bd_src = "none"
+        _report_fetch(
+            True,
+            msg_m,
+            int(match_tier),
+            tier_ok,
+            search_query,
+            attempts,
+            tt_source=tt_src,
+            backdrop_source=bd_src,
+        )
         # Match-quality counters: score only when TMDb material changes to a
         # new content event key (not on same-content retries/refetches).
         if active_tmdb_title_key[0]:
@@ -1353,10 +1494,11 @@ def spawn_tmdb_poster_fetch(
 
     def worker() -> None:
         used_q = q
+        attempts: list[dict] = []
         try:
             from pigeon.display_confidence import player_duration_seconds
             from pigeon.raw_title import tmdb_query_candidates_from_metadata
-            from pigeon.tmdb_poster import apply_tmdb_movie_query
+            from pigeon.tmdb_poster import apply_tmdb_movie_query, last_fetch_trace
 
             candidates: list[str] = []
             md_raw = apple_tv_auto_state.get("last_metadata")
@@ -1392,6 +1534,7 @@ def spawn_tmdb_poster_fetch(
                     app_id=app_ident,
                     player_duration_s=player_dur,
                 )  # type: ignore[arg-type]
+                attempts.append(last_fetch_trace())
                 used_q = cand
                 if ok_try and _tmdb_match_tier_acceptable(cand, int(tier_try)):
                     ok_w, msg_w, bd_w, tier_w = ok_try, msg_try, bd_try, tier_try
@@ -1408,6 +1551,7 @@ def spawn_tmdb_poster_fetch(
                         app_id=app_ident,
                         player_duration_s=player_dur,
                     )  # type: ignore[arg-type]
+                    attempts.append(last_fetch_trace())
                     used_q = cand
                     if ok_try:
                         ok_w, msg_w, bd_w, tier_w = ok_try, msg_try, bd_try, tier_try
@@ -1416,8 +1560,8 @@ def spawn_tmdb_poster_fetch(
             ok_w, msg_w, bd_w, tier_w, used_q = False, str(e), None, 0, q
         root.after(
             0,
-            lambda o=ok_w, m=msg_w, b=bd_w, t=tier_w, sq=used_q: finish_tmdb(
-                o, m, b, t, sq
+            lambda o=ok_w, m=msg_w, b=bd_w, t=tier_w, sq=used_q, at=attempts: finish_tmdb(
+                o, m, b, t, sq, at
             ),
         )
 
