@@ -5,7 +5,7 @@ One flat page opened from main settings box1. Everything is edited in place;
 nothing opens a sub-page except the zip keyboard, the timezone dropdown and
 the update popup. Focus order (spec "settings_pigeon_0.11")::
 
-    EXIT → ZIP → TIMEZONE → 7 UI colors → 3 options → RESET → UPDATE
+    EXIT → ZIP → TIMEZONE → 7 UI colors → 4 options → RESET → UPDATE
 
 The clock, version, and the wifi / metadata / audio lights are not selectable.
 Moving focus across the color row previews that theme live; activating a
@@ -67,7 +67,7 @@ UI_COLOR_KEYS: tuple[str, ...] = (
     "grey",
     "white",
 )
-OPTION_NUMBERS: tuple[int, ...] = (1, 2, 3)
+OPTION_NUMBERS: tuple[int, ...] = (1, 2, 3, 4)
 
 _FOCUS_RING: tuple[str, ...] = (
     ("exit", "zipcode", "timezone")
@@ -175,11 +175,17 @@ def _child_with(group: ET.Element | None, *fragments: str) -> ET.Element | None:
 
 
 def _option_group(root: ET.Element, n: int) -> ET.Element | None:
+    """Option ``n``'s tile group, by group id or (``optionv_visualizer_grpup``
+    for option 4) by its ``option{n}_`` children."""
     container = _by_id(root, "settings_option_group", "settings_options_group")
     if container is None:
         return None
+    prefix = f"option{n}_"
     for el in container:
-        if str(el.get("id") or "").startswith(f"option{n}_"):
+        if str(el.get("id") or "").startswith(prefix):
+            return el
+    for el in container:
+        if any(str(c.get("id") or "").startswith(prefix) for c in el):
             return el
     return None
 
@@ -287,23 +293,37 @@ def _sync_version_text(root: ET.Element, state: MainSettingsState) -> None:
 
 
 def _sync_status_lights(root: ET.Element, state: MainSettingsState) -> None:
-    wifi_ok = bool(str(getattr(state, "live_wifi_ssid", "") or "").strip()) and not bool(
-        getattr(state, "wifi_logged_out", False)
+    """Wifi / metadata / audio tiles: green = working, red = not. Glyphs are
+    always black (the audio glyph's middle ring shows the tile color)."""
+    wifi_ok = not bool(getattr(state, "wifi_logged_out", False)) and (
+        bool(str(getattr(state, "live_wifi_ssid", "") or "").strip())
+        or bool(getattr(state, "pigeon_network_ok", False))
     )
     meta_ok = bool(getattr(state, "pigeon_metadata_ok", False))
     audio_ok = bool(getattr(state, "pigeon_audio_ok", False))
+
+    def _tile(ok: bool) -> str:
+        return _COLOR_STATUS_OK if ok else _COLOR_STATUS_BAD
+
     wifi = _by_id(root, "settings_input_wifi_button")
     if wifi is not None:
-        _set_paint(wifi, fill=_COLOR_STATUS_OK if wifi_ok else _COLOR_STATUS_BAD, stroke="none")
+        _set_paint(wifi, fill=_tile(wifi_ok), stroke="none")
     meta = _by_id(root, "settings_input_metadata_button")
     if meta is not None:
-        _set_paint(meta, fill=_COLOR_STATUS_OK if meta_ok else _COLOR_STATUS_BAD, stroke="none")
-    inner = _by_id(root, "settings_input_audio_dot_inner")
-    if inner is not None:
-        _set_paint(inner, fill=_COLOR_BLACK, stroke=_COLOR_BLACK)
-    middle = _by_id(root, "settings_input_audio_dot_middle")
-    if middle is not None:
-        _set_paint(middle, fill=_COLOR_STATUS_OK if audio_ok else _COLOR_BLACK, stroke="none")
+        _set_paint(meta, fill=_tile(meta_ok), stroke="none")
+    # Text with no fill rasterizes white; the </> glyph is black.
+    _paint_text(_by_id(root, "settings_input_metadata_icon"), _COLOR_BLACK)
+    audio = _by_id(root, "settings_pigeon_09_audio_button", "settings_input_audio_button")
+    if audio is not None:
+        _set_paint(audio, fill=_tile(audio_ok), stroke="none")
+    for dot, fill in (
+        ("settings_input_audio_dot_outter", _COLOR_BLACK),
+        ("settings_input_audio_dot_middle", _tile(audio_ok)),
+        ("settings_input_audio_dot_inner", _COLOR_BLACK),
+    ):
+        el = _by_id(root, dot)
+        if el is not None:
+            _set_paint(el, fill=fill, stroke=_COLOR_BLACK if dot.endswith("inner") else "none")
 
 
 def _svg_y(el: ET.Element | None) -> float | None:
@@ -594,6 +614,9 @@ def render_pigeon_settings_bgra(
     st = state if state is not None else MainSettingsState()
     root = _svg_tree_from_path(path)
     apply_pigeon_settings_svg_state(root, st)
+    # The export bakes clipped stripes into ``background``; hide them before
+    # the clip pass, which would otherwise lift them on top of the page.
+    _set_visible(_by_id(root, "background"), False)
     _prune_display_none(root)
     dropdown_root = copy.deepcopy(root) if getattr(st, "tz_dropdown_open", False) else None
     # Before the background sweep: it hides rotated rects, which would empty

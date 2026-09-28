@@ -33,6 +33,7 @@ from pathlib import Path
 
 import numpy as np
 
+from pigeon import zone4_eq as _zone4_eq
 from pigeon.compositing import apply_layer_opacity as _apply_layer_opacity
 from pigeon.design import DESIGN_H, DESIGN_W
 
@@ -1778,6 +1779,8 @@ def _capture_loop_body(
             )
             _push_spectrum_mono(mono)
             _push_scope_bass(y_lfe)
+            if _zone4_eq.enabled():
+                _zone4_eq.feed_pcm_stereo(stereo_f[:, 0], stereo_f[:, 1], float(SAMPLE_RATE))
             now = time.monotonic()
             if now - last_diag >= DIAG_PERIOD_S:
                 last_diag = now

@@ -81,6 +81,7 @@ class FocusRingTests(unittest.TestCase):
                 "option:1",
                 "option:2",
                 "option:3",
+                "option:4",
                 "reset",
                 "update",
             ),
@@ -129,12 +130,43 @@ class PageStateTests(_IsolatedStateTest):
         root = self._root(st)
         self.assertEqual(ps._by_id(root, "settings_input_wifi_button").get("fill"), "#58FF00")
         self.assertEqual(ps._by_id(root, "settings_input_metadata_button").get("fill"), "#FF0000")
+        self.assertEqual(ps._by_id(root, "settings_pigeon_09_audio_button").get("fill"), "#58FF00")
         self.assertEqual(ps._by_id(root, "settings_input_audio_dot_middle").get("fill"), "#58FF00")
         st = MainSettingsState(live_wifi_ssid="", pigeon_metadata_ok=True, pigeon_audio_ok=False)
         root = self._root(st)
         self.assertEqual(ps._by_id(root, "settings_input_wifi_button").get("fill"), "#FF0000")
         self.assertEqual(ps._by_id(root, "settings_input_metadata_button").get("fill"), "#58FF00")
-        self.assertEqual(ps._by_id(root, "settings_input_audio_dot_middle").get("fill"), "#000000")
+        # Audio off: red tile; the middle ring follows the tile, not black.
+        self.assertEqual(ps._by_id(root, "settings_pigeon_09_audio_button").get("fill"), "#FF0000")
+        self.assertEqual(ps._by_id(root, "settings_input_audio_dot_middle").get("fill"), "#FF0000")
+
+    def test_wifi_light_uses_network_route_when_ssid_hidden(self) -> None:
+        # macOS hides the SSID from apps; wired links have none.
+        root = self._root(MainSettingsState(live_wifi_ssid="", pigeon_network_ok=True))
+        self.assertEqual(ps._by_id(root, "settings_input_wifi_button").get("fill"), "#58FF00")
+        root = self._root(
+            MainSettingsState(live_wifi_ssid="", pigeon_network_ok=True, wifi_logged_out=True)
+        )
+        self.assertEqual(ps._by_id(root, "settings_input_wifi_button").get("fill"), "#FF0000")
+
+    def test_status_glyphs_are_black(self) -> None:
+        for ok in (True, False):
+            root = self._root(MainSettingsState(pigeon_metadata_ok=ok, pigeon_audio_ok=ok))
+            icon = ps._by_id(root, "settings_input_metadata_icon")
+            self.assertEqual(icon.get("fill"), "#000000")
+            for dot in ("settings_input_audio_dot_outter", "settings_input_audio_dot_inner"):
+                self.assertEqual(ps._by_id(root, dot).get("fill"), "#000000", dot)
+
+    def test_rendered_status_glyphs_have_no_white(self) -> None:
+        st = MainSettingsState(pigeon_network_ok=True, pigeon_metadata_ok=True, pigeon_audio_ok=True)
+        frame = ps.render_pigeon_settings_bgra(st)
+        x0, _ = ps._svg_to_px(1652.62, 0)
+        x1, _ = ps._svg_to_px(1795.59, 0)
+        _, y0 = ps._svg_to_px(0, 723.31)
+        _, y1 = ps._svg_to_px(0, 763.26)
+        tiles = frame[int(y0) : int(y1), int(x0) : int(x1), :3].astype(int)
+        whiteish = (tiles.min(axis=2) > 200).sum()
+        self.assertEqual(int(whiteish), 0)
 
     def test_version_text_is_right_aligned_pigeon_version(self) -> None:
         root = self._root(MainSettingsState(version_string="0.11.40"))
@@ -150,8 +182,10 @@ class PageStateTests(_IsolatedStateTest):
         self.assertEqual("".join(ps._by_id(root, "zipcode_00000_text").itertext()), "21710")
 
     def test_toggle_knob_sits_beside_active_label(self) -> None:
-        root = self._root(MainSettingsState(options_values={"time_format": "24"}))
-        for n, is_b in ((1, True), (2, False), (3, False)):
+        root = self._root(
+            MainSettingsState(options_values={"time_format": "24", "zone4_mode": "visualizer"})
+        )
+        for n, is_b in ((1, True), (2, False), (3, False), (4, True)):
             group = ps._option_group(root, n)
             knobs = [
                 ps._child_with(group, "toggle_a_shape"),
@@ -207,6 +241,17 @@ class NavigationTests(_IsolatedStateTest):
         from pigeon.widgets.options_settings import read_options
 
         self.assertEqual(read_options()["temp_format"], "c")
+
+    def test_option4_toggles_zone4_visualizer(self) -> None:
+        from pigeon.widgets.options_settings import zone4_visualizer_on
+
+        w = self._widget()
+        self.assertFalse(zone4_visualizer_on())
+        self._focus(w, "option:4")
+        self.assertEqual(w.activate(), "options_toggle:4")
+        self.assertTrue(zone4_visualizer_on())
+        w.activate()
+        self.assertFalse(zone4_visualizer_on())
 
     def test_timezone_dropdown_sets_manual_zone(self) -> None:
         pigeon_locale._write(timezone="America/New_York", tz_source="auto")

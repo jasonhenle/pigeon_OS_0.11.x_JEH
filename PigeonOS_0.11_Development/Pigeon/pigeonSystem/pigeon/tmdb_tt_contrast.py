@@ -80,33 +80,59 @@ def pick_gradient_bgr(
     return (dark_bgr if lum >= float(threshold) else light_bgr, lum)
 
 
-# Below this luminance the TT is treated as "black or close to black" and is
-# recolored pure white for display on dark widgets (e.g. the countdown card).
-DARK_TT_LUMINANCE_MAX = 0.25
+# "Black" TT ink: neutral (low chroma) and dark — up to a mid-dark grey
+# (#808080), since some TMDb logos are delivered as dark / textured grey.
+# Anti-aliased / textured greys up to _TT_GREY_V_MAX flip with it so edges
+# don't keep a dark fringe.
+_TT_NEUTRAL_CHROMA_MAX = 40
+_TT_BLACK_V_MAX = 128
+_TT_GREY_V_MAX = 190
+_TT_WHITE_V_MIN = 200
+# Coverage is judged on solid ink only, so soft glows / shadows don't count.
+_TT_SOLID_ALPHA_MIN = 128
+# Black must be most of the ink, with (almost) no white and little color:
+# black-on-white or white-on-black plates, photos, and colored art with dark
+# parts (an eclipse disc, a shadowed metal logotype) are left alone.
+_TT_BLACK_FRAC_MIN = 0.6
+_TT_WHITE_FRAC_MAX = 0.1
+_TT_COLOR_FRAC_MAX = 0.25
+# A logo has a transparent surround; fully opaque art is a photo / plate.
+_TT_TRANSPARENT_FRAC_MIN = 0.01
 
 
-def whiten_dark_tt_bgra(
-    bgra: np.ndarray | None,
-    *,
-    threshold: float = DARK_TT_LUMINANCE_MAX,
-) -> np.ndarray | None:
-    """Return the TT unchanged unless it is black / near-black — then pure white.
+def whiten_dark_tt_bgra(bgra: np.ndarray | None) -> np.ndarray | None:
+    """Return the TT with black ink recolored white for dark widgets.
 
-    Dark logos (visible-pixel luminance below ``threshold``) get their RGB
-    replaced with pure white while the alpha channel (shape + anti-aliased
-    edges) is preserved. Anything brighter passes through untouched.
+    Applies when the logo's solid ink is mostly neutral near-black, with no
+    white and little color in it. Only the neutral dark / grey pixels turn
+    white; colored accents and the alpha channel (shape + anti-aliased edges)
+    are kept. Anything else passes through untouched.
     """
     if bgra is None or not isinstance(bgra, np.ndarray):
         return bgra
     if bgra.ndim != 3 or bgra.shape[2] != 4 or bgra.size == 0:
         return bgra
-    lum = relative_luminance(bgra)
-    if lum is None or lum >= float(threshold):
+    alpha = bgra[:, :, 3]
+    if float((alpha < _VISIBLE_ALPHA_MIN).mean()) < _TT_TRANSPARENT_FRAC_MIN:
+        return bgra
+    solid = alpha >= _TT_SOLID_ALPHA_MIN
+    n = int(solid.sum())
+    if n == 0:
+        return bgra
+    rgb = bgra[:, :, :3].astype(np.int16)
+    v = rgb.max(axis=2)
+    neutral = (v - rgb.min(axis=2)) <= _TT_NEUTRAL_CHROMA_MAX
+    black_frac = float((solid & neutral & (v <= _TT_BLACK_V_MAX)).sum()) / n
+    white_frac = float((solid & neutral & (v >= _TT_WHITE_V_MIN)).sum()) / n
+    color_frac = float((solid & ~neutral).sum()) / n
+    if (
+        black_frac < _TT_BLACK_FRAC_MIN
+        or white_frac > _TT_WHITE_FRAC_MAX
+        or color_frac > _TT_COLOR_FRAC_MAX
+    ):
         return bgra
     out = bgra.copy()
-    out[:, :, 0] = 255
-    out[:, :, 1] = 255
-    out[:, :, 2] = 255
+    out[neutral & (v < _TT_GREY_V_MAX), :3] = 255
     return out
 
 

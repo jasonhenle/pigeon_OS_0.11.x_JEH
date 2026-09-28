@@ -1,7 +1,8 @@
-"""System-wide options — the three toggles on settings_pigeon (0.11).
+"""System-wide options — the four toggles on settings_pigeon (0.11).
 
 ``option1`` 12 / 24 hour, ``option2`` °F / °C, ``option3`` theme / dark
-(dark = red-tinted monochrome UI). Values persist under ``settings_options``.
+(dark = red-tinted monochrome UI), ``option4`` info / visualizer (what the
+now-playing zone 4 shows). Values persist under ``settings_options``.
 
 The 0.8–0.11.38 options bar also had clock face, idle delay and clocksaver
 on/off switches. Those have no control any more, so they always read as
@@ -24,6 +25,7 @@ _DEFAULTS: dict[str, Any] = {
     "color_format": "color",
     "idle_standby": 60,
     "clock_saver": "on",
+    "zone4_mode": "info",
 }
 
 # (option number on settings_pigeon, persist key, option A value, option B value)
@@ -31,6 +33,7 @@ _SWITCHES: tuple[tuple[int, str, Any, Any], ...] = (
     (1, "time_format", "12", "24"),
     (2, "temp_format", "f", "c"),
     (3, "color_format", "color", "dark"),
+    (4, "zone4_mode", "info", "visualizer"),
 )
 
 _STATE_KEY = "settings_options"
@@ -54,6 +57,8 @@ def _normalize(raw: object) -> dict[str, Any]:
         if col in ("dark", "bw", "b/w", "mono", "gray", "grey", "redmono", "red-mono")
         else "color"
     )
+    z4 = str(raw.get("zone4_mode") or out["zone4_mode"]).strip().lower()
+    out["zone4_mode"] = "visualizer" if z4 in ("visualizer", "viz", "eq") else "info"
     return out
 
 
@@ -139,6 +144,11 @@ def temp_uses_celsius(state: MainSettingsState | None = None) -> bool:
 def ui_is_monochrome(state: MainSettingsState | None = None) -> bool:
     """option3 = dark: red-tinted monochrome UI."""
     return _vals(state)["color_format"] == "dark"
+
+
+def zone4_visualizer_on(state: MainSettingsState | None = None) -> bool:
+    """option4 = visualizer: the EQ replaces the zone-4 cast / track info."""
+    return _vals(state)["zone4_mode"] == "visualizer"
 
 
 def ui_is_bright(state: MainSettingsState | None = None) -> bool:
@@ -236,4 +246,5 @@ __all__ = [
     "ui_is_monochrome",
     "ui_paper_bgr",
     "write_options",
+    "zone4_visualizer_on",
 ]
