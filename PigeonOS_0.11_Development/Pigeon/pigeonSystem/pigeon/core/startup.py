@@ -136,7 +136,7 @@ def _apply_clock_to_bridge_label(shown: np.ndarray, *, _bgr_to_tk_image, _boot_c
 
 
 def _reveal_clock_under_splash(*, refresh: bool = False, _apply_clock_to_bridge_label, _rasterize_clock_saver_window_bgr, _splash_clock_ready_bgr, _splash_on_reveal_paint, _splash_reveal_clock, _splash_underlay_bgr, _splash_underlay_paint_mono, bootstrap_done) -> bool:
-    """From frame 90: put the live clock into the underlay + bridge beneath splash."""
+    """From the reveal frame: put the live clock into the underlay + bridge beneath splash."""
     shown = _splash_clock_ready_bgr[0]
     if shown is None or refresh:
         shown = _rasterize_clock_saver_window_bgr()

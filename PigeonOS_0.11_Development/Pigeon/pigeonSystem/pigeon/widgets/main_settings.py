@@ -997,6 +997,14 @@ class MainSettingsState:
             )
         self.focus_index = int(self.focus_index) % len(self.focus_ring)
 
+    def focus_main_button(self, logical_id: str) -> bool:
+        """Put main-page focus on ``logical_id`` when it is in the current ring."""
+        self.ensure_focus_ring()
+        if logical_id not in self.focus_ring:
+            return False
+        self.focus_index = self.focus_ring.index(logical_id)
+        return True
+
     @property
     def focused_id(self) -> str:
         self.ensure_focus_ring()

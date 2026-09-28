@@ -592,6 +592,20 @@ def last_trt_comparison() -> dict[str, float | None]:
     return dict(_LAST_TRT)
 
 
+# What the most recent :func:`apply_tmdb_movie_query` call searched and pulled
+# (TMDb ids + image ``file_path``s) for the accuracy report. One worker runs at
+# a time, so a module global is enough.
+_LAST_FETCH_TRACE: dict[str, object] = {}
+
+
+def last_fetch_trace() -> dict[str, object]:
+    return dict(_LAST_FETCH_TRACE)
+
+
+def _trace_fetch(**fields: object) -> None:
+    _LAST_FETCH_TRACE.update(fields)
+
+
 def remember_trt_comparison(
     *,
     player_s: float | None,
@@ -736,6 +750,21 @@ def _trt_score_for_item(item: dict | None) -> float | None:
     return trt_confidence(_PLAYER_DURATION_S, tmdb_runtime_seconds_options(item))
 
 
+def _trt_rejects(player_s: float | None, item: dict | None, kind: MediaKind | None) -> bool:
+    """Hard TRT reject — movies only.
+
+    TMDb TV runtimes are a typical episode length; premieres / finales often run
+    20–30 min longer (IT: Welcome to Derry: 54 min listed, 1:17 episode). For TV
+    a mismatch only lowers the rank, so a long episode cannot knock out the right
+    show in favor of an unrelated title with a closer runtime.
+    """
+    if item is None or kind == "tv":
+        return False
+    from pigeon.display_confidence import trt_is_reject
+
+    return trt_is_reject(player_s, tmdb_runtime_seconds_options(item))
+
+
 def _forced_movie_survives_trt(item: dict | None) -> dict | None:
     """Drop a forced movie shortcut when Apple TV TRT clearly disagrees."""
     if item is None:
@@ -755,16 +784,14 @@ def _prefer_duration_match(
     tv: dict | None,
 ) -> tuple[dict | None, MediaKind | None]:
     """When Apple TV TRT is known, pick the catalogue whose runtime is closer."""
-    from pigeon.display_confidence import trt_is_reject
-
     player = _PLAYER_DURATION_S
     movie_e = enrich_item_runtime(movie, "movie") if movie is not None else None
     tv_e = enrich_item_runtime(tv, "tv") if tv is not None else None
     movie_s = _trt_score_for_item(movie_e)
     tv_s = _trt_score_for_item(tv_e)
-    if movie_e is not None and trt_is_reject(player, tmdb_runtime_seconds_options(movie_e)):
+    if _trt_rejects(player, movie_e, "movie"):
         movie_e, movie_s = None, None
-    if tv_e is not None and trt_is_reject(player, tmdb_runtime_seconds_options(tv_e)):
+    if _trt_rejects(player, tv_e, "tv"):
         tv_e, tv_s = None, None
     if movie_e is not None and tv_e is not None:
         if movie_s is not None and tv_s is not None:
@@ -797,7 +824,7 @@ def _rerank_scored_by_trt(
     title_pick: dict | None,
 ) -> dict | None:
     """Prefer title hits whose TMDb runtime matches Apple TV TRT."""
-    from pigeon.display_confidence import TRT_AGREE, trt_is_reject
+    from pigeon.display_confidence import TRT_AGREE
 
     if _PLAYER_DURATION_S is None or not scored:
         return title_pick
@@ -816,7 +843,7 @@ def _rerank_scored_by_trt(
         row
         for row in ranked
         if row[2] is not None
-        and not trt_is_reject(_PLAYER_DURATION_S, tmdb_runtime_seconds_options(row[0]))
+        and not _trt_rejects(_PLAYER_DURATION_S, row[0], media_kind)
     ]
     if weak:
         return max(weak, key=lambda row: (row[2], row[1]))[0]
@@ -1711,7 +1738,39 @@ def _weak_short_acronym_match(query: str, item: dict, rank: tuple[int, int]) -> 
     return True
 
 
+# "Stephen King's It", "Tyler Perry's Madea's Big Happy Family": a 2+ word
+# creator name, possessive, then the title TMDb lists. One-word possessives
+# ("Grey's Anatomy", "Schitt's Creek") are real titles and are left alone.
+_CREATOR_POSSESSIVE_RE = re.compile(
+    r"^\s*(?:[A-Z][\w.\-]*\s+){1,2}[A-Z][\w.\-]*['\u2019]s\s+(.+)$"
+)
+
+
+def _creator_possessive_title(query: str) -> str | None:
+    m = _CREATOR_POSSESSIVE_RE.match(str(query or ""))
+    if not m:
+        return None
+    rest = m.group(1).strip()
+    return rest or None
+
+
 def _match_rank(query: str, item: dict) -> tuple[int, int]:
+    """Tier for ``query`` vs ``item``; see :func:`_match_rank_literal`.
+
+    A creator-possessive query also ranks its bare title, capped at tier 4 so
+    an exact full-title hit still wins.
+    """
+    best = _match_rank_literal(query, item)
+    bare = _creator_possessive_title(query)
+    if bare:
+        tier, neg_len = _match_rank_literal(bare, item)
+        cand = (min(tier, 4), neg_len)
+        if cand > best:
+            best = cand
+    return best
+
+
+def _match_rank_literal(query: str, item: dict) -> tuple[int, int]:
     """
     Sort key (tier, tie_break) for picking the best TMDb search hit — lexicographic **max** wins.
     ``tie_break`` is ``-len(normalized_title)`` so **shorter** titles win when tier ties
@@ -2927,6 +2986,46 @@ def _poster_path_from_item_or_images(item: dict, images: dict) -> str | None:
     return p or None
 
 
+_LOGO_OWNERS_NAME = "tmdb_logo_owners.json"
+
+
+def _logo_owners_path() -> Path:
+    # State dir, not pigeonTMDB_TT: that folder is trimmed by file count.
+    return _pigeon_state_dir() / _LOGO_OWNERS_NAME
+
+
+def _load_logo_owners() -> dict[str, str]:
+    try:
+        data = json.loads(_logo_owners_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return {str(k): str(v) for k, v in data.items()} if isinstance(data, dict) else {}
+
+
+def _save_logo_owners(owners: dict[str, str]) -> None:
+    try:
+        p = _logo_owners_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(json.dumps(owners, ensure_ascii=False, indent=0), encoding="utf-8")
+        tmp.replace(p)
+    except OSError:
+        pass
+
+
+def _drop_cached_logos(tk: str) -> bool:
+    """Delete every cached logo filed under ``tk``; True if one existed."""
+    dropped = False
+    for asset in (ASSET_LOGO_EN, ASSET_LOGO):
+        while (old := find_cached_reformatted_asset(tk, asset)) is not None:
+            try:
+                old.unlink()
+            except OSError:
+                break
+            dropped = True
+    return dropped
+
+
 def _maybe_delete_pulled(path: Path) -> None:
     if pulled_path_is_under_pulled_dir(path) and auto_delete_pulled_media():
         try:
@@ -3110,10 +3209,13 @@ def apply_tmdb_movie_query(
     scaled to uniform design canvas height for the compositor, or None if no backdrop could be
     loaded. ``match_tier`` is the :func:`_match_rank` tier (0 when no hit).
     """
-    from pigeon.display_confidence import parse_duration_seconds, trt_confidence, trt_is_reject
+    from pigeon.display_confidence import parse_duration_seconds, trt_confidence
 
     q = query.strip()
+    _LAST_FETCH_TRACE.clear()
+    _trace_fetch(query=q, prefer_in=prefer, forgiving=forgiving)
     if not q:
+        _trace_fetch(outcome="empty")
         return False, "Empty search.", None, 0
     # Protocol: keep ORIGINAL as transient staging only; clear leftovers before each new TMDB pull.
     try:
@@ -3128,6 +3230,13 @@ def apply_tmdb_movie_query(
     service_first = _service_first_enabled(hint)
     duration = parse_duration_seconds(player_duration_s)
     remember_trt_comparison(player_s=duration, tmdb_s=None, similarity=None)
+    _trace_fetch(
+        service_hint=hint,
+        kids_bias=kids,
+        prefer=pref,
+        forgiving_mode=fg,
+        trt_player_s=duration,
+    )
 
     try:
         with player_duration_hint(duration):
@@ -3172,17 +3281,26 @@ def apply_tmdb_movie_query(
                         if item is not None:
                             break
     except RuntimeError as e:
+        _trace_fetch(outcome="error", failure=str(e))
         return False, str(e), None, 0
     except urllib.error.HTTPError as e:
+        _trace_fetch(outcome="error", failure=f"TMDb API error ({e.code}): {e.reason}")
         return False, f"TMDb API error ({e.code}): {e.reason}", None, 0
     except urllib.error.URLError as e:
+        _trace_fetch(outcome="error", failure=f"TMDb network error: {e.reason}")
         return False, f"TMDb network error: {e.reason}", None, 0
     except (json.JSONDecodeError, OSError, ValueError) as e:
+        _trace_fetch(outcome="error", failure=str(e))
         return False, str(e), None, 0
 
     if item is None or kind is None:
         variants = _service_augmented_search_queries(
             q, service_hint=hint, forgiving=fg, service_first=service_first
+        )
+        _trace_fetch(
+            outcome="no_match",
+            failure="No movie or TV show found",
+            variants=list(variants),
         )
         tried_line = (
             "Variants tried: " + ", ".join(repr(x) for x in variants) + "\n"
@@ -3213,7 +3331,19 @@ def apply_tmdb_movie_query(
         tmdb_s = None
     similarity = trt_confidence(duration, runtime_opts)
     remember_trt_comparison(player_s=duration, tmdb_s=tmdb_s, similarity=similarity)
-    if duration is not None and trt_is_reject(duration, runtime_opts):
+    _trace_fetch(
+        kind=kind,
+        tmdb_id=item.get("id"),
+        tmdb_title=_display_title(item, kind),
+        tmdb_year=str(item.get("release_date") or item.get("first_air_date") or "")[:4],
+        trt_tmdb_s=tmdb_s,
+        trt_similarity=similarity,
+    )
+    if duration is not None and _trt_rejects(duration, item, kind):
+        _trace_fetch(
+            outcome="runtime_reject",
+            failure="TMDb runtime does not match the Apple TV duration",
+        )
         return (
             False,
             "TMDb runtime does not match the Apple TV duration.\n\n"
@@ -3236,6 +3366,7 @@ def apply_tmdb_movie_query(
             display_title = canon
     tk = title_key(display_title)
     parts: list[str] = [display_title]
+    _trace_fetch(match_tier=match_tier, display_title=display_title, title_key=tk)
 
     # --- Cast (enough for two 3-up strips: zone4 + zone5) ---
     try:
@@ -3258,6 +3389,15 @@ def apply_tmdb_movie_query(
 
     # --- Poster: routinely pull/cache alongside TT + BD ---
     pp = _poster_path_from_item_or_images(item, images)
+    _trace_fetch(
+        poster_path=pp,
+        logo_path=_logo_path_from_images(images),
+        logo_count=len(images.get("logos") or []),
+        backdrop_count=len(images.get("backdrops") or []),
+        poster_ok=False,
+        logo_ok=False,
+        backdrop_ok=False,
+    )
     if not pp:
         parts.append("poster: none")
     else:
@@ -3272,22 +3412,34 @@ def apply_tmdb_movie_query(
                 parts.append(f"poster: cache failed ({e})")
             else:
                 parts.append(f"poster: {p_pulled.name}")
+                _trace_fetch(poster_ok=True)
             _maybe_delete_pulled(p_pulled)
         else:
             parts.append(f"poster: download failed ({msg_p})")
 
     # --- Logo (English-only; cache first) ---
+    # The cache is keyed by title, so two TMDb items with the same title
+    # (It 1990 miniseries vs It 2017 film) share ``It_LogoEn``. Only reuse a
+    # cached logo that this TMDb item owns; otherwise drop it and re-pull.
+    lp = _logo_path_from_images(images)
+    owner = f"{kind}:{item.get('id')}:{lp}"
+    owners = _load_logo_owners()
     logo_cached = find_cached_reformatted_asset(tk, ASSET_LOGO_EN)
-    if logo_cached is not None:
+    if logo_cached is not None and lp and owners.get(tk) == owner:
         parts.append("logo: en cache")
+        _trace_fetch(logo_ok=True, logo_source="cache", logo_file=str(logo_cached))
     else:
-        lp = _logo_path_from_images(images)
+        if _drop_cached_logos(tk):
+            parts.append("logo: dropped stale cache")
+        owners.pop(tk, None)
         if lp:
             ok_l, _msg_l, logo_path = download_logo_to_pulled(item, kind, lp)
             if ok_l and logo_path is not None:
                 try:
                     copy_pulled_to_reformatted(logo_path, tk, ASSET_LOGO_EN)
                     parts.append(f"logo: {logo_path.name}")
+                    owners[tk] = owner
+                    _trace_fetch(logo_ok=True, logo_source="download")
                 except OSError as e:
                     parts.append(f"logo: copy failed ({e})")
                 _maybe_delete_pulled(logo_path)
@@ -3295,9 +3447,11 @@ def apply_tmdb_movie_query(
                 parts.append("logo: skip")
         else:
             parts.append("logo: none")
+        _save_logo_owners(owners)
 
     # --- Backdrop: always random from API ---
     bp = _random_backdrop_path(images)
+    _trace_fetch(backdrop_path=bp)
     if not bp:
         parts.append("backdrop: none")
     else:
@@ -3310,11 +3464,13 @@ def apply_tmdb_movie_query(
             else:
                 parts.append(f"backdrop: {bd_pulled.name}")
             backdrop_master = backdrop_master_bgr_from_file(bd_pulled)
+            _trace_fetch(backdrop_ok=backdrop_master is not None)
             _maybe_delete_pulled(bd_pulled)
         else:
             parts.append(f"backdrop: download failed ({msg_b})")
 
     summary = " | ".join(parts)
     trim_pulled_media_dir()
+    _trace_fetch(outcome="match", summary=summary)
     # Prefix title_key + display_title so the UI can render a text fallback when no English logo exists.
     return True, f"{tk}::{display_title}::{summary}", backdrop_master, match_tier

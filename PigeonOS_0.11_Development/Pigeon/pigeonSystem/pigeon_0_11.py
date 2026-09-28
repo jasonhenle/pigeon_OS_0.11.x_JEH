@@ -177,7 +177,7 @@ resolve_metadata_tmdb_query = None  # type: ignore[misc, assignment]
 # Splash symbols stay importable when splash group fails (call sites check paths).
 FALLBACK_SPLASH_FRAME_COUNT = 0
 SPLASH_FADE_OUT_FRAMES = 0
-SPLASH_CLOCK_REVEAL_FRAME = 90
+SPLASH_CLOCK_REVEAL_FRAME = 234
 SPLASH_FPS = 30
 SPLASH_MAX_DURATION_S = 0.0
 apply_splash_global_alpha = None  # type: ignore[misc, assignment]
@@ -973,6 +973,7 @@ def main() -> int:
     root = _main_ctx.root
     shell = _main_ctx.shell
     splash_anim_done = _main_ctx.splash_anim_done
+    splash_bootstrap_go = _main_ctx.splash_bootstrap_go
     try:
         splash_tick = _main_ctx.splash_tick
     except NameError:
@@ -1162,8 +1163,8 @@ def main() -> int:
         _boot_p14_first_render.run(ctx)
 
     if _PIGEON_EXT:
-        # Play the splash at full rate on a free UI thread. Heavy bootstrap used to run in
-        # parallel and starve ``after()``, freezing the last splash frame for many seconds.
+        # Play the splash at full rate on a free UI thread. Heavy bootstrap starves ``after()``,
+        # so it waits until the splash parks on its still logo-hold frame (148).
         _bootstrap_after_splash = _bind_deps(
             _core_splash._bootstrap_after_splash,
             _app_startup_mono=_app_startup_mono,
@@ -1171,6 +1172,7 @@ def main() -> int:
             bootstrap=bootstrap,
             root=root,
             splash_anim_done=splash_anim_done,
+            splash_bootstrap_go=splash_bootstrap_go,
         )
 
         root.after_idle(splash_tick)

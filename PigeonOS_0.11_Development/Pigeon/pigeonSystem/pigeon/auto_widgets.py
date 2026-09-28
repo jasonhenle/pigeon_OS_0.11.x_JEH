@@ -140,6 +140,9 @@ def classify_player_metadata(
 ) -> str:
     """Map player state to ok / stopped / absent."""
     md = metadata if isinstance(metadata, dict) else {}
+    if str(md.get("identity_source") or "").strip().lower() == "stale":
+        # A title carried over from a previous app is not what is playing.
+        return METADATA_ABSENT
     present = False
     try:
         from pigeon.display_confidence import (

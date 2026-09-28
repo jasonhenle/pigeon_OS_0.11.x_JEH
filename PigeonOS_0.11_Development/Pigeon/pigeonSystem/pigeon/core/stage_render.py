@@ -1247,7 +1247,7 @@ def compose_display_fast_no_grid(
         )
         if not meter_v1 and not np_live:
             canvas_np[:] = (0, 0, 0)
-        # Pre-reveal splash: black underlay. From frame 90: full clock under PNG alpha.
+        # Pre-reveal splash: black underlay. From the reveal frame: full UI under PNG alpha.
         if startup_ph[0] is not None and not _splash_reveal_clock[0]:
             pass
         elif intro_op is not None and clock_saver_composite_bgra is not None and alpha_blend_bgra_over_bgr is not None:

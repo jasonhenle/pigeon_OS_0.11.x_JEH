@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 import time
 import unittest
+from pathlib import Path
+from unittest import mock
 
 import numpy as np
 
@@ -306,3 +309,51 @@ class TitleMeterCalTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _card(root: Path, index: int, card_id: str, pcms: tuple[str, ...], *, usb: bool = False) -> None:
+    card = root / f"card{index}"
+    card.mkdir()
+    (card / "id").write_text(card_id + "\n")
+    for pcm in pcms:
+        (card / pcm).mkdir()
+    if usb:
+        (card / "usbid").write_text("0d8c:0014\n")
+
+
+class CaptureDeviceTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def test_pi_without_usb_interface_has_no_capture(self) -> None:
+        _card(self.root, 0, "Headphones", ("pcm0p",))
+        _card(self.root, 1, "vc4hdmi0", ("pcm0p",))
+        _card(self.root, 2, "vc4hdmi1", ("pcm0p",))
+        self.assertEqual(am._capture_devices(self.root), [])
+
+    def test_usb_capture_is_named_not_numbered(self) -> None:
+        _card(self.root, 0, "Headphones", ("pcm0p",))
+        _card(self.root, 1, "vc4hdmi0", ("pcm0p",))
+        _card(self.root, 3, "Device", ("pcm0p", "pcm0c"), usb=True)
+        self.assertEqual(am._capture_devices(self.root), ["hw:CARD=Device,DEV=0"])
+
+    def test_usb_card_wins_over_lower_numbered_capture(self) -> None:
+        _card(self.root, 0, "Loopback", ("pcm0c", "pcm1c"))
+        _card(self.root, 4, "Device", ("pcm0c",), usb=True)
+        self.assertEqual(
+            am._capture_devices(self.root),
+            ["hw:CARD=Device,DEV=0", "hw:CARD=Loopback,DEV=0", "hw:CARD=Loopback,DEV=1"],
+        )
+
+    def test_env_override_wins(self) -> None:
+        with mock.patch.dict(os.environ, {"PIGEON_ALSA_CAPTURE_DEVICE": "hw:5,0"}):
+            self.assertEqual(am._alsa_device(), "hw:5,0")
+
+    def test_reaper_matches_our_argv_on_any_device(self) -> None:
+        argv = am._arecord_argv("/usr/bin/arecord", "hw:CARD=Device,DEV=0", low_latency=True)
+        self.assertTrue(am._cmdline_looks_like_arecord(" ".join(argv)))
+        self.assertFalse(am._cmdline_looks_like_arecord("arecord -D hw:1,0 take.wav"))

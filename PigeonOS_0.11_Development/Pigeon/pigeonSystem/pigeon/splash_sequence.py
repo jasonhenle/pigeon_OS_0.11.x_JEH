@@ -1,8 +1,9 @@
 """Launch splash: PNG sequence (1280×800 RGBA) under ``pigeonAssets/pigeonSplash``.
 
 Alpha is preserved end-to-end: the overlay is a full-``shell`` layer above ``content_host``.
-Transparent PNG pixels reveal the UI underneath (clock saver from
-``SPLASH_CLOCK_REVEAL_FRAME``). Optional ``SPLASH_FADE_OUT_FRAMES`` can still apply a
+Transparent PNG pixels reveal the UI underneath (from ``SPLASH_CLOCK_REVEAL_FRAME``).
+Playback parks on ``SPLASH_HOLD_BARS_FRAME`` / ``SPLASH_HOLD_LOGO_FRAME`` while
+frames decode and bootstrap builds the UI. Optional ``SPLASH_FADE_OUT_FRAMES`` can still apply a
 global alpha ramp at the tail; default is 0 (no fade — the PNG alpha does the reveal).
 
 Authored exports may be 800×480; install letterboxes them into 1280×800 with
@@ -27,14 +28,26 @@ _LEGACY_SPLASH_SEQUENCE_DIRNAME = "P_0.5_WIDGET_splash"
 SPLASH_NOMINAL_W = 1280
 SPLASH_NOMINAL_H = 800
 SPLASH_FPS = 30
-# Hard cap so a huge folder cannot block startup for minutes.
+# Hard cap so a huge folder cannot block startup for minutes (hold time does not count).
 SPLASH_MAX_DURATION_S = 18.0
 # Last N frames: global alpha ramps 1 → 0. 0 = no software fade (PNG alpha reveals underlay).
 SPLASH_FADE_OUT_FRAMES = 0
-# 0-based frame index when the clock saver should paint under the splash
-# (``widget_pigeon_splash_00090.png`` — full hold; PNG fade starts at 92).
-# Earlier frames keep a black underlay.
-SPLASH_CLOCK_REVEAL_FRAME = 90
+# 0-based frame index when the UI should paint under the splash. The 251-frame sequence
+# must have the UI underneath by 238 (animate-off); 234 is the most opaque outro frame
+# (same full-screen bars as 073) and alpha starts opening at 235, so swapping the black
+# underlay for the UI there is invisible. Earlier frames keep a black underlay.
+SPLASH_CLOCK_REVEAL_FRAME = 234
+# Frames the splash parks on while startup work finishes (0-based, 30 fps timeline):
+#   000-073 bars fade on — 073 holds until frames through 148 are decoded.
+#   074-148 logo animates on — 148 holds while bootstrap builds the UI.
+#   149-218 resolve, 218-237 outro back to bars, 238-251 animate off over the UI.
+SPLASH_HOLD_BARS_FRAME = 73
+SPLASH_HOLD_LOGO_FRAME = 148
+# Frames decoded before playback starts (the 073 hold absorbs the rest).
+SPLASH_START_LEAD_FRAMES = 30
+# Decoded frames kept ahead of playback. Played frames are evicted, so this caps the
+# splash's memory at roughly the old 105-frame sequence instead of all 251 frames.
+SPLASH_PREBAKE_AHEAD_FRAMES = 110
 
 
 def splash_keep_alpha_for_live_clock(
@@ -47,6 +60,36 @@ def splash_keep_alpha_for_live_clock(
     and color until splash ends, then the real clock snaps forward.
     """
     return int(frame_index) >= int(reveal_frame)
+
+
+def splash_hold_released(
+    held_frame: int,
+    *,
+    total_frames: int,
+    is_cached,
+    prebake_done: bool,
+    bootstrap_done: bool,
+    hold_bars: int = SPLASH_HOLD_BARS_FRAME,
+    hold_logo: int = SPLASH_HOLD_LOGO_FRAME,
+) -> bool:
+    """True when playback may advance past ``held_frame`` (the frame on screen).
+
+    073 waits for frames through 148 to decode; 148 waits for bootstrap and the rest of
+    the sequence. Any other frame, or a sequence too short to reach a hold, never parks.
+    """
+    held = int(held_frame)
+    n = int(total_frames)
+    if held == int(hold_bars) and held < n - 1:
+        need_through = min(int(hold_logo), n - 1)
+    elif held == int(hold_logo) and held < n - 1:
+        if not bootstrap_done:
+            return False
+        need_through = n - 1
+    else:
+        return True
+    if prebake_done:
+        return True
+    return all(is_cached(k) for k in range(held + 1, need_through + 1))
 
 # Built-in sequence when ``pigeonSplash`` has no PNGs (same nominal size as the window).
 FALLBACK_SPLASH_FRAME_COUNT = 72

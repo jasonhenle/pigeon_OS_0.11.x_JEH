@@ -1,0 +1,393 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pigeon Report</title>
+<style>
+  :root {
+    --bg: #0e1013;
+    --panel: #171a1f;
+    --panel-2: #1e2229;
+    --line: #2a2f38;
+    --text: #e8eaed;
+    --muted: #8b929c;
+    --accent: #4ea6f7;
+    --ok: #3ccf6e;
+    --bad: #ff5a5f;
+    --warn: #f5b942;
+    --radius: 10px;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+  }
+  header {
+    position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 16px;
+    padding: 12px 20px; background: rgba(14,16,19,.92); backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--line);
+  }
+  h1 { font-size: 16px; margin: 0; letter-spacing: .02em; }
+  h1 span { color: var(--accent); }
+  nav { display: flex; gap: 4px; }
+  nav button, .btn {
+    background: transparent; color: var(--muted); border: 1px solid transparent;
+    padding: 6px 12px; border-radius: 8px; font: inherit; cursor: pointer;
+  }
+  nav button.on { color: var(--text); background: var(--panel-2); border-color: var(--line); }
+  .btn { border-color: var(--line); color: var(--text); text-decoration: none; }
+  .btn:hover { border-color: var(--accent); }
+  .spacer { flex: 1; }
+  .conn { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--bad); display: inline-block; }
+  .dot.on { background: var(--ok); }
+  main { padding: 20px; }
+  .tab { display: none; }
+  .tab.on { display: block; }
+  .empty { color: var(--muted); padding: 40px; text-align: center; border: 1px dashed var(--line); border-radius: var(--radius); }
+  .empty code { color: var(--text); }
+
+  /* --- live --- */
+  .devices { display: grid; grid-template-columns: repeat(auto-fit, minmax(620px, 1fr)); gap: 20px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+  .card-h { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+  .dev { font-weight: 700; font-size: 15px; }
+  .pill { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--panel-2); color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .pill.searching { background: rgba(78,166,247,.15); color: var(--accent); }
+  .pill.match { background: rgba(60,207,110,.14); color: var(--ok); }
+  .pill.fail { background: rgba(255,90,95,.14); color: var(--bad); }
+  .pill.warn { background: rgba(245,185,66,.14); color: var(--warn); }
+  .card-h .ago { margin-left: auto; color: var(--muted); font-size: 12px; }
+  .card-b { padding: 16px; }
+  .assumed { font-size: 22px; font-weight: 700; margin: 0 0 2px; }
+  .sub { color: var(--muted); font-size: 12px; margin-bottom: 14px; }
+  .failure { color: var(--bad); font-size: 13px; margin: -6px 0 12px; }
+
+  .thumbs { display: grid; grid-template-columns: 1.1fr 1.6fr .6fr; gap: 10px; margin-bottom: 16px; align-items: stretch; }
+  .thumb { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; display: flex; flex-direction: column; }
+  .thumb .img { flex: 1; display: flex; align-items: center; justify-content: center; min-height: 90px; position: relative; }
+  .thumb.tt .img { background: #000; padding: 10px; }
+  .thumb img { max-width: 100%; max-height: 150px; display: block; }
+  .thumb.bd img { width: 100%; max-height: none; aspect-ratio: 16/9; object-fit: cover; }
+  .thumb.poster img { width: 100%; max-height: none; aspect-ratio: 2/3; object-fit: cover; }
+  .thumb.tt img.whiten { filter: brightness(0) invert(1); }
+  .thumb .none { color: var(--muted); font-size: 12px; padding: 12px; text-align: center; }
+  .thumb .cap { display: flex; justify-content: space-between; gap: 6px; font-size: 11px; padding: 5px 8px; border-top: 1px solid var(--line); color: var(--muted); }
+  .yes { color: var(--ok); font-weight: 700; }
+  .no { color: var(--bad); font-weight: 700; }
+
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .kv h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 6px; }
+  .kv table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  .kv td { padding: 3px 0; vertical-align: top; border-bottom: 1px solid rgba(42,47,56,.6); }
+  .kv td:first-child { color: var(--muted); width: 42%; padding-right: 8px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; }
+  .kv td:last-child { word-break: break-word; }
+  .attempts { margin-top: 14px; font-size: 12px; }
+  .attempts h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 6px; }
+  .attempt { display: flex; gap: 8px; padding: 4px 0; border-bottom: 1px solid rgba(42,47,56,.6); }
+  .attempt code { font-size: 12px; color: var(--text); }
+  .attempt .o { min-width: 96px; }
+
+  /* --- gallery --- */
+  .toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 14px; flex-wrap: wrap; }
+  select, input[type=search] {
+    background: var(--panel); color: var(--text); border: 1px solid var(--line);
+    border-radius: 8px; padding: 6px 10px; font: inherit;
+  }
+  label.chk { display: flex; gap: 6px; align-items: center; color: var(--muted); }
+  .gallery { display: flex; flex-direction: column; gap: 10px; }
+  .grow { display: grid; grid-template-columns: 260px 1fr; gap: 14px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; }
+  .grow .meta .t { font-weight: 700; font-size: 15px; }
+  .grow .meta .q { color: var(--muted); font-size: 12px; margin-top: 4px; word-break: break-word; }
+  .grow .thumbs { margin: 0; grid-template-columns: 1.1fr 1.6fr .55fr; }
+  .grow .thumb img { max-height: 110px; }
+  .grow.flagged { border-color: var(--bad); }
+
+  /* --- log --- */
+  .logwrap { overflow: auto; border: 1px solid var(--line); border-radius: var(--radius); max-height: calc(100vh - 150px); }
+  table.log { border-collapse: collapse; font-size: 12.5px; min-width: 100%; }
+  table.log th, table.log td { padding: 6px 10px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
+  table.log th { position: sticky; top: 0; background: var(--panel-2); color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; z-index: 1; }
+  table.log tr:hover td { background: rgba(78,166,247,.05); }
+  table.log td.wrap { white-space: normal; min-width: 160px; max-width: 280px; }
+  table.log td.c { text-align: center; }
+  table.log input.note { width: 260px; background: transparent; border: 1px solid transparent; color: var(--text); padding: 4px 6px; border-radius: 6px; font: inherit; }
+  table.log input.note:focus, table.log input.note:hover { border-color: var(--line); background: var(--panel); outline: none; }
+  tr.flagged td:first-child { box-shadow: inset 3px 0 0 var(--bad); }
+  .toast { position: fixed; bottom: 20px; right: 20px; background: var(--panel-2); border: 1px solid var(--line); padding: 10px 14px; border-radius: 8px; opacity: 0; transition: opacity .2s; max-width: 60vw; }
+  .toast.on { opacity: 1; }
+  details.raw { margin-top: 12px; }
+  details.raw summary { color: var(--muted); cursor: pointer; font-size: 12px; }
+  details.raw pre { font-size: 11px; background: var(--panel-2); padding: 10px; border-radius: 8px; overflow: auto; max-height: 360px; }
+  @media (max-width: 720px) {
+    .devices { grid-template-columns: 1fr; }
+    .cols, .grow { grid-template-columns: 1fr; }
+    header { flex-wrap: wrap; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1><span>Pigeon</span> Report</h1>
+  <nav>
+    <button data-tab="live" class="on">Live</button>
+    <button data-tab="gallery">Gallery</button>
+    <button data-tab="log">Log</button>
+  </nav>
+  <div class="spacer"></div>
+  <span class="conn"><span class="dot" id="dot"></span><span id="conn">connecting…</span></span>
+  <a class="btn" href="/pigeon_accuracy.csv">Download CSV</a>
+  <button class="btn" id="exportNumbers">Export .numbers</button>
+</header>
+
+<main>
+  <section class="tab on" id="tab-live"><div class="devices" id="devices"></div></section>
+
+  <section class="tab" id="tab-gallery">
+    <div class="toolbar">
+      <select id="gDev"><option value="">All Pigeons</option></select>
+      <label class="chk"><input type="checkbox" id="gFail"> Problems only</label>
+      <input type="search" id="gSearch" placeholder="Search title / query…">
+    </div>
+    <div class="gallery" id="gallery"></div>
+  </section>
+
+  <section class="tab" id="tab-log">
+    <div class="toolbar">
+      <select id="lDev"><option value="">All Pigeons</option></select>
+      <label class="chk"><input type="checkbox" id="lFail"> Problems only</label>
+      <input type="search" id="lSearch" placeholder="Search…">
+      <span class="spacer"></span>
+      <span class="conn" id="csvPath"></span>
+    </div>
+    <div class="logwrap"><table class="log" id="log"></table></div>
+  </section>
+</main>
+<div class="toast" id="toast"></div>
+
+<script>
+const IMG = "https://image.tmdb.org/t/p/";
+let seq = 0, data = { devices: [], rows: [] }, lastOk = 0;
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+function toast(msg) {
+  const t = $("toast"); t.textContent = msg; t.classList.add("on");
+  clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove("on"), 4000);
+}
+
+document.querySelectorAll("nav button").forEach((b) => b.onclick = () => {
+  document.querySelectorAll("nav button").forEach((x) => x.classList.toggle("on", x === b));
+  document.querySelectorAll(".tab").forEach((x) => x.classList.toggle("on", x.id === "tab-" + b.dataset.tab));
+  try { localStorage.setItem("pigeonReportTab", b.dataset.tab); } catch (e) {}
+  render();
+});
+try {
+  const saved = localStorage.getItem("pigeonReportTab");
+  if (saved) document.querySelector(`nav button[data-tab="${saved}"]`)?.click();
+} catch (e) {}
+
+function ago(t) {
+  if (!t) return "";
+  const s = Math.max(0, Math.round((data.now || Date.now() / 1000) - t));
+  if (s < 60) return s + "s ago";
+  if (s < 3600) return Math.round(s / 60) + "m ago";
+  if (s < 86400) return Math.round(s / 3600) + "h ago";
+  return new Date(t * 1000).toLocaleDateString();
+}
+const when = (t) => new Date(t * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit" });
+const fmtS = (v) => {
+  if (v == null || v === "") return "";
+  v = Math.round(+v); const h = Math.floor(v / 3600), m = Math.floor(v % 3600 / 60), s = v % 60;
+  return (h ? h + ":" + String(m).padStart(2, "0") : m) + ":" + String(s).padStart(2, "0");
+};
+const yn = (b) => b ? '<span class="yes">✓</span>' : '<span class="no">✗</span>';
+const isProblem = (r) => !r.ok || !r.tt || !r.backdrop || !r.poster || r.flagged_wrong || r.tier_ok === false;
+
+function outcomePill(r) {
+  if (!r) return '<span class="pill">idle</span>';
+  if (r.flagged_wrong) return '<span class="pill fail">flagged wrong</span>';
+  if (!r.ok) return `<span class="pill fail">${esc((r.outcome || "no match").replace("_", " "))}</span>`;
+  if (!r.tt || !r.backdrop || !r.poster || r.tier_ok === false) return '<span class="pill warn">partial</span>';
+  return '<span class="pill match">match</span>';
+}
+
+function thumbs(r) {
+  const tt = r && r.tt_path, bd = r && r.backdrop_path, po = r && r.poster_path;
+  const ttCap = !r ? "" : r.tt ? (r.tt_whitened ? "white ≈ preview" : "as-is") : esc(r.tt_source || "");
+  return `<div class="thumbs">
+    <div class="thumb tt"><div class="img">${tt ? `<img src="${IMG}w300${esc(tt)}" class="${r.tt_whitened ? "whiten" : ""}" title="${r.tt_whitened ? "Pigeon whitens this TT — preview approximates it" : ""}">` : `<div class="none">${r && r.tt_source ? "shown as " + esc(r.tt_source) : "no TT"}</div>`}</div>
+      <div class="cap"><span>tmdb_tt ${r ? yn(r.tt) : ""}</span><span>${ttCap}</span></div></div>
+    <div class="thumb bd"><div class="img">${bd ? `<img src="${IMG}w500${esc(bd)}">` : `<div class="none">${r && r.backdrop_source ? "shown as " + esc(r.backdrop_source) : "no backdrop"}</div>`}</div>
+      <div class="cap"><span>tmdb_backdrop ${r ? yn(r.backdrop) : ""}</span><span>${r && !r.backdrop && r.backdrop_path ? "download failed" : ""}</span></div></div>
+    <div class="thumb poster"><div class="img">${po ? `<img src="${IMG}w185${esc(po)}">` : '<div class="none">no poster</div>'}</div>
+      <div class="cap"><span>poster ${r ? yn(r.poster) : ""}</span></div></div>
+  </div>`;
+}
+
+function kvTable(obj, keys) {
+  const rows = (keys || Object.keys(obj)).filter((k) => obj[k] !== undefined && obj[k] !== null && obj[k] !== "")
+    .map((k) => `<tr><td>${esc(k)}</td><td>${esc(Array.isArray(obj[k]) ? obj[k].join("  ·  ") : typeof obj[k] === "object" ? JSON.stringify(obj[k]) : obj[k])}</td></tr>`);
+  return `<table>${rows.join("") || '<tr><td colspan="2" style="color:var(--muted)">—</td></tr>'}</table>`;
+}
+
+function attemptsHtml(r) {
+  const a = (r && r.attempts) || [];
+  if (!a.length) return "";
+  return `<div class="attempts"><h3>TMDb attempts (in order)</h3>${a.map((x) => `
+    <div class="attempt"><span class="o">${x.outcome === "match" ? '<span class="yes">match</span>' : `<span class="no">${esc(x.outcome || "?")}</span>`}</span>
+    <code>${esc(x.query)}</code><span style="color:var(--muted)">${x.forgiving ? "forgiving" : ""} ${x.display_title ? "→ " + esc(x.display_title) + (x.kind ? " (" + esc(x.kind) + ")" : "") : ""} ${x.match_tier != null ? "tier " + x.match_tier : ""} ${x.failure && x.outcome !== "match" ? "· " + esc(x.failure) : ""}</span></div>`).join("")}</div>`;
+}
+
+const openRaw = new Set();
+document.addEventListener("toggle", (e) => {
+  const d = e.target.dataset && e.target.dataset.dev;
+  if (d) e.target.open ? openRaw.add(d) : openRaw.delete(d);
+}, true);
+
+function renderLive() {
+  const el = $("devices");
+  if (!data.devices.length) {
+    el.innerHTML = `<div class="empty">No Pigeons have reported yet.<br><br>Start Pigeon on this Mac or a Pi — each TMDb lookup shows up here.<br>
+      Pis send to <code>http://${esc(location.hostname === "localhost" ? "<this-mac>.local" : location.hostname)}:${esc(location.port)}</code> (override with <code>~/.pigeon_0_6/report_url</code>).</div>`;
+    return;
+  }
+  el.innerHTML = data.devices.map((d) => {
+    const live = d.live || {}, r = d.last_event, md = (live.metadata && Object.keys(live.metadata).length ? live.metadata : r && r.metadata) || {};
+    const searching = live.state === "searching";
+    const stale = live.t && r && live.t > r.t && live.state !== "done";
+    const pill = searching ? '<span class="pill searching">searching…</span>'
+      : live.state === "music" || live.state === "youtube" ? `<span class="pill">${esc(live.state)} (no TMDb)</span>` : outcomePill(r);
+    const query = {
+      "Apple TV query": searching ? live.query : r && r.query_in,
+      "refined query": searching ? live.refined_query : r && r.refined_query,
+      "candidates": md.query_candidates,
+      "queries tried": !searching && r ? r.queries_tried : undefined,
+      "prefer": searching ? live.prefer : r && r.prefer,
+      "service hint": r && r.service_hint,
+      "match tier": r && !searching ? `${r.match_tier}${r.tier_ok === false ? " (below threshold)" : ""}` : undefined,
+      "TRT player / TMDb": r && !searching ? `${fmtS(r.trt_player_s) || "?"} / ${fmtS(r.trt_tmdb_s) || "?"}${r.trt_similarity != null ? "  (" + Math.round(r.trt_similarity * 100) + "%)" : ""}` : undefined,
+      "TMDb": r && r.tmdb_id && !searching ? `${r.tmdb_kind} ${r.tmdb_id}${r.tmdb_year ? " · " + r.tmdb_year : ""}` : undefined,
+      "trigger": r && !searching ? r.trigger : undefined,
+      "fetch time": r && r.fetch_ms && !searching ? r.fetch_ms + " ms" : undefined,
+      "title decision": md.title_decision,
+    };
+    const mdShown = Object.fromEntries(Object.entries(md).filter(([k]) => k !== "query_candidates" && k !== "title_decision"));
+    return `<div class="card">
+      <div class="card-h"><span class="dev">${esc(d.pigeon_id)}</span>${pill}<span class="pill">${esc(live.streaming_service || (r && r.streaming_service) || "—")}</span>
+        <span class="ago">v${esc(d.pigeon_version || "?")} · seen <span data-ago="${d.last_seen || ""}">${ago(d.last_seen)}</span></span></div>
+      <div class="card-b">
+        <p class="assumed">${esc(searching ? (live.refined_query || live.query) : (r && (r.assumed_title || r.used_query)) || "—")}</p>
+        <div class="sub">${searching ? "Searching TMDb…" : r ? `Assumed title · ${when(r.t)} · Pigeon v${esc(r.pigeon_version || "?")}${stale ? " · metadata changed since" : ""}` : ""}</div>
+        ${!searching && r && r.failure ? `<div class="failure">${esc(r.failure)}</div>` : ""}
+        ${thumbs(searching ? null : r)}
+        <div class="cols">
+          <div class="kv"><h3>From the player</h3>${kvTable(mdShown)}</div>
+          <div class="kv"><h3>TMDb query</h3>${kvTable(query)}</div>
+        </div>
+        ${searching ? "" : attemptsHtml(r)}
+        ${r ? `<details class="raw" data-dev="${esc(d.pigeon_id)}" ${openRaw.has(d.pigeon_id) ? "open" : ""}><summary>Raw event JSON</summary><pre>${esc(JSON.stringify(r, null, 2))}</pre></details>` : ""}
+      </div></div>`;
+  }).join("");
+}
+
+function filtered(dev, prob, q) {
+  q = (q || "").trim().toLowerCase();
+  return data.rows.slice().reverse().filter((r) =>
+    (!dev || r.pigeon_id === dev) && (!prob || isProblem(r)) &&
+    (!q || [r.assumed_title, r.query_in, r.refined_query, r.streaming_service, r.failure, r.notes, ...(r.queries_tried || [])].join(" ").toLowerCase().includes(q)));
+}
+
+function renderGallery() {
+  const rows = filtered($("gDev").value, $("gFail").checked, $("gSearch").value).slice(0, 300);
+  $("gallery").innerHTML = rows.length ? rows.map((r) => `
+    <div class="grow ${r.flagged_wrong ? "flagged" : ""}">
+      <div class="meta"><div class="t">${esc(r.assumed_title || r.used_query || "—")}</div>
+        <div style="margin-top:6px">${outcomePill(r)} <span class="pill">${esc(r.pigeon_id)}</span> <span class="pill">v${esc(r.pigeon_version || "?")}</span> <span class="pill">${esc(r.streaming_service || "—")}</span></div>
+        <div class="q">${when(r.t)}<br>query: ${esc((r.queries_tried || []).join(" → ") || r.refined_query)}</div>
+        ${r.failure ? `<div class="q" style="color:var(--bad)">${esc(r.failure)}</div>` : ""}
+        ${r.notes ? `<div class="q" style="color:var(--text)">📝 ${esc(r.notes)}</div>` : ""}
+      </div>${thumbs(r)}</div>`).join("") : '<div class="empty">Nothing yet.</div>';
+}
+
+const LOG_COLS = [
+  ["Pigeon", (r) => esc(r.pigeon_id)],
+  ["Version", (r) => esc(r.pigeon_version || "")],
+  ["When", (r) => esc(when(r.t))],
+  ["Service", (r) => esc(r.streaming_service)],
+  ["Query terms", (r) => esc((r.queries_tried || []).join(" → ") || r.refined_query), "wrap"],
+  ["Assumed title", (r) => esc(r.assumed_title), "wrap"],
+  ["TT", (r) => yn(r.tt), "c"],
+  ["White", (r) => r.tt_whitened == null ? "" : r.tt_whitened ? "yes" : "no", "c"],
+  ["Backdrop", (r) => yn(r.backdrop), "c"],
+  ["Poster", (r) => yn(r.poster), "c"],
+  ["Failures", (r) => `<span style="color:var(--bad)">${esc(r.failure)}</span>`, "wrap"],
+  ["Wrong", (r) => `<input type="checkbox" data-flag="${esc(r.id)}" ${r.flagged_wrong ? "checked" : ""}>`, "c"],
+  ["Outcome", (r) => esc(r.outcome)],
+  ["Tier", (r) => esc(r.match_tier), "c"],
+  ["TRT", (r) => r.trt_similarity != null ? Math.round(r.trt_similarity * 100) + "%" : "", "c"],
+  ["Trigger", (r) => esc(r.trigger)],
+  ["Notes", (r) => `<input class="note" data-note="${esc(r.id)}" value="${esc(r.notes || "")}" placeholder="add a note…">`],
+];
+
+function renderLog() {
+  if (document.activeElement && document.activeElement.classList.contains("note")) return; // don't clobber typing
+  const rows = filtered($("lDev").value, $("lFail").checked, $("lSearch").value);
+  $("log").innerHTML = `<thead><tr>${LOG_COLS.map((c) => `<th>${c[0]}</th>`).join("")}</tr></thead><tbody>` +
+    rows.map((r) => `<tr class="${r.flagged_wrong ? "flagged" : ""}">${LOG_COLS.map((c) => `<td class="${c[2] || ""}">${c[1](r)}</td>`).join("")}</tr>`).join("") + "</tbody>";
+  $("csvPath").textContent = data.csv_path ? "Auto-saved to " + data.csv_path : "";
+}
+
+function syncFilters() {
+  const devs = [...new Set(data.rows.map((r) => r.pigeon_id).concat(data.devices.map((d) => d.pigeon_id)))].sort();
+  for (const id of ["gDev", "lDev"]) {
+    const sel = $(id), cur = sel.value;
+    sel.innerHTML = '<option value="">All Pigeons</option>' + devs.map((d) => `<option ${d === cur ? "selected" : ""}>${esc(d)}</option>`).join("");
+  }
+}
+
+function render() {
+  syncFilters();
+  const tab = document.querySelector("nav button.on").dataset.tab;
+  if (tab === "live") renderLive(); else if (tab === "gallery") renderGallery(); else renderLog();
+}
+
+async function annotate(body) {
+  try {
+    const r = await fetch("/api/annotate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (!(await r.json()).ok) toast("Could not save");
+  } catch (e) { toast("Could not save — is the report server running?"); }
+}
+$("log").addEventListener("change", (e) => {
+  const t = e.target;
+  if (t.dataset.flag) annotate({ id: t.dataset.flag, flagged_wrong: t.checked });
+  if (t.dataset.note != null) annotate({ id: t.dataset.note, notes: t.value });
+});
+$("log").addEventListener("keydown", (e) => { if (e.key === "Enter" && e.target.dataset.note != null) e.target.blur(); });
+["gDev", "gFail", "gSearch", "lDev", "lFail", "lSearch"].forEach((id) => $(id).addEventListener("input", render));
+
+$("exportNumbers").onclick = async () => {
+  try {
+    const r = await (await fetch("/api/export_numbers", { method: "POST" })).json();
+    toast(r.ok ? "Saved " + r.path : "Export failed: " + r.error);
+  } catch (e) { toast("Export failed"); }
+};
+
+async function poll() {
+  try {
+    const r = await (await fetch("/api/state?since=" + seq)).json();
+    lastOk = Date.now();
+    if (!r.unchanged) { data = r; seq = r.seq; render(); }
+    else { data.now = r.now; document.querySelectorAll("[data-ago]").forEach((x) => x.textContent = ago(+x.dataset.ago)); }
+  } catch (e) { /* server down */ }
+  const up = Date.now() - lastOk < 5000;
+  $("dot").classList.toggle("on", up);
+  $("conn").textContent = up ? `${data.devices.length} Pigeon${data.devices.length === 1 ? "" : "s"} · ${data.rows.length} events` : "report server offline";
+  setTimeout(poll, 1000);
+}
+poll();
+</script>
+</body>
+</html>

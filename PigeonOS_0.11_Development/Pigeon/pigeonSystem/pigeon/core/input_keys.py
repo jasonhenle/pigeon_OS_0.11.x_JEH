@@ -641,8 +641,16 @@ def _on_rotary_action(action: str, *, DevPhase, _bump_pigeon_user_activity, _ent
         except Exception:
             pass
         return
-    # First click that opens settings should not also activate a control.
+    # First click that opens settings should not also activate a control;
+    # it lands on box1 (settings_pigeon) so a second click opens that page.
     if action == "activate" and not was_main:
+        try:
+            if main_settings_widget.state.focus_main_button("main_box1_button"):
+                main_settings_widget.invalidate()
+                skip_cache[0] = None
+                render_once()
+        except Exception:
+            pass
         return
     if action == "forward":
         main_settings_widget.navigate(forward=True)
