@@ -188,6 +188,22 @@ class AutoWidgetResolveTests(unittest.TestCase):
         self.assertEqual(plan.assignments[0], CLOCK_SAVER)
         self.assertEqual(plan.assignments[2], VOLUME)
 
+    def test_stale_title_from_previous_app_is_absent(self) -> None:
+        # Netflix after It on Max: the carried-over title is marked stale.
+        md = {
+            "query": "It",
+            "title": "It",
+            "identity_source": "stale",
+            "device_state": "DeviceState.Playing",
+            "app_name": "Netflix",
+        }
+        meta = classify_player_metadata(md, playing=True)
+        self.assertEqual(meta, METADATA_ABSENT)
+        plan = resolve_auto_widgets(_sig(player_metadata=meta, audio_levels=True))
+        self.assertEqual(plan.layout, LAYOUT_ZONE6_CLOCKSAVER)
+        plan = resolve_auto_widgets(_sig(player_metadata=meta, audio_levels=False))
+        self.assertEqual(plan.layout, LAYOUT_ZONE8_CLOCKSAVER)
+
     def test_absent_metadata_without_audio_is_zone8_clocksaver(self) -> None:
         plan = resolve_auto_widgets(
             _sig(player_metadata=METADATA_ABSENT, audio_levels=False)

@@ -373,6 +373,15 @@ def metadata_has_holdable_identity(metadata: Mapping[str, Any] | None) -> bool:
     return bool(q) and not is_placeholder_identity(q)
 
 
+def _switched_apps(old: Mapping[str, Any], new: Mapping[str, Any]) -> bool:
+    """True when both polls name an app and the apps differ."""
+    def _app(md: Mapping[str, Any]) -> str:
+        return str(md.get("app_id") or md.get("app_name") or "").strip().casefold()
+
+    a, b = _app(old), _app(new)
+    return bool(a and b and a != b)
+
+
 def hold_identity_across_idle_poll(
     previous: Mapping[str, Any] | None,
     incoming: Mapping[str, Any] | None,
@@ -391,6 +400,10 @@ def hold_identity_across_idle_poll(
         return new
     old = previous if isinstance(previous, dict) else None
     if old is None or not metadata_has_holdable_identity(old):
+        return new
+    if _switched_apps(old, new):
+        # A different app (e.g. Netflix, which sends no title) is not the
+        # same show going Idle — never carry the old title into it.
         return new
     held = dict(new)
     for key in _IDENTITY_HOLD_KEYS:

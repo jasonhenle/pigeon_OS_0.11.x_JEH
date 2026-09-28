@@ -69,6 +69,28 @@ class PlayerMetadataTests(unittest.TestCase):
         self.assertFalse(dc.metadata_is_playback_idle(held))
         self.assertFalse(dc.playback_has_concluded(held))
 
+    def test_switching_apps_does_not_hold_old_title(self) -> None:
+        prev = {
+            "query": "It",
+            "title": "It",
+            "identity_source": "pyatv",
+            "identity_confidence": dc.PYATV_IDENTITY,
+            "device_state": "DeviceState.Playing",
+            "app_name": "HBO Max",
+            "app_id": "com.wbd.stream",
+        }
+        netflix = {
+            "query": "",
+            "title": "",
+            "device_state": "DeviceState.Playing",
+            "app_name": "Netflix",
+            "app_id": "com.netflix.Netflix",
+        }
+        held = dc.hold_identity_across_idle_poll(prev, netflix)
+        self.assertEqual(held["query"], "")
+        self.assertFalse(held.get("identity_held_across_idle"))
+        self.assertFalse(dc.metadata_has_holdable_identity(held))
+
     def test_idle_at_end_of_title_is_concluded(self) -> None:
         md = {
             "query": "The Big Bang Theory",
