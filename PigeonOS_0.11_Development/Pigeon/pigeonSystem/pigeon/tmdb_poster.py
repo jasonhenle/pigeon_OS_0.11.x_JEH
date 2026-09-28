@@ -2941,6 +2941,46 @@ def _poster_path_from_item_or_images(item: dict, images: dict) -> str | None:
     return p or None
 
 
+_LOGO_OWNERS_NAME = "tmdb_logo_owners.json"
+
+
+def _logo_owners_path() -> Path:
+    # State dir, not pigeonTMDB_TT: that folder is trimmed by file count.
+    return _pigeon_state_dir() / _LOGO_OWNERS_NAME
+
+
+def _load_logo_owners() -> dict[str, str]:
+    try:
+        data = json.loads(_logo_owners_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return {str(k): str(v) for k, v in data.items()} if isinstance(data, dict) else {}
+
+
+def _save_logo_owners(owners: dict[str, str]) -> None:
+    try:
+        p = _logo_owners_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(json.dumps(owners, ensure_ascii=False, indent=0), encoding="utf-8")
+        tmp.replace(p)
+    except OSError:
+        pass
+
+
+def _drop_cached_logos(tk: str) -> bool:
+    """Delete every cached logo filed under ``tk``; True if one existed."""
+    dropped = False
+    for asset in (ASSET_LOGO_EN, ASSET_LOGO):
+        while (old := find_cached_reformatted_asset(tk, asset)) is not None:
+            try:
+                old.unlink()
+            except OSError:
+                break
+            dropped = True
+    return dropped
+
+
 def _maybe_delete_pulled(path: Path) -> None:
     if pulled_path_is_under_pulled_dir(path) and auto_delete_pulled_media():
         try:
@@ -3333,18 +3373,27 @@ def apply_tmdb_movie_query(
             parts.append(f"poster: download failed ({msg_p})")
 
     # --- Logo (English-only; cache first) ---
+    # The cache is keyed by title, so two TMDb items with the same title
+    # (It 1990 miniseries vs It 2017 film) share ``It_LogoEn``. Only reuse a
+    # cached logo that this TMDb item owns; otherwise drop it and re-pull.
+    lp = _logo_path_from_images(images)
+    owner = f"{kind}:{item.get('id')}:{lp}"
+    owners = _load_logo_owners()
     logo_cached = find_cached_reformatted_asset(tk, ASSET_LOGO_EN)
-    if logo_cached is not None:
+    if logo_cached is not None and lp and owners.get(tk) == owner:
         parts.append("logo: en cache")
         _trace_fetch(logo_ok=True, logo_source="cache", logo_file=str(logo_cached))
     else:
-        lp = _logo_path_from_images(images)
+        if _drop_cached_logos(tk):
+            parts.append("logo: dropped stale cache")
+        owners.pop(tk, None)
         if lp:
             ok_l, _msg_l, logo_path = download_logo_to_pulled(item, kind, lp)
             if ok_l and logo_path is not None:
                 try:
                     copy_pulled_to_reformatted(logo_path, tk, ASSET_LOGO_EN)
                     parts.append(f"logo: {logo_path.name}")
+                    owners[tk] = owner
                     _trace_fetch(logo_ok=True, logo_source="download")
                 except OSError as e:
                     parts.append(f"logo: copy failed ({e})")
@@ -3353,6 +3402,7 @@ def apply_tmdb_movie_query(
                 parts.append("logo: skip")
         else:
             parts.append("logo: none")
+        _save_logo_owners(owners)
 
     # --- Backdrop: always random from API ---
     bp = _random_backdrop_path(images)

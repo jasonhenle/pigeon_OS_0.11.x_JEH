@@ -140,6 +140,36 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(rows[1][hdr.index("Query terms")], "a → b")
         self.assertEqual(rows[1][hdr.index("tmdb_tt")], "TRUE")
 
+    def test_pigeon_version_column_follows_pigeon_id(self) -> None:
+        ev = self._event("e1")
+        ev["pigeon_version"] = "0.11.39"
+        self.store.push("event", ev)
+        rows = list(csv.reader(io.StringIO(self.store.csv_text())))
+        hdr = rows[0]
+        self.assertEqual(hdr.index("Pigeon version"), hdr.index("Pigeon ID") + 1)
+        self.assertEqual(rows[1][hdr.index("Pigeon version")], "0.11.39")
+
+
+class LogoOwnerTests(unittest.TestCase):
+    """Same-title TMDb items (It 1990 vs It 2017) must not share a cached TT."""
+
+    def test_drop_and_owner_roundtrip(self) -> None:
+        from pigeon import tmdb_poster as tp
+        import pigeon.media_folders as mf
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            with mock.patch.object(mf, "pigeon_tmdb_root_dir", lambda: root / "tmdb"), \
+                 mock.patch.object(tp, "_pigeon_state_dir", lambda: root / "state"):
+                tt_dir = mf.pigeon_tmdb_tt_dir()
+                tt_dir.mkdir(parents=True)
+                (tt_dir / "It_LogoEn.png").write_bytes(b"2017")
+                tp._save_logo_owners({"It": "movie:346364:/a.png"})
+                self.assertEqual(tp._load_logo_owners()["It"], "movie:346364:/a.png")
+                self.assertTrue(tp._drop_cached_logos("It"))
+                self.assertFalse((tt_dir / "It_LogoEn.png").exists())
+                self.assertFalse(tp._drop_cached_logos("It"))
+
 
 if __name__ == "__main__":
     unittest.main()

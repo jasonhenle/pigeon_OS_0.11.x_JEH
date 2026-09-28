@@ -280,7 +280,7 @@ function renderLive() {
         <span class="ago">v${esc(d.pigeon_version || "?")} · seen <span data-ago="${d.last_seen || ""}">${ago(d.last_seen)}</span></span></div>
       <div class="card-b">
         <p class="assumed">${esc(searching ? (live.refined_query || live.query) : (r && (r.assumed_title || r.used_query)) || "—")}</p>
-        <div class="sub">${searching ? "Searching TMDb…" : r ? `Assumed title · ${when(r.t)}${stale ? " · metadata changed since" : ""}` : ""}</div>
+        <div class="sub">${searching ? "Searching TMDb…" : r ? `Assumed title · ${when(r.t)} · Pigeon v${esc(r.pigeon_version || "?")}${stale ? " · metadata changed since" : ""}` : ""}</div>
         ${!searching && r && r.failure ? `<div class="failure">${esc(r.failure)}</div>` : ""}
         ${thumbs(searching ? null : r)}
         <div class="cols">
@@ -305,7 +305,7 @@ function renderGallery() {
   $("gallery").innerHTML = rows.length ? rows.map((r) => `
     <div class="grow ${r.flagged_wrong ? "flagged" : ""}">
       <div class="meta"><div class="t">${esc(r.assumed_title || r.used_query || "—")}</div>
-        <div style="margin-top:6px">${outcomePill(r)} <span class="pill">${esc(r.pigeon_id)}</span> <span class="pill">${esc(r.streaming_service || "—")}</span></div>
+        <div style="margin-top:6px">${outcomePill(r)} <span class="pill">${esc(r.pigeon_id)}</span> <span class="pill">v${esc(r.pigeon_version || "?")}</span> <span class="pill">${esc(r.streaming_service || "—")}</span></div>
         <div class="q">${when(r.t)}<br>query: ${esc((r.queries_tried || []).join(" → ") || r.refined_query)}</div>
         ${r.failure ? `<div class="q" style="color:var(--bad)">${esc(r.failure)}</div>` : ""}
         ${r.notes ? `<div class="q" style="color:var(--text)">📝 ${esc(r.notes)}</div>` : ""}
@@ -314,6 +314,7 @@ function renderGallery() {
 
 const LOG_COLS = [
   ["Pigeon", (r) => esc(r.pigeon_id)],
+  ["Version", (r) => esc(r.pigeon_version || "")],
   ["When", (r) => esc(when(r.t))],
   ["Service", (r) => esc(r.streaming_service)],
   ["Query terms", (r) => esc((r.queries_tried || []).join(" → ") || r.refined_query), "wrap"],

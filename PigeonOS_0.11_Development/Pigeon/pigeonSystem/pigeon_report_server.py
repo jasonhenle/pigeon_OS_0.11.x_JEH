@@ -75,6 +75,7 @@ def _yn(v: Any) -> Any:
 # (header, row → value). Booleans stay bool so Numbers renders checkboxes.
 COLUMNS: tuple[tuple[str, Any], ...] = (
     ("Pigeon ID", lambda r: r.get("pigeon_id", "")),
+    ("Pigeon version", lambda r: r.get("pigeon_version", "")),
     ("Date", lambda r: time.strftime("%Y-%m-%d", time.localtime(r.get("t") or 0))),
     ("Time", lambda r: time.strftime("%H:%M:%S", time.localtime(r.get("t") or 0))),
     ("Streaming service", lambda r: r.get("streaming_service", "")),
@@ -111,7 +112,6 @@ COLUMNS: tuple[tuple[str, Any], ...] = (
     ("Media type", lambda r: (r.get("metadata") or {}).get("media_type", "")),
     ("App ID", lambda r: (r.get("metadata") or {}).get("app_id", "")),
     ("Title decision", lambda r: (r.get("metadata") or {}).get("title_decision", "")),
-    ("Pigeon version", lambda r: r.get("pigeon_version", "")),
     ("Event ID", lambda r: r.get("id", "")),
     ("Notes", lambda r: r.get("notes", "")),
 )

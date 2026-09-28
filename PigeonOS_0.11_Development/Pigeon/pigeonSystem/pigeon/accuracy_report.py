@@ -272,7 +272,10 @@ def report_fetch_event(
     if not ok:
         failure = str(win.get("failure") or "").strip() or message.split("\n", 1)[0]
     elif not tier_ok:
-        failure = f"match tier {match_tier} below threshold — rawTitle text TT"
+        failure = (
+            f"match tier {match_tier} below threshold — query "
+            f"{used_query!r} is a loose match for {win.get('display_title')!r}"
+        )
     else:
         missing = [
             n

@@ -1430,10 +1430,12 @@ def spawn_tmdb_poster_fetch(
         for a in attempts or []:
             if isinstance(a, dict) and a.get("query") == (search_query or q):
                 win_trace = a
-        if not tier_ok:
-            tt_src = "text_fallback"
-        elif win_trace.get("logo_ok"):
+        # A low tier keeps the match's title key, so a cached logo still wins
+        # over the rawTitle text — report what is actually on screen.
+        if win_trace.get("logo_ok"):
             tt_src = "tmdb_logo"
+        elif not tier_ok:
+            tt_src = "text_fallback"
         else:
             tt_src = "title_text"
         if backdrop_master is not None:
