@@ -750,6 +750,21 @@ def _trt_score_for_item(item: dict | None) -> float | None:
     return trt_confidence(_PLAYER_DURATION_S, tmdb_runtime_seconds_options(item))
 
 
+def _trt_rejects(player_s: float | None, item: dict | None, kind: MediaKind | None) -> bool:
+    """Hard TRT reject — movies only.
+
+    TMDb TV runtimes are a typical episode length; premieres / finales often run
+    20–30 min longer (IT: Welcome to Derry: 54 min listed, 1:17 episode). For TV
+    a mismatch only lowers the rank, so a long episode cannot knock out the right
+    show in favor of an unrelated title with a closer runtime.
+    """
+    if item is None or kind == "tv":
+        return False
+    from pigeon.display_confidence import trt_is_reject
+
+    return trt_is_reject(player_s, tmdb_runtime_seconds_options(item))
+
+
 def _forced_movie_survives_trt(item: dict | None) -> dict | None:
     """Drop a forced movie shortcut when Apple TV TRT clearly disagrees."""
     if item is None:
@@ -769,16 +784,14 @@ def _prefer_duration_match(
     tv: dict | None,
 ) -> tuple[dict | None, MediaKind | None]:
     """When Apple TV TRT is known, pick the catalogue whose runtime is closer."""
-    from pigeon.display_confidence import trt_is_reject
-
     player = _PLAYER_DURATION_S
     movie_e = enrich_item_runtime(movie, "movie") if movie is not None else None
     tv_e = enrich_item_runtime(tv, "tv") if tv is not None else None
     movie_s = _trt_score_for_item(movie_e)
     tv_s = _trt_score_for_item(tv_e)
-    if movie_e is not None and trt_is_reject(player, tmdb_runtime_seconds_options(movie_e)):
+    if _trt_rejects(player, movie_e, "movie"):
         movie_e, movie_s = None, None
-    if tv_e is not None and trt_is_reject(player, tmdb_runtime_seconds_options(tv_e)):
+    if _trt_rejects(player, tv_e, "tv"):
         tv_e, tv_s = None, None
     if movie_e is not None and tv_e is not None:
         if movie_s is not None and tv_s is not None:
@@ -811,7 +824,7 @@ def _rerank_scored_by_trt(
     title_pick: dict | None,
 ) -> dict | None:
     """Prefer title hits whose TMDb runtime matches Apple TV TRT."""
-    from pigeon.display_confidence import TRT_AGREE, trt_is_reject
+    from pigeon.display_confidence import TRT_AGREE
 
     if _PLAYER_DURATION_S is None or not scored:
         return title_pick
@@ -830,7 +843,7 @@ def _rerank_scored_by_trt(
         row
         for row in ranked
         if row[2] is not None
-        and not trt_is_reject(_PLAYER_DURATION_S, tmdb_runtime_seconds_options(row[0]))
+        and not _trt_rejects(_PLAYER_DURATION_S, row[0], media_kind)
     ]
     if weak:
         return max(weak, key=lambda row: (row[2], row[1]))[0]
@@ -1725,7 +1738,39 @@ def _weak_short_acronym_match(query: str, item: dict, rank: tuple[int, int]) -> 
     return True
 
 
+# "Stephen King's It", "Tyler Perry's Madea's Big Happy Family": a 2+ word
+# creator name, possessive, then the title TMDb lists. One-word possessives
+# ("Grey's Anatomy", "Schitt's Creek") are real titles and are left alone.
+_CREATOR_POSSESSIVE_RE = re.compile(
+    r"^\s*(?:[A-Z][\w.\-]*\s+){1,2}[A-Z][\w.\-]*['\u2019]s\s+(.+)$"
+)
+
+
+def _creator_possessive_title(query: str) -> str | None:
+    m = _CREATOR_POSSESSIVE_RE.match(str(query or ""))
+    if not m:
+        return None
+    rest = m.group(1).strip()
+    return rest or None
+
+
 def _match_rank(query: str, item: dict) -> tuple[int, int]:
+    """Tier for ``query`` vs ``item``; see :func:`_match_rank_literal`.
+
+    A creator-possessive query also ranks its bare title, capped at tier 4 so
+    an exact full-title hit still wins.
+    """
+    best = _match_rank_literal(query, item)
+    bare = _creator_possessive_title(query)
+    if bare:
+        tier, neg_len = _match_rank_literal(bare, item)
+        cand = (min(tier, 4), neg_len)
+        if cand > best:
+            best = cand
+    return best
+
+
+def _match_rank_literal(query: str, item: dict) -> tuple[int, int]:
     """
     Sort key (tier, tie_break) for picking the best TMDb search hit — lexicographic **max** wins.
     ``tie_break`` is ``-len(normalized_title)`` so **shorter** titles win when tier ties
@@ -3164,7 +3209,7 @@ def apply_tmdb_movie_query(
     scaled to uniform design canvas height for the compositor, or None if no backdrop could be
     loaded. ``match_tier`` is the :func:`_match_rank` tier (0 when no hit).
     """
-    from pigeon.display_confidence import parse_duration_seconds, trt_confidence, trt_is_reject
+    from pigeon.display_confidence import parse_duration_seconds, trt_confidence
 
     q = query.strip()
     _LAST_FETCH_TRACE.clear()
@@ -3294,7 +3339,7 @@ def apply_tmdb_movie_query(
         trt_tmdb_s=tmdb_s,
         trt_similarity=similarity,
     )
-    if duration is not None and trt_is_reject(duration, runtime_opts):
+    if duration is not None and _trt_rejects(duration, item, kind):
         _trace_fetch(
             outcome="runtime_reject",
             failure="TMDb runtime does not match the Apple TV duration",

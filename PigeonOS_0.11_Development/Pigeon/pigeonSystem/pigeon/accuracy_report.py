@@ -270,7 +270,11 @@ def report_fetch_event(
         tt_source = "tmdb_logo_cached"
     failure = ""
     if not ok:
-        failure = str(win.get("failure") or "").strip() or message.split("\n", 1)[0]
+        failure = (
+            message
+            if message.startswith("Loose match rejected")
+            else str(win.get("failure") or "").strip() or message.split("\n", 1)[0]
+        )
     elif not tier_ok:
         failure = (
             f"match tier {match_tier} below threshold — query "
@@ -292,7 +296,13 @@ def report_fetch_event(
         "id": uuid.uuid4().hex[:12],
         "streaming_service": streaming_service,
         "trigger": trigger,
-        "outcome": str(win.get("outcome") or ("match" if ok else "no_match")),
+        "outcome": (
+            str(win.get("outcome") or "match")
+            if ok
+            else "loose_match_rejected"
+            if message.startswith("Loose match rejected")
+            else str(win.get("outcome") or "no_match")
+        ),
         "ok": bool(ok),
         "query_in": query_in,
         "refined_query": refined_query,

@@ -1497,6 +1497,8 @@ def spawn_tmdb_poster_fetch(
     def worker() -> None:
         used_q = q
         attempts: list[dict] = []
+        # Below-threshold hits, kept only to explain a rejection.
+        loose: list[tuple[str, str, int]] = []
         try:
             from pigeon.display_confidence import player_duration_seconds
             from pigeon.raw_title import tmdb_query_candidates_from_metadata
@@ -1541,8 +1543,8 @@ def spawn_tmdb_poster_fetch(
                 if ok_try and _tmdb_match_tier_acceptable(cand, int(tier_try)):
                     ok_w, msg_w, bd_w, tier_w = ok_try, msg_try, bd_try, tier_try
                     break
-                if ok_try and not ok_w:
-                    ok_w, msg_w, bd_w, tier_w = ok_try, msg_try, bd_try, tier_try
+                if ok_try:
+                    loose.append((cand, msg_try, int(tier_try)))
             if not ok_w:
                 for cand in candidates:
                     ok_try, msg_try, bd_try, tier_try = apply_tmdb_movie_query(
@@ -1555,9 +1557,23 @@ def spawn_tmdb_poster_fetch(
                     )  # type: ignore[arg-type]
                     attempts.append(last_fetch_trace())
                     used_q = cand
-                    if ok_try:
+                    if ok_try and _tmdb_match_tier_acceptable(cand, int(tier_try)):
                         ok_w, msg_w, bd_w, tier_w = ok_try, msg_try, bd_try, tier_try
                         break
+                    if ok_try:
+                        loose.append((cand, msg_try, int(tier_try)))
+            if not ok_w and loose:
+                # A hit whose title does not match the query (It Sounds
+                # Incredible for "IT: Welcome to Derry") is not a match: show
+                # the raw title as text, never that title's art.
+                l_q, l_msg, l_tier = max(loose, key=lambda row: row[2])
+                l_title = l_msg.split("::", 2)[1] if "::" in l_msg else l_msg
+                used_q = l_q
+                tier_w = l_tier
+                msg_w = (
+                    f"Loose match rejected: {l_title!r} (tier {l_tier}) "
+                    f"for {l_q!r}"
+                )
         except Exception as e:
             ok_w, msg_w, bd_w, tier_w, used_q = False, str(e), None, 0, q
         root.after(
