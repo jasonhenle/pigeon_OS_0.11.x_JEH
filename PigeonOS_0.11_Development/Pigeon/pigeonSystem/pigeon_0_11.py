@@ -15,6 +15,8 @@ import numpy as np
 from PIL import Image, ImageTk
 import cv2
 
+from pigeon.core import photo_upload as _photo_upload
+
 # Status bar: one black pill cols 3–17, bar-shaped mask hole + translucent bar; rows 6–8 gradient.
 # Remaining label spans cols 16–17 (was 17–18) so the right edge has one extra column of margin.
 TRT_DISPLAY_ROW = 8.0  # nowPlaying band bottom aligns to row 9 (baseline of canvas)
@@ -816,6 +818,60 @@ def _bgr_to_tk_image(frame_bgr: np.ndarray) -> ImageTk.PhotoImage:
     return ImageTk.PhotoImage(image=img)
 
 
+# What the live PhotoImage currently shows (BGR, after the UI look), so the
+# next frame can upload only the bands that changed. See pigeon/core/photo_upload.py.
+_TK_SHOWN: dict[str, object] = {"photo": None, "bgr": None, "scratch": None}
+
+
+def _note_photo_shows(photo: ImageTk.PhotoImage | None, src: np.ndarray) -> None:
+    if photo is None or not _photo_upload.partial_upload_enabled():
+        _TK_SHOWN["photo"] = _TK_SHOWN["bgr"] = None
+        return
+    shown = _TK_SHOWN["bgr"]
+    if isinstance(shown, np.ndarray) and shown.shape == src.shape:
+        np.copyto(shown, src)
+    else:
+        _TK_SHOWN["bgr"] = src.copy()
+    _TK_SHOWN["photo"] = photo
+
+
+def _upload_changed_bands(photo: ImageTk.PhotoImage | None, src: np.ndarray) -> bool:
+    """Push only the changed bands of *src* into *photo*. False: caller uploads it all."""
+    shown = _TK_SHOWN["bgr"]
+    if photo is None or _TK_SHOWN["photo"] is not photo or not isinstance(shown, np.ndarray):
+        return False
+    if not _photo_upload.partial_upload_enabled():
+        _TK_SHOWN["photo"] = _TK_SHOWN["bgr"] = None
+        return False
+    bands = _photo_upload.changed_bands(shown, src)
+    if bands is None:
+        return False
+    if not bands:
+        return True
+    h, w = int(src.shape[0]), int(src.shape[1])
+    try:
+        scratch = _TK_SHOWN["scratch"]
+        if scratch is None or scratch.width() != w or scratch.height() != h:
+            # Pillow pastes at 0,0 only, so stage each band here and let Tk
+            # copy it into place.
+            scratch = ImageTk.PhotoImage(image=Image.new("RGB", (w, h)))
+            _TK_SHOWN["scratch"] = scratch
+        for y0, y1, x0, x1 in bands:
+            band = src[y0:y1, x0:x1]
+            scratch.paste(Image.fromarray(cv2.cvtColor(band, cv2.COLOR_BGR2RGB)))
+            photo.tk.call(
+                str(photo), "copy", str(scratch),
+                "-from", 0, 0, x1 - x0, y1 - y0,
+                "-to", x0, y0,
+                "-compositingrule", "set",
+            )
+            shown[y0:y1, x0:x1] = band
+    except (tk.TclError, ValueError):
+        _TK_SHOWN["photo"] = _TK_SHOWN["bgr"] = None
+        return False
+    return True
+
+
 def _update_label_photo_from_bgr(
     label: tk.Label,
     frame_bgr: np.ndarray,
@@ -842,18 +898,20 @@ def _update_label_photo_from_bgr(
     if rgb is None or int(rgb.shape[0]) != h or int(rgb.shape[1]) != w:
         rgb = np.empty((h, w, 3), dtype=np.uint8)
         _TK_RGB_SCRATCH = rgb
-    cv2.cvtColor(src, cv2.COLOR_BGR2RGB, dst=rgb)
-    pil_img = Image.fromarray(rgb)
     ph = holder[0]
-    try:
-        if ph is None or ph.width() != w or ph.height() != h:
+    if not _upload_changed_bands(ph, src):
+        cv2.cvtColor(src, cv2.COLOR_BGR2RGB, dst=rgb)
+        pil_img = Image.fromarray(rgb)
+        try:
+            if ph is None or ph.width() != w or ph.height() != h:
+                holder[0] = ImageTk.PhotoImage(image=pil_img)
+                ph = holder[0]
+            else:
+                ph.paste(pil_img)
+        except tk.TclError:
             holder[0] = ImageTk.PhotoImage(image=pil_img)
             ph = holder[0]
-        else:
-            ph.paste(pil_img)
-    except tk.TclError:
-        holder[0] = ImageTk.PhotoImage(image=pil_img)
-        ph = holder[0]
+        _note_photo_shows(holder[0], src)
     # Re-configuring the same PhotoImage every tick still stresses Tk; paste updates pixels in place.
     if getattr(label, "image", None) is not ph:
         label.configure(image=ph)
