@@ -4,7 +4,8 @@
   Intended map (matches pigeon_0_11.py hotkeys):
     CW   → forward  (Right / serial RIGHT)
     CCW  → backward (Left  / serial LEFT)
-    PUSH → activate (Space / serial PUSH)
+    PUSH → activate (Space / serial PUSH), sent on release
+    HOLD → long press ≥ HOLD_MS: visualizer mode on / off (``v`` / serial HOLD)
 
   Two transport modes (picked at compile time):
 
@@ -12,7 +13,7 @@
      Emits real Left / Right / Space. No host serial code needed.
 
   2) USB Serial line protocol — Arduino UNO Q and other non-HID boards.
-     Emits lines: RIGHT / LEFT / PUSH (+ PIGEON_CONTROLLER_READY).
+     Emits lines: RIGHT / LEFT / PUSH / HOLD (+ PIGEON_CONTROLLER_READY).
      Host: pigeon.rotary_serial (USB CDC and/or UNO Q Monitor TCP :7500).
 
   *** Arduino UNO Q ***
@@ -91,6 +92,10 @@ static unsigned long lastEdgeMs = 0;
 static unsigned long lastTurnMs = 0;
 static unsigned long lastActivateMs = 0;
 
+static const unsigned long HOLD_MS = 600;
+static unsigned long swDownMs = 0;
+static bool swHeld = false;
+
 static uint8_t lastSwRaw = HIGH;
 static uint8_t swStable = HIGH;
 static unsigned long swChangeMs = 0;
@@ -134,6 +139,14 @@ static void emitActivate() {
   hostPrintln(F("PUSH"));
 #else
   tapKey(' ');
+#endif
+}
+
+static void emitHold() {
+#if PIGEON_USE_SERIAL
+  hostPrintln(F("HOLD"));
+#else
+  tapKey('v');
 #endif
 }
 
@@ -190,9 +203,17 @@ void loop() {
   }
   if ((now - swChangeMs) >= BUTTON_DEBOUNCE_MS && sw != swStable) {
     swStable = sw;
-    if (swStable == LOW && (now - lastActivateMs) >= ACTIVATE_MIN_MS) {
+    if (swStable == LOW) {
+      swDownMs = now;
+      swHeld = false;
+    } else if (!swHeld && (now - lastActivateMs) >= ACTIVATE_MIN_MS) {
+      // Released before HOLD_MS: a short press.
       lastActivateMs = now;
       emitActivate();
     }
+  }
+  if (swStable == LOW && !swHeld && (now - swDownMs) >= HOLD_MS) {
+    swHeld = true;
+    emitHold();
   }
 }

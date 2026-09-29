@@ -8,7 +8,8 @@ Turns a rotary encoder into Left / Right / Space so Pigeon can navigate.
 |----------|------------|--------|
 | CW | `RIGHT` | forward |
 | CCW | `LEFT` | backward |
-| PUSH | `PUSH` | activate |
+| PUSH (released before 0.6 s) | `PUSH` | activate |
+| Hold ≥ 0.6 s | `HOLD` (HID: `v` key) | visualizer mode on / off |
 
 ## Arduino UNO Q (required steps)
 

@@ -205,6 +205,15 @@ def _latest_samples(n: int) -> np.ndarray:
         return np.concatenate((_ring[RING_SIZE - (n - pos) :], _ring[:pos]))
 
 
+def latest_samples(n: int) -> np.ndarray:
+    """Most recent ``n`` (≤ ``RING_SIZE``) frames as ``(n, 2)`` L/R (shared with the fullscreen visualizer)."""
+    return _latest_samples(max(1, min(RING_SIZE, int(n))))
+
+
+def sample_rate() -> float:
+    return _sample_rate
+
+
 def audio_fresh(max_age_s: float = 0.5) -> bool:
     return time.monotonic() - _last_feed_mono <= max_age_s
 
@@ -235,6 +244,31 @@ def _mic_watchdog() -> None:
             _mic_stream = None
             print("pigeon: zone4_eq: mic capture closed (idle)", file=sys.stderr)
             return
+
+
+def feed_wanted(max_idle_s: float = 2.0) -> bool:
+    """Should the ALSA meter thread feed the PCM ring? Yes while the zone-4 EQ
+    is on, or while any visualizer drew recently (it calls :func:`want_mic_capture`)."""
+    if time.monotonic() - _mic_last_want < max_idle_s:
+        return True
+    try:
+        return enabled()
+    except Exception:
+        return False
+
+
+def stop_mic_capture() -> None:
+    """Close the local mic stream now (e.g. a test harness switching to a synthetic feed)."""
+    global _mic_stream
+    with _mic_lock:
+        if _mic_stream is None:
+            return
+        try:
+            _mic_stream.stop()
+            _mic_stream.close()
+        except Exception:
+            pass
+        _mic_stream = None
 
 
 def want_mic_capture() -> None:

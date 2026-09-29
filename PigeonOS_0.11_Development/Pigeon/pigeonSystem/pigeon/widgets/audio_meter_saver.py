@@ -1836,7 +1836,7 @@ def _capture_loop_body(
             )
             _push_spectrum_mono(mono)
             _push_scope_bass(y_lfe)
-            if _zone4_eq.enabled():
+            if _zone4_eq.feed_wanted():
                 _zone4_eq.feed_pcm_stereo(stereo_f[:, 0], stereo_f[:, 1], float(SAMPLE_RATE))
             now = time.monotonic()
             if now - last_diag >= DIAG_PERIOD_S:

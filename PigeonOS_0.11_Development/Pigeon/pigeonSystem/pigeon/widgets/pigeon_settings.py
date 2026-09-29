@@ -5,7 +5,7 @@ One flat page opened from main settings box1. Everything is edited in place;
 nothing opens a sub-page except the zip keyboard, the timezone dropdown and
 the update popup. Focus order (spec "settings_pigeon_0.11")::
 
-    EXIT → ZIP → TIMEZONE → 7 UI colors → 4 options → RESET → UPDATE
+    EXIT → ZIP → TIMEZONE → 7 UI colors → 5 options → RESET → UPDATE
 
 The clock, version, and the wifi / metadata / audio lights are not selectable.
 Moving focus across the color row previews that theme live; activating a
@@ -67,7 +67,7 @@ UI_COLOR_KEYS: tuple[str, ...] = (
     "grey",
     "white",
 )
-OPTION_NUMBERS: tuple[int, ...] = (1, 2, 3, 4)
+OPTION_NUMBERS: tuple[int, ...] = (1, 2, 3, 4, 5)
 
 _FOCUS_RING: tuple[str, ...] = (
     ("exit", "zipcode", "timezone")

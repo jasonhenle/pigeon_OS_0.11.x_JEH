@@ -288,6 +288,30 @@ def _schedule_delayed_launch(
     return True, f"delayed launcher ({launcher.name})"
 
 
+# EX_TEMPFAIL: "try again" — pigeon.service's Restart=on-failure starts us back up.
+UPDATE_RESTART_EXIT_CODE = 75
+
+
+def running_under_pigeon_service() -> bool:
+    """True when this process runs inside the ``pigeon.service`` systemd unit (Pi autostart)."""
+    if not sys.platform.startswith("linux"):
+        return False
+    try:
+        return "pigeon.service" in Path("/proc/self/cgroup").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+
+
+def exit_code_after_update() -> int:
+    """Exit status for the process being replaced by an update.
+
+    Under ``pigeon.service`` a clean exit stops the unit for good: the unit only
+    restarts on failure, and stopping it also kills any relaunch helper the
+    updater left behind. Exiting "failed" makes systemd start the new version.
+    """
+    return UPDATE_RESTART_EXIT_CODE if running_under_pigeon_service() else 0
+
+
 def restart_pigeon_after_update(
     install_root: Path,
     *,

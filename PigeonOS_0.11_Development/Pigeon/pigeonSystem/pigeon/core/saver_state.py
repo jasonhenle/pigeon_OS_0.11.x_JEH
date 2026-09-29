@@ -954,7 +954,17 @@ def _auto_widget_signals(*, _apple_tv_is_off, _clock_saver_receiver_off, _paused
         room_name=room_name if renamed else "",
         paused_for_s=paused_for,
         pausesaver_art=pausesaver_art,
+        visualizer_mode=_visualizer_mode_active(),
     )
+
+
+def _visualizer_mode_active() -> bool:
+    try:
+        from pigeon import visualizer_mode
+
+        return visualizer_mode.is_active()
+    except Exception:
+        return False
 
 
 # (frame token, plan): the policy resolved once per scheduled render.
