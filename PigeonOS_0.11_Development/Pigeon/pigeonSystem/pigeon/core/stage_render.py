@@ -21,6 +21,8 @@ from pathlib import Path
 from pigeon.stage_background import set_stage_bgr
 import time
 
+from pigeon.core import frame_stats as _frame_stats
+
 if TYPE_CHECKING:
     from pigeon_0_11 import DisplayView, SceneFit
 
@@ -119,7 +121,9 @@ def _apply_dev_phase_widgets(*, label, settings_frame) -> None:
 
 def _invoke_render_after(*, _render_after_id, render_once) -> None:
     _render_after_id[0] = None
+    t0 = time.perf_counter()
     render_once()
+    _frame_stats.note_render(t0, time.perf_counter())
 
 
 def _schedule_render_oneshot(delay_ms: int, *, _invoke_render_after, _render_after_id, root) -> None:
