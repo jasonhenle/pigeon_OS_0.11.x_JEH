@@ -100,11 +100,50 @@ class LinuxKioskTests(unittest.TestCase):
             patch.object(linux_kiosk, "install_user_kiosk_session"),
             patch.object(linux_kiosk, "hide_desktop_chrome", return_value=[42]),
             patch.object(linux_kiosk, "suppress_os_overlays", return_value=[]),
-            patch.object(linux_kiosk, "hide_pointer") as hide_ptr,
+            patch.object(linux_kiosk, "_hide_pointer_tk") as hide_tk,
+            patch.object(linux_kiosk, "_park_pointer") as park,
         ):
             stopped = linux_kiosk.enforce_kiosk(root, [7], borderless=True)
         self.assertEqual(stopped, [7, 42])
-        hide_ptr.assert_called()
+        hide_tk.assert_called_with(root)
+        park.assert_called()
+
+    def test_guard_tick_does_not_wait_for_process_work(self) -> None:
+        import threading
+        import time
+
+        from pigeon import linux_kiosk
+
+        release = threading.Event()
+        done = threading.Event()
+
+        def slow_processes() -> list[int]:
+            release.wait(2.0)
+            done.set()
+            return [42]
+
+        root = MagicMock()
+        scheduled: list = []
+        root.after.side_effect = lambda _ms, fn: scheduled.append(fn)
+        holder = [7]
+        with (
+            patch.object(linux_kiosk, "linux_kiosk_enabled", return_value=True),
+            patch.object(linux_kiosk, "_enforce_kiosk_processes", side_effect=slow_processes),
+            patch.object(linux_kiosk, "_enforce_kiosk_window") as window,
+        ):
+            linux_kiosk.schedule_kiosk_guard(root, holder)
+            t0 = time.monotonic()
+            scheduled.pop()()  # first guard tick
+            self.assertLess(time.monotonic() - t0, 0.5)
+            window.assert_called_once()
+            self.assertEqual(len(scheduled), 1)  # next tick queued
+            release.set()
+            self.assertTrue(done.wait(2.0))
+            for _ in range(100):
+                if holder == [7, 42]:
+                    break
+                time.sleep(0.01)
+        self.assertEqual(holder, [7, 42])
 
     def test_kiosk_disabled_off_linux(self) -> None:
         from pigeon.linux_kiosk import linux_kiosk_enabled

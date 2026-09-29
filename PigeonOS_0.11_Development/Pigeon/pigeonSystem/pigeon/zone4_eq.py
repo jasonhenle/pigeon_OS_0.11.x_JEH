@@ -516,6 +516,103 @@ class Zone4EQ:
             a = np.clip(0.5 - d, 0.0, 1.0)
         cls._blend(col, alpha, r0, c0, (a * opacity).astype(np.float32), bgr)
 
+    @classmethod
+    def _fill_many(cls, col: np.ndarray, alpha: np.ndarray,
+                   rects: list[tuple[float, float, float, float, np.ndarray, float, float]]) -> None:
+        """:meth:`_fill` for many ``(x0, x1, y0, y1, bgr, radius, opacity)`` rects in one pass.
+
+        Same coverage math per pixel. Rects that share a pixel column would need
+        ordered blending, so those fall back to one ``_fill`` each.
+        """
+        h, w = alpha.shape
+        keep = []
+        for rect in rects:
+            x0, x1, y0, y1 = rect[:4]
+            cx0, cx1 = max(0.0, x0), min(float(w), x1)
+            cy0, cy1 = max(0.0, y0), min(float(h), y1)
+            if cx1 - cx0 > 1e-3 and cy1 - cy0 > 1e-3:
+                keep.append((int(math.floor(cx0)), int(math.ceil(cx1)), cx0, cx1, cy0, cy1, rect))
+        if not keep:
+            return
+        keep.sort(key=lambda k: k[0])
+        if any(keep[j][0] < keep[j - 1][1] for j in range(1, len(keep))):
+            for *_, rect in keep:
+                cls._fill(col, alpha, *rect)
+            return
+        n = len(keep)
+        # Work only inside the rects' bounding box.
+        bc0, bc1 = keep[0][0], max(k[1] for k in keep)
+        br0 = int(math.floor(min(k[4] for k in keep)))
+        br1 = int(math.ceil(max(k[5] for k in keep)))
+        # Column → rect index; index n is an empty sentinel (zero coverage).
+        owner = np.full(bc1 - bc0, n, dtype=np.intp)
+        for k, (c0, c1, *_rest) in enumerate(keep):
+            owner[c0 - bc0 : c1 - bc0] = k
+        x0 = np.array([k[6][0] for k in keep] + [0.0])
+        x1 = np.array([k[6][1] for k in keep] + [0.0])
+        y0 = np.array([k[6][2] for k in keep] + [0.0])
+        y1 = np.array([k[6][3] for k in keep] + [0.0])
+        cx0 = np.array([k[2] for k in keep] + [0.0])
+        cx1 = np.array([k[3] for k in keep] + [0.0])
+        cy0 = np.array([k[4] for k in keep] + [0.0])
+        cy1 = np.array([k[5] for k in keep] + [0.0])
+        op = np.array([float(k[6][6]) for k in keep] + [0.0])
+        bgr = np.stack([np.asarray(k[6][4], dtype=np.float32) for k in keep]
+                       + [np.zeros(3, dtype=np.float32)])
+        r = np.minimum(np.array([float(k[6][5]) for k in keep] + [0.0]),
+                       np.minimum((x1 - x0) / 2.0, (y1 - y0) / 2.0))
+        box = (r < 0.75) | (x1 - x0 < 2.0)
+        r[box] = 0.0
+
+        o = owner
+        valid = o != n
+        cols = np.arange(bc0, bc1, dtype=np.float64)
+        row_i = np.arange(br0, br1)[:, None]
+        # Column profile: what every pixel in a bar's straight middle gets.
+        cxc = np.minimum(cols + 1.0, cx1[o]) - np.maximum(cols, cx0[o])
+        qx = np.abs(cols + 0.5 - (x0 + x1)[o] / 2.0) - ((x1 - x0)[o] / 2.0 - r[o])
+        rnd = ~box[o]
+        prof = np.where(rnd, np.clip(0.5 - (qx - r[o]), 0.0, 1.0), cxc)
+        # Rows of each rect, and its straight middle: rows whose centers sit at
+        # least half the bar width inside both ends (rounded; there qy <= qx for
+        # every column, so the signed distance reduces to qx - r), or rows
+        # fully inside (box). Bounds are pulled in a row so rounding can only
+        # send a middle row down the exact path, never the reverse.
+        r0 = np.floor(cy0).astype(np.intp)
+        r1 = np.ceil(cy1).astype(np.intp)
+        ymid, hh, bwh = (y0 + y1) / 2.0, (y1 - y0) / 2.0, (x1 - x0) / 2.0
+        lim = hh - bwh
+        with np.errstate(invalid="ignore"):
+            m_lo = np.where(box, np.ceil(cy0), np.ceil(ymid - lim - 0.5)) + 1
+            m_hi = np.where(box, np.floor(cy1), np.floor(ymid + lim - 0.5) + 1) - 1
+        no_mid = (~box & (lim < 0)) | (m_hi <= m_lo)
+        m_lo = np.where(no_mid, r1, np.clip(m_lo, r0, r1)).astype(np.intp)
+        m_hi = np.where(no_mid, r1, np.clip(m_hi, m_lo, r1)).astype(np.intp)
+        r0[n] = r1[n] = m_lo[n] = m_hi[n] = br0
+        a = np.where((row_i >= m_lo[o]) & (row_i < m_hi[o]), prof[None, :], 0.0)
+        # Ends of each bar (and all of a short one): the full coverage math.
+        ci = np.arange(bc1 - bc0)
+        for z_start, z_len in ((r0, m_lo - r0), (m_hi, r1 - m_hi)):
+            ln = np.where(valid, z_len[o], 0)
+            k = int(ln.max(initial=0))
+            if k <= 0:
+                continue
+            kk = np.arange(k)[:, None]
+            rr = z_start[o][None, :] + kk
+            ok = kk < ln[None, :]
+            rrf = rr.astype(np.float64)
+            ry = np.minimum(rrf + 1.0, cy1[o][None, :]) - np.maximum(rrf, cy0[o][None, :])
+            val = np.maximum(ry, 0.0) * cxc[None, :]
+            if rnd.any():
+                qy = np.abs(rrf + 0.5 - ymid[o][None, :]) - (hh - r)[o][None, :]
+                d = (np.hypot(np.maximum(qx, 0.0)[None, :], np.maximum(qy, 0.0))
+                     + np.minimum(np.maximum(qx[None, :], qy), 0.0) - r[o][None, :])
+                val = np.where(rnd[None, :], np.clip(0.5 - d, 0.0, 1.0), val)
+            a[(rr - br0)[ok], np.broadcast_to(ci, rr.shape)[ok]] = val[ok]
+        a[:, o == n] = 0.0
+        a = (a * op[o][None, :]).astype(np.float32)
+        cls._blend(col, alpha, br0, bc0, a, bgr[o][None, :, :])
+
     # -- colors -----------------------------------------------------------
     @staticmethod
     def _base_color(p: dict[str, object], i: int, count: int, lvl: float, cx: float, o: dict) -> np.ndarray:
@@ -588,6 +685,10 @@ class Zone4EQ:
                 return top + d
             return top + (H - length) / 2.0
 
+        bars: list[tuple[float, float, float, float, np.ndarray, float, float]] = []
+        peaks: list[tuple[float, float, float, float, np.ndarray, float, float]] = []
+        in_order: list[tuple[float, float, float, float, np.ndarray, float, float]] = []
+        slot_cols: list[tuple[int, int]] = []
         for i in range(count):
             g0 = i / n_f * GRID
             g1 = min(float(GRID), (i + 1) / n_f * GRID)
@@ -598,6 +699,7 @@ class Zone4EQ:
             else:
                 slot_x = origin + i * slot
             x = slot_x + gap / 2.0 + sub_off
+            slot_cols.append((int(math.floor(x)), int(math.ceil(x + sub_w))))
             cx = x + sub_w / 2.0
             bal = None
             if o.get("balance"):
@@ -620,7 +722,8 @@ class Zone4EQ:
                 self._fill(col, alpha, cx - d / 2.0, cx + d / 2.0, y, y + d, c, d / 2.0, opacity)
             else:  # bars / mirror (line falls back to bars)
                 y = run_y(0.0, h)
-                self._fill(col, alpha, x, x + sub_w, y, y + h, c, radius, opacity)
+                bars.append((x, x + sub_w, y, y + h, c, radius, opacity))
+                in_order.append(bars[-1])
             if p.get("peaks", True) and style not in ("line", "dots"):
                 dist = pk * H
                 if direction == "up":
@@ -630,8 +733,24 @@ class Zone4EQ:
                 else:
                     py = top + (H - dist) / 2.0 - peak_h
                 py = max(top, min(top + H - peak_h, py))
-                self._fill(col, alpha, x, x + sub_w, py, py + peak_h, col_pk,
-                           min(radius, peak_h / 2.0), opacity)
+                pk_rect = (x, x + sub_w, py, py + peak_h, col_pk, min(radius, peak_h / 2.0), opacity)
+                if style == "led":
+                    self._fill(col, alpha, *pk_rect)
+                else:
+                    peaks.append(pk_rect)
+                    in_order.append(pk_rect)
+        if not in_order:
+            return
+        slot_cols.sort()
+        if any(slot_cols[j][0] < slot_cols[j - 1][1] for j in range(1, len(slot_cols))):
+            # Slots share a pixel column (no gap): keep bar/peak blend order.
+            for rect in in_order:
+                self._fill(col, alpha, *rect)
+            return
+        # Slots are column-disjoint, so bars-then-peaks blends the same as
+        # bar/peak interleaved, and each pass is one vectorised fill.
+        self._fill_many(col, alpha, bars)
+        self._fill_many(col, alpha, peaks)
 
     # -- frame ------------------------------------------------------------
     def render_into(
@@ -720,6 +839,15 @@ class Zone4EQ:
         pa = alpha[y0 - ty : y1 - ty, x0 - tx : x1 - tx, None]
         pc = col[y0 - ty : y1 - ty, x0 - tx : x1 - tx]
         dst = out[y0:y1, x0:x1]
-        dst[:, :, :3] = (dst[:, :, :3].astype(np.float32) * (1.0 - pa) + pc * pa).astype(np.uint8)
+        see_through = pa[:, :, 0] < 1.0
+        if np.count_nonzero(see_through) * 4 < see_through.size:
+            # Opaque track: only the rounded corners need a real blend.
+            under = dst[:, :, :3][see_through].astype(np.float32)
+            a_st = pa[see_through]
+            blended = (under * (1.0 - a_st) + pc[see_through] * a_st).astype(np.uint8)
+            dst[:, :, :3] = pc.astype(np.uint8)
+            dst[:, :, :3][see_through] = blended
+        else:
+            dst[:, :, :3] = (dst[:, :, :3].astype(np.float32) * (1.0 - pa) + pc * pa).astype(np.uint8)
         if dst.shape[2] >= 4:
             dst[:, :, 3] = np.maximum(dst[:, :, 3], (pa[:, :, 0] * 255.0).astype(np.uint8))
