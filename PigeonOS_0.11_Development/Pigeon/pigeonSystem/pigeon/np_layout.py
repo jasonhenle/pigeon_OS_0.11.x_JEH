@@ -494,6 +494,8 @@ def zone6_span_widget(assignments: tuple[str, ...] | list[str]) -> str:
         return "clock"
     if zones[0] == "vu":
         return "vu"
+    if zones[0] == "visualizer_zone6":
+        return "visualizer_zone6"
     if zones[0] == "weather" and not zones[1]:
         return "weather"
     return ""

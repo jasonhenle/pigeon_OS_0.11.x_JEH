@@ -272,6 +272,7 @@ def run(ctx) -> None:
         render_once=_late(lambda: ctx.render_once, "render_once"),
         skip_cache=skip_cache,
         streaming_slot_holder=streaming_slot_holder,
+        view_circles_widget_holder=view_circles_widget_holder,
     )
 
     for _ak in ("<KeyPress-Up>", "<KeyPress-Down>", "<KeyPress-Left>", "<KeyPress-Right>"):
@@ -412,7 +413,18 @@ def run(ctx) -> None:
         root=root,
         skip_cache=skip_cache,
         sync_developer_chrome=sync_developer_chrome,
+        view_circles_widget_holder=view_circles_widget_holder,
     )
 
     ctx._on_rotary_action = _on_rotary_action
+
+    def _on_visualizer_key(event: tk.Event) -> str | None:
+        """``v``: same as a long encoder press (HID boards send it for a hold)."""
+        if _widget_accepts_typing(event.widget):
+            return None
+        _on_rotary_action("hold")
+        return "break"
+
+    for _vk in ("<KeyPress-v>", "<KeyPress-V>"):
+        root.bind_all(_vk, _on_visualizer_key)
     ctx._send_player_play_pause_hotkey = _send_player_play_pause_hotkey

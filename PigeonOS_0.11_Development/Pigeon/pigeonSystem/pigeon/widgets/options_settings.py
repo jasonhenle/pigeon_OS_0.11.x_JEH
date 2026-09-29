@@ -1,8 +1,10 @@
-"""System-wide options — the four toggles on settings_pigeon (0.11).
+"""System-wide options — the five toggles on settings_pigeon (0.11).
 
 ``option1`` 12 / 24 hour, ``option2`` °F / °C, ``option3`` theme / dark
 (dark = red-tinted monochrome UI), ``option4`` info / visualizer (what the
-now-playing zone 4 shows). Values persist under ``settings_options``.
+now-playing zone 4 shows), ``option5`` now playing / visualizer (which mode
+Pigeon starts in; a long encoder press flips between them, see
+:mod:`pigeon.visualizer_mode`). Values persist under ``settings_options``.
 
 The 0.8–0.11.38 options bar also had clock face, idle delay and clocksaver
 on/off switches. Those have no control any more, so they always read as
@@ -26,6 +28,7 @@ _DEFAULTS: dict[str, Any] = {
     "idle_standby": 60,
     "clock_saver": "on",
     "zone4_mode": "info",
+    "zone6_mode": "now_playing",
 }
 
 # (option number on settings_pigeon, persist key, option A value, option B value)
@@ -34,6 +37,7 @@ _SWITCHES: tuple[tuple[int, str, Any, Any], ...] = (
     (2, "temp_format", "f", "c"),
     (3, "color_format", "color", "dark"),
     (4, "zone4_mode", "info", "visualizer"),
+    (5, "zone6_mode", "now_playing", "visualizer"),
 )
 
 _STATE_KEY = "settings_options"
@@ -59,6 +63,8 @@ def _normalize(raw: object) -> dict[str, Any]:
     )
     z4 = str(raw.get("zone4_mode") or out["zone4_mode"]).strip().lower()
     out["zone4_mode"] = "visualizer" if z4 in ("visualizer", "viz", "eq") else "info"
+    z6 = str(raw.get("zone6_mode") or out["zone6_mode"]).strip().lower()
+    out["zone6_mode"] = "visualizer" if z6 in ("visualizer", "viz") else "now_playing"
     return out
 
 
@@ -101,7 +107,13 @@ def toggle_option(
         if n == int(index):
             vals[key] = a_val if vals.get(key) == b_val else b_val
             break
-    return write_options(vals, persist=persist)
+    out = write_options(vals, persist=persist)
+    if int(index) == 5:
+        # The new default takes effect now, not only at the next boot.
+        from pigeon import visualizer_mode
+
+        visualizer_mode.set_active(out["zone6_mode"] == "visualizer")
+    return out
 
 
 def load_options_into_state(state: MainSettingsState) -> None:
@@ -149,6 +161,11 @@ def ui_is_monochrome(state: MainSettingsState | None = None) -> bool:
 def zone4_visualizer_on(state: MainSettingsState | None = None) -> bool:
     """option4 = visualizer: the EQ replaces the zone-4 cast / track info."""
     return _vals(state)["zone4_mode"] == "visualizer"
+
+
+def zone6_visualizer_default(state: MainSettingsState | None = None) -> bool:
+    """option5 = visualizer: Pigeon starts in visualizer mode (zone 6 visualizer)."""
+    return _vals(state)["zone6_mode"] == "visualizer"
 
 
 def ui_is_bright(state: MainSettingsState | None = None) -> bool:
@@ -247,4 +264,5 @@ __all__ = [
     "ui_paper_bgr",
     "write_options",
     "zone4_visualizer_on",
+    "zone6_visualizer_default",
 ]

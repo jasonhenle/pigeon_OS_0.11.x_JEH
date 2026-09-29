@@ -15,6 +15,7 @@ import io
 import math
 import os
 import re
+import threading
 import time
 import weakref
 import xml.etree.ElementTree as ET
@@ -2802,6 +2803,8 @@ def _cast_line_patch(text: str, *, size_px: int, max_width_px: int) -> np.ndarra
 
 
 ZONE4_VISUALIZER_WIDGET = "visualizer"
+# Wide zone-6 visualizer (pigeon.fullscreen_viz presets scaled into zone 6).
+ZONE6_VISUALIZER_WIDGET = "visualizer_zone6"
 
 
 def _weak_or_none(arr: object) -> weakref.ref | None:
@@ -3744,6 +3747,7 @@ class ViewCirclesWidget:
         # the timecodes sit below the zone box, so the zone rect alone misses them.
         self._status_bar_paint_bounds: tuple[int, int, int, int] | None = None
         self._zone4_eq = None
+        self._zone6_viz = None
         # Where _overlay_ticking last stamped TT-countdown digits (x, y, w, h).
         self._tt_time_paint_rects: list[tuple[int, int, int, int]] = []
         self._artwork_blur_bgra: np.ndarray | None = None
@@ -4277,11 +4281,11 @@ class ViewCirclesWidget:
         return bool(self._state.has_receiver)
 
     def _zone3_clock_is_analog_fallback(self) -> bool:
-        """No-receiver zone 3 clock is always the analog face."""
+        """Zone 3 clock is the analog face with no receiver, and beside the zone-6 visualizer."""
         assignments = self._assignments()
-        return (not self._has_receiver_connection()) and str(
-            assignments[2] if len(assignments) > 2 else ""
-        ) == "clock"
+        if str(assignments[2] if len(assignments) > 2 else "") != "clock":
+            return False
+        return (not self._has_receiver_connection()) or self._zone6_viz_on(assignments)
 
     def _has_audio_connection(self) -> bool:
         try:
@@ -4292,10 +4296,14 @@ class ViewCirclesWidget:
             return False
 
     def wants_live_audio(self) -> bool:
-        """True when NP needs the ALSA capture thread (VU)."""
+        """True when NP needs the ALSA capture thread (VU, visualizers)."""
+        assignments = self._assignments()
+        if self._zone6_viz_on(assignments):
+            # Also with no title: the visualizer is how audio-only playback shows.
+            return True
         if not self._state.content_active:
             return False
-        keys = set(self._assignments())
+        keys = set(assignments)
         return "vu" in keys or ZONE4_VISUALIZER_WIDGET in keys
 
     def _assignments(self) -> tuple[str, str, str, str, str]:
@@ -4338,7 +4346,9 @@ class ViewCirclesWidget:
                 pass
             if not youtube:
                 zones = auto_zones
-        if zones[3] == "cast_info" and self._zone4_eq_on():
+        # One visualizer at a time: beside the zone-6 visualizer, zone 4 keeps
+        # its cast info (the Pi has no headroom for both).
+        if zones[3] == "cast_info" and self._zone4_eq_on() and not self._zone6_viz_on(zones):
             zones = (zones[0], zones[1], zones[2], ZONE4_VISUALIZER_WIDGET, zones[4])
         if self.volume_takeover_active() and self._state.chrome_visible:
             return (zones[0], zones[1], "volume", zones[3], zones[4])
@@ -5220,6 +5230,19 @@ class ViewCirclesWidget:
     def _draw_live_audio_widgets(self, out: np.ndarray) -> None:
         assignments = self._assignments()
         bgr = out.ndim == 3 and int(out.shape[2]) == 3
+        if self._zone6_viz_on(assignments):
+            z = NOW_PLAYING_ZONES[6]
+            zx, zy, zw, zh = z.xywh
+            rect = (int(round(zx)), int(round(zy)), int(round(zw)), int(round(zh)), 13)
+            self._zone6_visualizer().render(out, rect)
+            from pigeon import visualizer_mode
+            from pigeon.widgets.audio_meter_saver import program_audio_present
+
+            # The badge reports a missing feed in visualizer mode; the audio-only
+            # layout only exists while audio is present.
+            if visualizer_mode.is_active():
+                visualizer_mode.draw_badge(out, z.xywh, visualizer_mode.badge_state(program_audio_present()))
+            return
         if zone6_span_widget(assignments) == "vu":
             z = NOW_PLAYING_ZONES[6]
             zx, zy, zw, zh = z.xywh
@@ -5310,6 +5333,8 @@ class ViewCirclesWidget:
 
                 plan = live_plan()
                 label = str(getattr(plan, "zone4_text", "") or "").strip()
+                if not label and bool(getattr(plan, "zone4_receiver", False)):
+                    label = self._receiver_readout()
             except Exception:
                 label = ""
         if not label:
@@ -5333,6 +5358,14 @@ class ViewCirclesWidget:
                 fill_rgb=_look_ink_rgb(),
             )
         _paste_centered(out, patch, zx + zw * 0.5, zy + zh * 0.5)
+
+    def _receiver_readout(self) -> str:
+        """Receiver input label and volume for zone 4, e.g. ``TV AUDIO   -32.5 dB``."""
+        if not self._has_receiver_connection():
+            return ""  # unreachable: the last values would be stale
+        parts = [str(self._state.receiver_input or "").strip(),
+                 _receiver_volume_display_line(self._state.volume)]
+        return "   ".join(p for p in parts if p)
 
     def _draw_weather_zones(self, out: np.ndarray) -> None:
         assignments = self._assignments()
@@ -6267,7 +6300,34 @@ class ViewCirclesWidget:
 
     def _live_audio_widgets_on(self) -> bool:
         keys = self._assignments()
-        return "vu" in keys or zone6_span_widget(keys) == "vu"
+        return "vu" in keys or zone6_span_widget(keys) in ("vu", ZONE6_VISUALIZER_WIDGET)
+
+    @staticmethod
+    def _zone6_viz_on(assignments: tuple[str, ...] | list[str]) -> bool:
+        return zone6_span_widget(assignments) == ZONE6_VISUALIZER_WIDGET
+
+    def rotate_zone6_visualizer(self, steps: int) -> bool:
+        """Encoder turn in visualizer mode: next / previous preset. False when not showing."""
+        if not self._zone6_viz_on(self._assignments()):
+            return False
+        self._zone6_visualizer().rotate(int(steps))
+        return True
+
+    def _zone6_visualizer(self):
+        if self._zone6_viz is None:
+            from pigeon.fullscreen_viz import FullscreenViz
+
+            self._zone6_viz = FullscreenViz(remember=True)
+            zw, zh = NOW_PLAYING_ZONES[6].xywh[2:]
+            # Build every preset's static art now, so the first turn to each
+            # preset does not stall a frame on the Pi.
+            threading.Thread(
+                target=self._zone6_viz.prewarm,
+                args=(int(round(zw)), int(round(zh))),
+                name="pigeon-zone6-viz-prewarm",
+                daemon=True,
+            ).start()
+        return self._zone6_viz
 
     def _zone4_eq_on(self) -> bool:
         """Settings option4 = visualizer (see ``pigeon/zone4_eq.py``)."""

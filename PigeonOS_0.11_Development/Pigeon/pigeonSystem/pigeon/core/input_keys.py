@@ -492,7 +492,7 @@ def on_display_view_digit(event: tk.Event, *, DevPhase, DisplayView, ViewOneLayo
     return "break"
 
 
-def on_arrow_remote(event: tk.Event, *, DevPhase, _PIGEON_EXT, _nav_request, _widget_accepts_typing, apple_tv_busy, current_apple_tv, dev_phase, main_settings_widget, render_once, skip_cache, streaming_slot_holder) -> str | None:
+def on_arrow_remote(event: tk.Event, *, DevPhase, _PIGEON_EXT, _nav_request, _widget_accepts_typing, apple_tv_busy, current_apple_tv, dev_phase, main_settings_widget, render_once, skip_cache, streaming_slot_holder, view_circles_widget_holder=None) -> str | None:
     if _widget_accepts_typing(event.widget):
         return None
     if not _PIGEON_EXT:
@@ -519,6 +519,14 @@ def on_arrow_remote(event: tk.Event, *, DevPhase, _PIGEON_EXT, _nav_request, _wi
     st = int(getattr(event, "state", 0))
     if st & 0x0004:
         return None
+    if ks in ("Left", "Right") and not (st & (0x0001 | 0x0008 | 0x20000 | 0x080000 | 0x100000)):
+        # HID encoder boards turn as Left / Right: pick the visualizer preset.
+        try:
+            vc = view_circles_widget_holder[0] if view_circles_widget_holder else None
+            if vc is not None and vc.rotate_zone6_visualizer(1 if ks == "Right" else -1):
+                return "break"
+        except Exception:
+            pass
     sh = bool(st & 0x0001)
     meta_cmd = (
         bool(st & 0x100000)
@@ -624,9 +632,26 @@ def _on_par_chord_press(event: tk.Event, *, _par_chord_fired, _par_chord_held, _
     return "break"
 
 
-def _on_rotary_action(action: str, *, DevPhase, _bump_pigeon_user_activity, _enter_main_settings_for_rotary, _handle_main_settings_action, _nav_request, dev_phase, main_settings_widget, render_once, root, skip_cache, sync_developer_chrome) -> None:
+def _on_rotary_action(action: str, *, DevPhase, _bump_pigeon_user_activity, _enter_main_settings_for_rotary, _handle_main_settings_action, _nav_request, dev_phase, main_settings_widget, render_once, root, skip_cache, sync_developer_chrome, view_circles_widget_holder=None) -> None:
     _bump_pigeon_user_activity()
     was_main = dev_phase[0] == DevPhase.MAIN_SETTINGS
+    if action == "hold":
+        # Long press: Now Playing <-> visualizer mode (ignored inside settings).
+        if not was_main:
+            from pigeon import visualizer_mode
+
+            visualizer_mode.toggle()
+            skip_cache[0] = None
+            render_once()
+        return
+    if action in ("forward", "backward") and not was_main:
+        # Visualizer showing: turns pick the preset instead of opening settings.
+        try:
+            vc = view_circles_widget_holder[0] if view_circles_widget_holder else None
+            if vc is not None and vc.rotate_zone6_visualizer(1 if action == "forward" else -1):
+                return
+        except Exception:
+            pass
     if not _enter_main_settings_for_rotary():
         try:
             from pigeon.rotary_serial import inject_keysym

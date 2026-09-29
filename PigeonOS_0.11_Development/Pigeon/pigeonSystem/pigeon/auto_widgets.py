@@ -22,6 +22,9 @@ LAYOUT_ZONE6_CLOCKSAVER = "zone6_clocksaver"
 LAYOUT_ZONE8_CLOCKSAVER = "zone8_clocksaver"
 LAYOUT_SETTINGS = "settings"
 LAYOUT_SHAZAM = "shazam"
+# Zone-6 visualizer: visualizer mode (long encoder press), or program audio
+# arriving with no player metadata while in Now Playing mode.
+LAYOUT_ZONE6_VISUALIZER = "zone6_visualizer"
 
 TT = "tt_countdown_16x9"
 VOLUME = "volume"
@@ -30,6 +33,8 @@ STATUS = "status_bar"
 SECONDS = "clock_saver_seconds"
 CLOCK_SAVER = "clock_saver"
 PAUSESAVER = "pausesaver"
+VISUALIZER_Z6 = "visualizer_zone6"
+CLOCK = "clock"  # zone 3 shows the analog face in the visualizer layout
 
 DEFAULT_NP_ASSIGNMENTS: tuple[str, str, str, str, str] = (
     TT,
@@ -58,6 +63,7 @@ class AutoWidgetSignals:
     room_name: str = ""
     paused_for_s: float = 0.0
     pausesaver_art: bool = False
+    visualizer_mode: bool = False
 
 
 @dataclass(frozen=True)
@@ -71,6 +77,8 @@ class AutoWidgetPlan:
     force_settings: bool = False
     settings_exit_enabled: bool = True
     zone4_text: str = ""
+    # Zone 4 shows the receiver's input label and volume (no player metadata).
+    zone4_receiver: bool = False
 
 
 def reliable_clock_now(when: datetime | None = None) -> bool:
@@ -212,6 +220,7 @@ def _plan(
     zone10: str = "",
     force_settings: bool = False,
     zone4_text: str = "",
+    zone4_receiver: bool = False,
     exit_ok: bool | None = None,
 ) -> AutoWidgetPlan:
     exit_enabled = bool(sig.wan_ok) if exit_ok is None else bool(exit_ok)
@@ -225,6 +234,21 @@ def _plan(
         force_settings=force_settings,
         settings_exit_enabled=exit_enabled and not force_settings,
         zone4_text=zone4_text,
+        zone4_receiver=zone4_receiver,
+    )
+
+
+def _visualizer_plan(sig: AutoWidgetSignals, *, metadata: bool) -> AutoWidgetPlan:
+    """Zone 6 visualizer, analog clock in zone 3. With player metadata, zone 4/5
+    keep cast info and the status bar; without it, zone 4 shows the receiver's
+    input and volume and zone 5 the seconds widget."""
+    if metadata:
+        return _plan(layout=LAYOUT_ZONE6_VISUALIZER, assignments=(VISUALIZER_Z6, "", CLOCK, INFO, STATUS), sig=sig)
+    return _plan(
+        layout=LAYOUT_ZONE6_VISUALIZER,
+        assignments=(VISUALIZER_Z6, "", CLOCK, "", SECONDS),
+        sig=sig,
+        zone4_receiver=True,
     )
 
 
@@ -248,6 +272,11 @@ def resolve_auto_widgets(sig: AutoWidgetSignals) -> AutoWidgetPlan:
             force_settings=True,
             exit_ok=False,
         )
+
+    if sig.visualizer_mode:
+        # Stays up with or without audio (the audio badge reports a missing feed).
+        # A paused title still has cast info and a position to show.
+        return _visualizer_plan(sig, metadata=meta != METADATA_ABSENT)
 
     if sig.wan_ok:
         if meta == METADATA_OK:
@@ -285,12 +314,8 @@ def resolve_auto_widgets(sig: AutoWidgetSignals) -> AutoWidgetPlan:
 
         z4, z4_text = _zone4_fallback(sig)
         if sig.audio_levels:
-            return _plan(
-                layout=LAYOUT_ZONE6_CLOCKSAVER,
-                assignments=(CLOCK_SAVER, "", VOLUME, z4, ""),
-                sig=sig,
-                zone4_text=z4_text,
-            )
+            # Audio but no player metadata: the visualizer shows what is playing.
+            return _visualizer_plan(sig, metadata=False)
         return _plan(
             layout=LAYOUT_ZONE8_CLOCKSAVER,
             assignments=("", "", "", z4, SECONDS),
@@ -310,6 +335,8 @@ def resolve_auto_widgets(sig: AutoWidgetSignals) -> AutoWidgetPlan:
             force_settings=True,
             exit_ok=False,
         )
+    if sig.audio_levels:
+        return _visualizer_plan(sig, metadata=False)
     if sig.wan_ok_at_startup:
         return _plan(
             layout=LAYOUT_ZONE6_CLOCKSAVER,

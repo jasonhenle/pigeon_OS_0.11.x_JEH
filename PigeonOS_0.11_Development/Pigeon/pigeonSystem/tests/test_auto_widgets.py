@@ -20,6 +20,9 @@ from pigeon.auto_widgets import (  # noqa: E402
     LAYOUT_ZONE6_PAUSESAVER,
     LAYOUT_ZONE8_CLOCKSAVER,
     LAYOUT_ZONE10_PAUSESAVER,
+    LAYOUT_ZONE6_VISUALIZER,
+    CLOCK,
+    VISUALIZER_Z6,
     METADATA_ABSENT,
     METADATA_OK,
     METADATA_STOPPED,
@@ -86,7 +89,7 @@ class AutoWidgetResolveTests(unittest.TestCase):
             )
             self.assertEqual(plan.assignments[2], VOLUME)
 
-    def test_lan_down_with_audio_keeps_volume_blanked(self) -> None:
+    def test_lan_down_with_audio_shows_the_visualizer(self) -> None:
         plan = resolve_auto_widgets(
             _sig(
                 wan_ok=False,
@@ -96,7 +99,8 @@ class AutoWidgetResolveTests(unittest.TestCase):
                 audio_levels=True,
             )
         )
-        self.assertEqual(plan.assignments[2], VOLUME)
+        self.assertEqual(plan.layout, LAYOUT_ZONE6_VISUALIZER)
+        self.assertEqual(plan.assignments, (VISUALIZER_Z6, "", CLOCK, "", SECONDS))
         self.assertTrue(plan.blank_volume)
 
     def test_audio_levels_widget_is_retired(self) -> None:
@@ -138,6 +142,7 @@ class AutoWidgetResolveTests(unittest.TestCase):
             )
         )
         self.assertEqual(plan.layout, LAYOUT_ZONE8_CLOCKSAVER)
+        # No still to show, but audio: the visualizer shows what is playing.
         zone6 = resolve_auto_widgets(
             _sig(
                 player_metadata=METADATA_STOPPED,
@@ -145,7 +150,7 @@ class AutoWidgetResolveTests(unittest.TestCase):
                 pausesaver_art=False,
             )
         )
-        self.assertEqual(zone6.layout, LAYOUT_ZONE6_CLOCKSAVER)
+        self.assertEqual(zone6.layout, LAYOUT_ZONE6_VISUALIZER)
 
     def test_paused_for_thirty_seconds_becomes_clocksaver(self) -> None:
         still_paused = resolve_auto_widgets(
@@ -165,8 +170,8 @@ class AutoWidgetResolveTests(unittest.TestCase):
         zone6 = resolve_auto_widgets(
             _sig(player_metadata=METADATA_STOPPED, audio_levels=True, paused_for_s=30.0)
         )
-        self.assertEqual(zone6.layout, LAYOUT_ZONE6_CLOCKSAVER)
-        self.assertEqual(zone6.assignments[0], CLOCK_SAVER)
+        self.assertEqual(zone6.layout, LAYOUT_ZONE6_VISUALIZER)
+        self.assertEqual(zone6.assignments[0], VISUALIZER_Z6)
 
     def test_paused_without_audio_uses_zone10(self) -> None:
         plan = resolve_auto_widgets(
@@ -180,13 +185,18 @@ class AutoWidgetResolveTests(unittest.TestCase):
         self.assertEqual(plan.zone10, PAUSESAVER)
         self.assertEqual(plan.assignments, ("", "", "", PAUSESAVER, STATUS))
 
-    def test_absent_metadata_with_audio_is_scaled_clocksaver(self) -> None:
+    def test_absent_metadata_with_audio_is_the_zone6_visualizer(self) -> None:
+        # Audio but no player metadata: visualizer, analog clock, the receiver's
+        # input + volume in zone 4, seconds in zone 5.
         plan = resolve_auto_widgets(
             _sig(player_metadata=METADATA_ABSENT, audio_levels=True)
         )
-        self.assertEqual(plan.layout, LAYOUT_ZONE6_CLOCKSAVER)
-        self.assertEqual(plan.assignments[0], CLOCK_SAVER)
-        self.assertEqual(plan.assignments[2], VOLUME)
+        self.assertEqual(plan.layout, LAYOUT_ZONE6_VISUALIZER)
+        self.assertEqual(plan.assignments, (VISUALIZER_Z6, "", CLOCK, "", SECONDS))
+        self.assertTrue(plan.zone4_receiver)
+        # Metadata returns: back to the standard layout.
+        back = resolve_auto_widgets(_sig(player_metadata=METADATA_OK, audio_levels=True))
+        self.assertEqual(back.layout, LAYOUT_NP)
 
     def test_stale_title_from_previous_app_is_absent(self) -> None:
         # Netflix after It on Max: the carried-over title is marked stale.
@@ -200,7 +210,7 @@ class AutoWidgetResolveTests(unittest.TestCase):
         meta = classify_player_metadata(md, playing=True)
         self.assertEqual(meta, METADATA_ABSENT)
         plan = resolve_auto_widgets(_sig(player_metadata=meta, audio_levels=True))
-        self.assertEqual(plan.layout, LAYOUT_ZONE6_CLOCKSAVER)
+        self.assertEqual(plan.layout, LAYOUT_ZONE6_VISUALIZER)
         plan = resolve_auto_widgets(_sig(player_metadata=meta, audio_levels=False))
         self.assertEqual(plan.layout, LAYOUT_ZONE8_CLOCKSAVER)
 
@@ -228,7 +238,7 @@ class AutoWidgetResolveTests(unittest.TestCase):
                 wan_ok=False,
                 wan_ok_at_startup=True,
                 reliable_clock=True,
-                audio_levels=True,
+                audio_levels=False,
                 receiver_ok=False,
             )
         )
@@ -253,14 +263,14 @@ class AutoWidgetResolveTests(unittest.TestCase):
         plan = resolve_auto_widgets(
             _sig(
                 player_metadata=METADATA_ABSENT,
-                audio_levels=True,
+                audio_levels=False,
                 room_renamed=True,
                 room_name="LOUNGE",
             )
         )
         self.assertEqual(plan.zone4_text, "LOUNGE")
 
-    def test_zone4_receiver_name_when_wan_off(self) -> None:
+    def test_zone4_receiver_readout_when_wan_off(self) -> None:
         plan = resolve_auto_widgets(
             _sig(
                 wan_ok=False,
@@ -272,14 +282,15 @@ class AutoWidgetResolveTests(unittest.TestCase):
                 receiver_name="DENON",
             )
         )
-        self.assertEqual(plan.zone4_text, "DENON")
+        self.assertTrue(plan.zone4_receiver)
+        self.assertEqual(plan.zone4_text, "")
 
     def test_auto_clocksaver_never_uses_analog_face(self) -> None:
         zone8 = resolve_auto_widgets(
             _sig(player_metadata=METADATA_ABSENT, audio_levels=False)
         )
         zone6 = resolve_auto_widgets(
-            _sig(player_metadata=METADATA_ABSENT, audio_levels=True)
+            _sig(wan_ok=False, wan_ok_at_startup=True, player_metadata=METADATA_ABSENT, audio_levels=False)
         )
         playing = resolve_auto_widgets(
             _sig(player_metadata=METADATA_OK, audio_levels=True)
@@ -381,3 +392,29 @@ class AutoWidgetHelperTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class VisualizerModeLayoutTests(unittest.TestCase):
+    """Long-press visualizer mode (``visualizer_mode`` signal)."""
+
+    def test_with_metadata_keeps_cast_info_and_status_bar(self) -> None:
+        plan = resolve_auto_widgets(_sig(player_metadata=METADATA_OK, audio_levels=True, visualizer_mode=True))
+        self.assertEqual(plan.layout, LAYOUT_ZONE6_VISUALIZER)
+        self.assertEqual(plan.assignments, (VISUALIZER_Z6, "", CLOCK, INFO, STATUS))
+        self.assertFalse(plan.zone4_receiver)
+
+    def test_paused_title_keeps_cast_info(self) -> None:
+        plan = resolve_auto_widgets(
+            _sig(player_metadata=METADATA_STOPPED, pausesaver_art=True, visualizer_mode=True)
+        )
+        self.assertEqual(plan.assignments, (VISUALIZER_Z6, "", CLOCK, INFO, STATUS))
+
+    def test_without_metadata_shows_receiver_and_seconds(self) -> None:
+        for audio in (True, False):  # stays up with no audio (the badge reports it)
+            plan = resolve_auto_widgets(_sig(audio_levels=audio, visualizer_mode=True))
+            self.assertEqual(plan.assignments, (VISUALIZER_Z6, "", CLOCK, "", SECONDS))
+            self.assertTrue(plan.zone4_receiver)
+
+    def test_forced_settings_still_win(self) -> None:
+        plan = resolve_auto_widgets(_sig(wan_ok=False, reliable_clock=False, visualizer_mode=True))
+        self.assertEqual(plan.layout, LAYOUT_SETTINGS)

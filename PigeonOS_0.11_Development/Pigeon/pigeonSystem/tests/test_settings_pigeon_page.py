@@ -82,6 +82,7 @@ class FocusRingTests(unittest.TestCase):
                 "option:2",
                 "option:3",
                 "option:4",
+                "option:5",
                 "reset",
                 "update",
             ),
@@ -252,6 +253,19 @@ class NavigationTests(_IsolatedStateTest):
         self.assertTrue(zone4_visualizer_on())
         w.activate()
         self.assertFalse(zone4_visualizer_on())
+
+    def test_option5_sets_the_starting_mode_and_flips_it_now(self) -> None:
+        from pigeon import visualizer_mode
+        from pigeon.widgets.options_settings import zone6_visualizer_default
+
+        w = self._widget()
+        self.assertFalse(zone6_visualizer_default())
+        self._focus(w, "option:5")
+        self.assertEqual(w.activate(), "options_toggle:5")
+        self.assertTrue(zone6_visualizer_default())
+        self.assertTrue(visualizer_mode.is_active())
+        w.activate()
+        self.assertFalse(visualizer_mode.is_active())
 
     def test_timezone_dropdown_sets_manual_zone(self) -> None:
         pigeon_locale._write(timezone="America/New_York", tz_source="auto")

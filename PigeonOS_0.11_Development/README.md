@@ -126,9 +126,15 @@ Canonical list is also in Developer settings via `pigeon/hotkeys.py`.
 |----------|------------|------------|
 | CW | `MEGA,ENCODER,NAV,RIGHT` or `RIGHT` | forward |
 | CCW | `MEGA,ENCODER,NAV,LEFT` or `LEFT` | backward |
-| Push | `MEGA,BUTTON,NAV,PRESSED` or `PUSH` | activate |
+| Push | `MEGA,BUTTON,NAV,PRESSED` or `PUSH` | activate (opens settings) |
+| Hold ≥ 0.6 s | `HOLD` (HID boards: `v`) | Now Playing ↔ visualizer mode |
 
-Env: `PIGEON_ROTARY_SERIAL=0` disables; `PIGEON_ADB_SERIAL` selects ADB device; see `hardware/rotary_hid/README.md`.
+In visualizer mode, turning the encoder (or Left / Right from an HID board)
+picks the zone-6 visualizer preset. **V** on a keyboard is the same as a long
+press; settings_pigeon option 5 picks the mode Pigeon starts in. Presets are
+tuned in `testingEnvironments/fullscreen_viz_lab.py` (see `pigeon/fullscreen_viz.py`).
+
+Env: `PIGEON_ROTARY_SERIAL=0` disables; `PIGEON_ROTARY_HOLD_S` sets the GPIO long-press time; `PIGEON_ADB_SERIAL` selects ADB device; see `hardware/rotary_hid/README.md`.
 
 ## Important code modules
 

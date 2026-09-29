@@ -7,6 +7,7 @@ prints one line per action:
   RIGHT / CW / FORWARD     → forward
   LEFT  / CCW / BACKWARD   → backward
   PRESS / PUSH / SELECT    → activate
+  HOLD / LONG              → hold (long press: visualizer mode on / off)
 
 Transports:
   0) Raspberry Pi GPIO rotary encoder (default pins A=17, B=27, button=22),
@@ -21,6 +22,8 @@ Optional: ``PIGEON_ROTARY_INVERT=1`` swaps forward/backward.
 Optional: ``PIGEON_ROTARY_GPIO=0`` disables direct Pi GPIO input.
 Optional: ``PIGEON_ROTARY_GPIO_A/B/BUTTON`` override GPIO pins.
 Optional: ``PIGEON_ROTARY_GPIO_INVERT=0`` restores raw GPIO A/B direction.
+Optional: ``PIGEON_ROTARY_HOLD_S`` long-press time for the GPIO encoder button
+(default 0.6 s). A short press is reported on release; a hold, once, while held.
 Optional: ``PIGEON_VOLUME_GPIO=0`` disables direct Pi GPIO volume input.
 Optional: ``PIGEON_VOLUME_GPIO_A/B/BUTTON`` override volume GPIO pins.
 Optional: ``PIGEON_VOLUME_GPIO_INVERT=1`` swaps volume up/down.
@@ -69,6 +72,10 @@ _LINE_TO_ACTION: dict[str, str] = {
     "SPACE": "activate",
     "ACTIVATE": "activate",
     "ENTER": "activate",
+    "HOLD": "hold",
+    "LONG": "hold",
+    "LONGPRESS": "hold",
+    "LONG_PRESS": "hold",
 }
 _ACTION_TO_KEYSYM = {
     "forward": "Right",
@@ -594,11 +601,37 @@ def _gpio_poll_encoder_script(
     cw: str,
     ccw: str,
     push: str,
+    hold: str | None = None,
+    hold_s: float = 0.6,
 ) -> str:
     """Poll A/B/button. gpiozero edge callbacks go deaf after long kiosk runs.
 
     Emit one CW/CCW line per detent (gpiozero RotaryEncoder), not per gray edge.
+    With ``hold``, the button reports ``push`` on release (short press) or
+    ``hold`` once it has been down ``hold_s`` seconds; without, ``push`` on press.
     """
+    if hold:
+        button = f"""
+        if bv != prev_btn:
+            if prev_btn == 1 and bv == 0 and (now - last_btn) >= 0.05:
+                down_at = now
+                held = False
+                last_btn = now
+            elif prev_btn == 0 and bv == 1 and down_at is not None:
+                if not held:
+                    print({push!r}, flush=True)
+                down_at = None
+            prev_btn = bv
+        if down_at is not None and not held and (now - down_at) >= {float(hold_s)!r}:
+            print({hold!r}, flush=True)
+            held = True"""
+    else:
+        button = f"""
+        if bv != prev_btn:
+            if prev_btn == 1 and bv == 0 and (now - last_btn) >= 0.05:
+                print({push!r}, flush=True)
+                last_btn = now
+            prev_btn = bv"""
     return f"""
 import time
 from gpiozero import DigitalInputDevice
@@ -611,6 +644,8 @@ state = 'idle'
 prev = (int(a.value) << 1) | int(b.value)
 prev_btn = int(btn.value)
 last_btn = 0.0
+down_at = None
+held = False
 while True:
     try:
         cur = (int(a.value) << 1) | int(b.value)
@@ -626,12 +661,7 @@ while True:
             else:
                 state = nxt
         bv = int(btn.value)
-        now = time.monotonic()
-        if bv != prev_btn:
-            if prev_btn == 1 and bv == 0 and (now - last_btn) >= 0.05:
-                print({push!r}, flush=True)
-                last_btn = now
-            prev_btn = bv
+        now = time.monotonic(){button}
     except Exception:
         pass
     time.sleep(0.001)
@@ -750,6 +780,13 @@ def _pump_gpio_helper(
     return stop_helper
 
 
+def _env_hold_s() -> float:
+    try:
+        return max(0.2, min(3.0, float(os.environ.get("PIGEON_ROTARY_HOLD_S", "") or 0.6)))
+    except ValueError:
+        return 0.6
+
+
 def _start_gpio_listener(
     root,
     *,
@@ -766,7 +803,8 @@ def _start_gpio_listener(
     cw_line = "LEFT" if invert else "RIGHT"
     ccw_line = "RIGHT" if invert else "LEFT"
     helper = _gpio_poll_encoder_script(
-        pin_a, pin_b, pin_button, cw=cw_line, ccw=ccw_line, push="PUSH"
+        pin_a, pin_b, pin_button, cw=cw_line, ccw=ccw_line, push="PUSH", hold="HOLD",
+        hold_s=_env_hold_s(),
     )
     ignored = [0]
     logged_ok = [0]
