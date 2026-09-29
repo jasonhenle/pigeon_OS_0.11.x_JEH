@@ -6,6 +6,7 @@ File names inside asset folders are still expected to match a known stem prefix
 
 from __future__ import annotations
 
+from functools import lru_cache
 from pathlib import Path
 
 _ICLOUD = Path.home() / "Library" / "Mobile Documents" / "com~apple~CloudDocs"
@@ -73,10 +74,14 @@ _POSTER_LEAF_DIR_NAMES = (
 )
 
 
+@lru_cache(maxsize=1)
 def _pigeon_package_dir() -> Path:
     return Path(__file__).resolve().parent
 
 
+# The install can't move while Pigeon runs, and the render loop resolves
+# TMDb cache paths through here several times a frame.
+@lru_cache(maxsize=1)
 def pigeon_python_dir() -> Path:
     """Project root (contains pigeonAssets / pigeonTMDB for the current build layout)."""
     code_home = _pigeon_package_dir().parent

@@ -16,6 +16,7 @@ import math
 import os
 import re
 import time
+import weakref
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -2803,6 +2804,28 @@ def _cast_line_patch(text: str, *, size_px: int, max_width_px: int) -> np.ndarra
 ZONE4_VISUALIZER_WIDGET = "visualizer"
 
 
+def _weak_or_none(arr: object) -> weakref.ref | None:
+    try:
+        return weakref.ref(arr)
+    except TypeError:
+        return None
+
+
+def _same_source_art(src_ref: weakref.ref | None, arr: object, kept: np.ndarray | None) -> bool:
+    """True when *arr* is the array last copied into *kept*, pixels unchanged.
+
+    Callers pass the same cached poster / TT array every frame; a full
+    ``array_equal`` against the private copy cost ~10% of the Pi 5 render
+    thread. A sparse sample guards against an in-place repaint.
+    """
+    if src_ref is None or kept is None or src_ref() is not arr:
+        return False
+    a = arr  # type: ignore[assignment]
+    if getattr(a, "dtype", None) != np.uint8 or getattr(a, "shape", None) != kept.shape:
+        return False
+    return bool(np.array_equal(a[::23, ::19], kept[::23, ::19]))  # type: ignore[index]
+
+
 def zone4_visualizer_rect() -> tuple[int, int, int, int, int]:
     """``(x, y, w, h, r)`` for the zone-4 EQ: the status-bar track's columns
     and corner radius, from the track's inset below zone 4's top down to the
@@ -3702,6 +3725,9 @@ class ViewCirclesWidget:
         self._poster_bgra: np.ndarray | None = None
         self._backdrop_bgr: np.ndarray | None = None
         self._tt_bgra: np.ndarray | None = None
+        # Last caller arrays behind _poster_bgra / _tt_bgra (see _same_source_art).
+        self._poster_src: weakref.ref | None = None
+        self._tt_src: weakref.ref | None = None
         self._tt_theme_hex: str | None = None
         self._tt_theme_src_id: object | None = None
         self._tt_patch_cache: dict[tuple[object, ...], np.ndarray | None] = {}
@@ -3813,14 +3839,19 @@ class ViewCirclesWidget:
             if self._poster_bgra is None:
                 return False
             self._poster_bgra = None
+            self._poster_src = None
             self._clear_artwork_blur_cache()
             self.clear_cache()
             return True
+        if _same_source_art(self._poster_src, poster_bgra, self._poster_bgra):
+            return False
         arr = np.asarray(poster_bgra, dtype=np.uint8)
         if self._poster_bgra is not None and self._poster_bgra.shape == arr.shape:
             if np.array_equal(self._poster_bgra, arr):
+                self._poster_src = _weak_or_none(poster_bgra)
                 return False
         self._poster_bgra = arr.copy()
+        self._poster_src = _weak_or_none(poster_bgra)
         self._clear_artwork_blur_cache()
         self._tt_theme_src_id = None
         self.clear_cache()
@@ -3832,16 +3863,21 @@ class ViewCirclesWidget:
             if self._tt_bgra is None:
                 return False
             self._tt_bgra = None
+            self._tt_src = None
             self._tt_theme_hex = None
             self._tt_theme_src_id = None
             self._tt_patch_cache.clear()
             self.clear_cache()
             return True
+        if _same_source_art(self._tt_src, tt_bgra, self._tt_bgra):
+            return False
         arr = np.asarray(tt_bgra, dtype=np.uint8)
         if self._tt_bgra is not None and self._tt_bgra.shape == arr.shape:
             if np.array_equal(self._tt_bgra, arr):
+                self._tt_src = _weak_or_none(tt_bgra)
                 return False
         self._tt_bgra = arr.copy()
+        self._tt_src = _weak_or_none(tt_bgra)
         self._tt_theme_hex = None
         self._tt_theme_src_id = None
         self._tt_patch_cache.clear()

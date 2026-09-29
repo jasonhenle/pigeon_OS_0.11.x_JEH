@@ -63,6 +63,7 @@ from pigeon.media_cache import (
     ASSET_POSTER_ART,
     copy_pulled_to_reformatted,
     find_cached_reformatted_asset,
+    forget_recent_asset_lookups,
     title_key,
 )
 from pigeon.media_folders import (
@@ -3023,6 +3024,8 @@ def _drop_cached_logos(tk: str) -> bool:
             except OSError:
                 break
             dropped = True
+    if dropped:
+        forget_recent_asset_lookups()
     return dropped
 
 
