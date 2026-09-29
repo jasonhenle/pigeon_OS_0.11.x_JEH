@@ -7,6 +7,8 @@ and the zone 5 status bar stays on top.
 
 from __future__ import annotations
 
+import weakref
+
 import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
@@ -20,6 +22,8 @@ _LIVE_BACKDROP: np.ndarray | None = None
 _LIVE_BACKDROP_KEY = ""
 # Reject all-black arrays so a missing still cannot count as “art”.
 _ART_MIN_PEAK = 12
+_ART_CHECK_CACHE: list[tuple[weakref.ref, bytes, bool]] = []
+_ART_CHECK_CACHE_SIZE = 4
 # Design-space (1280×800) inset from the frame bottom to the plate.
 PAUSED_SCREEN_BAR_BOTTOM_PX = 50
 PAUSED_SCREEN_BAR_PAD_X_PX = 48
@@ -178,9 +182,31 @@ def paint_paused_screen_label_in_rect(
 
 
 def pausesaver_art_usable(frame_bgr: np.ndarray | None) -> bool:
-    """True when *frame_bgr* is a real still, not an empty or all-black frame."""
+    """True when *frame_bgr* is a real still, not an empty or all-black frame.
+
+    Called several times per rendered frame on the same backdrop, so the
+    answer is cached per array object. A sparse pixel sample guards against
+    an array being repainted in place.
+    """
     if frame_bgr is None or getattr(frame_bgr, "size", 0) == 0:
         return False
+    try:
+        probe = np.ascontiguousarray(frame_bgr[::37, ::53]).tobytes()
+    except Exception:
+        return _art_peak_ok(frame_bgr)
+    for ref, cached_probe, ok in _ART_CHECK_CACHE:
+        if ref() is frame_bgr and cached_probe == probe:
+            return ok
+    ok = _art_peak_ok(frame_bgr)
+    try:
+        _ART_CHECK_CACHE.insert(0, (weakref.ref(frame_bgr), probe, ok))
+        del _ART_CHECK_CACHE[_ART_CHECK_CACHE_SIZE:]
+    except TypeError:
+        pass
+    return ok
+
+
+def _art_peak_ok(frame_bgr: np.ndarray) -> bool:
     src = np.ascontiguousarray(frame_bgr)
     if src.ndim == 2:
         peak = int(src.max())
