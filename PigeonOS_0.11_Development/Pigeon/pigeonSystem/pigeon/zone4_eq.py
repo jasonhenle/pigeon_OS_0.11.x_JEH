@@ -536,7 +536,8 @@ class Zone4EQ:
             return
         keep.sort(key=lambda k: k[0])
         if any(keep[j][0] < keep[j - 1][1] for j in range(1, len(keep))):
-            for *_, rect in keep:
+            # Blend order matters where rects overlap: keep the caller's order.
+            for rect in rects:
                 cls._fill(col, alpha, *rect)
             return
         n = len(keep)
