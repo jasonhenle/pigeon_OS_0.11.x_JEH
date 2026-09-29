@@ -21,6 +21,7 @@ from pathlib import Path
 from pigeon.stage_background import set_stage_bgr
 import time
 
+from pigeon.core import frame_scope as _frame_scope
 from pigeon.core import frame_stats as _frame_stats
 
 if TYPE_CHECKING:
@@ -119,10 +120,32 @@ def _apply_dev_phase_widgets(*, label, settings_frame) -> None:
     label.pack(fill=tk.BOTH, expand=True)
 
 
+# Next live-audio frame deadline (perf_counter seconds), or None.
+_LIVE_PACE: list[float | None] = [None]
+
+
+def _live_pace_delay_ms(frame_t0: float, now: float, interval_ms: int) -> int:
+    """Delay to the next slot on a fixed ``interval_ms`` grid.
+
+    Scheduling each frame "interval minus this render" let Tk timer latency
+    and the label redraw add ~2 ms to every frame (35 ms, not 33). Deadlines
+    step from the previous deadline instead, so that slack is absorbed. A
+    frame that misses a whole slot re-anchors the grid (no catch-up burst).
+    """
+    step = interval_ms / 1000.0
+    prev = _LIVE_PACE[0]
+    nxt = (prev + step) if prev is not None else (frame_t0 + step)
+    if nxt < now - step or nxt > now + 2 * step:
+        nxt = max(now, frame_t0 + step)
+    _LIVE_PACE[0] = nxt
+    return max(1, int(round((nxt - now) * 1000.0)))
+
+
 def _invoke_render_after(*, _render_after_id, render_once) -> None:
     _render_after_id[0] = None
     t0 = time.perf_counter()
-    render_once()
+    with _frame_scope.render_frame():
+        render_once()
     _frame_stats.note_render(t0, time.perf_counter())
 
 
@@ -1667,8 +1690,9 @@ def render_once(*, BACKDROP_BRIGHTNESS, DevPhase, DisplayView, SKIP_POST_SPLASH_
             or _np_wants_live_audio()
         ):
             # Aim at *interval* wall time, not compose-duration + interval.
-            delay = max(1, interval - elapsed_ms)
+            delay = _live_pace_delay_ms(_render_tick_t0, time.perf_counter(), interval)
         else:
+            _LIVE_PACE[0] = None
             delay = max(interval, elapsed_ms + 1)
         _schedule_render_oneshot(delay)
 
