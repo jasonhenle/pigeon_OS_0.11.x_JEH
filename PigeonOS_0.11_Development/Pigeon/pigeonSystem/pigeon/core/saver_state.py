@@ -957,10 +957,20 @@ def _auto_widget_signals(*, _apple_tv_is_off, _clock_saver_receiver_off, _paused
     )
 
 
+# (frame token, plan): the policy resolved once per scheduled render.
+_POLICY_THIS_FRAME: list[object] = [None, None]
+
+
 def _apply_auto_widget_policy(*, DevPhase, _auto_widget_signals, _paused_screen_backdrop_bgr, active_tmdb_title_key, apple_tv_auto_state, dev_phase, main_settings_widget, skip_cache):
     from pigeon.auto_widgets import resolve_auto_widgets, set_live_plan
+    from pigeon.core import frame_scope
     from pigeon.paused_screen import set_pausesaver_backdrop
 
+    # Asked ~10 times while one frame is composed; the first answer holds for
+    # the rest of that frame. Outside a scheduled render, always recompute.
+    tok = frame_scope.token()
+    if tok is not None and _POLICY_THIS_FRAME[0] == tok:
+        return _POLICY_THIS_FRAME[1]
     plan = resolve_auto_widgets(_auto_widget_signals())
     set_live_plan(plan)
     try:
@@ -1000,6 +1010,8 @@ def _apply_auto_widget_policy(*, DevPhase, _auto_widget_signals, _paused_screen_
                 pass
         dev_phase[0] = DevPhase.MAIN_SETTINGS
         skip_cache[0] = None
+    if tok is not None:
+        _POLICY_THIS_FRAME[0], _POLICY_THIS_FRAME[1] = tok, plan
     return plan
 
 
