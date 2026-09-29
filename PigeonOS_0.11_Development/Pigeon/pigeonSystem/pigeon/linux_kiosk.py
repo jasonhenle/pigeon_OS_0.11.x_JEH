@@ -18,6 +18,7 @@ import signal
 import struct
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 # Pi OS Trixie default panel / desktop. Do not match ``lwrespawn`` with
@@ -405,6 +406,11 @@ def _xsetroot_blank() -> None:
 
 def hide_pointer(root: object | None = None) -> None:
     """Hide the pointer over Pigeon and park it at the origin."""
+    _hide_pointer_tk(root)
+    _park_pointer()
+
+
+def _hide_pointer_tk(root: object | None) -> None:
     if root is not None:
         try:
             root.configure(cursor="none")  # type: ignore[union-attr]
@@ -414,6 +420,10 @@ def hide_pointer(root: object | None = None) -> None:
             root.option_add("*cursor", "none")  # type: ignore[union-attr]
         except Exception:
             pass
+
+
+def _park_pointer() -> None:
+    """Blank the root cursor and move the pointer to 0,0 (subprocesses only)."""
     _xsetroot_blank()
     env = os.environ.copy()
     env.setdefault("DISPLAY", ":0")
@@ -512,10 +522,27 @@ def enforce_kiosk(
     borderless: bool = True,
 ) -> list[int]:
     """Hide PiOS chrome, kill overlays, hide the pointer, cover the display."""
+    stopped = merge_stopped_pids(list(stopped_pids or []), _enforce_kiosk_processes())
+    _enforce_kiosk_window(root, borderless=borderless)
+    return stopped
+
+
+def _enforce_kiosk_processes() -> list[int]:
+    """Process side of :func:`enforce_kiosk`: pgrep / signals / X helpers, no Tk.
+
+    Several ``pgrep`` runs take 350-500 ms on a Pi 5, so the recurring guard
+    runs this on a worker thread instead of the Tk main loop.
+    """
     install_user_kiosk_session()
-    stopped = merge_stopped_pids(list(stopped_pids or []), hide_desktop_chrome())
+    stopped = hide_desktop_chrome()
     suppress_os_overlays()
-    hide_pointer(root)
+    _park_pointer()
+    return stopped
+
+
+def _enforce_kiosk_window(root, *, borderless: bool) -> None:
+    """Tk side of :func:`enforce_kiosk` (main thread only)."""
+    _hide_pointer_tk(root)
     try:
         covers = bool(window_covers_display(root))
     except Exception:
@@ -528,7 +555,6 @@ def enforce_kiosk(
             root.lift()
         except Exception:
             pass
-    return stopped
 
 
 def release_kiosk(stopped_pids: list[int] | None = None) -> None:
@@ -541,14 +567,28 @@ def schedule_kiosk_guard(root, stopped_holder: list[int]) -> None:
     if not linux_kiosk_enabled():
         return
 
+    busy = threading.Event()
+
+    def _work() -> None:
+        try:
+            got = _enforce_kiosk_processes()
+            # Merge right away so release_kiosk() can SIGCONT them on exit.
+            stopped_holder[:] = merge_stopped_pids(stopped_holder, got)
+        except Exception:
+            pass
+        finally:
+            busy.clear()
+
     def _tick() -> None:
         if not linux_kiosk_enabled():
             return
+        if not busy.is_set():
+            busy.set()
+            threading.Thread(target=_work, name="pigeon-kiosk-guard", daemon=True).start()
         try:
-            updated = enforce_kiosk(root, stopped_holder, borderless=True)
+            _enforce_kiosk_window(root, borderless=True)
         except Exception:
-            updated = stopped_holder
-        stopped_holder[:] = merge_stopped_pids(stopped_holder, updated)
+            pass
         try:
             root.after(kiosk_guard_ms(), _tick)
         except Exception:
