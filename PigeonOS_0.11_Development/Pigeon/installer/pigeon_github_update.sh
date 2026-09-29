@@ -42,6 +42,20 @@ fi
 INSTALL_DIR="$(cd "${INSTALL_DIR}" && pwd)"
 
 schedule_in_app_relaunch() {
+  # Inside pigeon.service (Pi autostart) a detached helper does not survive:
+  # Pigeon exits cleanly, Restart=on-failure does not fire, and systemd stops
+  # the unit and kills everything in it, helper included. Queue a restart job
+  # instead: systemd carries it out after this process is gone.
+  if grep -qs "pigeon.service" /proc/self/cgroup && command -v systemctl >/dev/null 2>&1; then
+    local systemctl_bin
+    systemctl_bin="$(command -v systemctl)"
+    if sudo -n -l "${systemctl_bin}" restart pigeon.service >/dev/null 2>&1; then
+      log "in-app relaunch via systemctl restart pigeon.service"
+      nohup sudo -n "${systemctl_bin}" restart pigeon.service >/dev/null 2>&1 &
+      return 0
+    fi
+    log "inside pigeon.service without passwordless restart; Pigeon exits non-zero so systemd restarts it"
+  fi
   local parent_pid="${PIGEON_UPDATE_PARENT_PID:-}"
   local relaunch="${INSTALL_DIR}/installer/run_pigeon_0_11.sh"
   if [[ ! -x "${relaunch}" ]]; then

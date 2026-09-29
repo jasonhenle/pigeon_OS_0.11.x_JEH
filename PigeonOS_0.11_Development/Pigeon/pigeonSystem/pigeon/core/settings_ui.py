@@ -1363,7 +1363,10 @@ def _handle_main_settings_action(action: str, *, _apply_persisted_location_to_ru
                         except Exception:
                             pass
                         # Exit unconditionally — do not wait on root.destroy().
-                        os._exit(0)
+                        # Non-zero under pigeon.service so systemd restarts us.
+                        from pigeon.github_update import exit_code_after_update
+
+                        os._exit(exit_code_after_update())
 
                     root.after(400, _restart_ms)
                     return
@@ -2141,7 +2144,9 @@ def _run_github_apply_worker(*, remote: str = "?", branch: str | None = None, _r
                         root.destroy()
                     except tk.TclError:
                         pass
-                    os._exit(0)
+                    from pigeon.github_update import exit_code_after_update
+
+                    os._exit(exit_code_after_update())
 
                 root.after(400, _restart_and_exit)
                 return
