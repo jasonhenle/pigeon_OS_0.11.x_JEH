@@ -4547,10 +4547,7 @@ class ViewCirclesWidget:
             return True
         if zone6_span_widget(keys) in ("clock", "clock_saver", "pausesaver"):
             return True
-        # VU already paints at 30 Hz. Rebuilding the analog clock
-        # SVG every wall-clock second hitchs those widgets for ~100 ms.
-        if self._live_audio_widgets_on():
-            return False
+        # The seconds ring keeps ticking even beside VU / visualizers.
         return any(k in ("clock", "clock_16x9") for k in keys)
 
     def _ticking_sig(self) -> tuple[object, ...]:
@@ -4584,7 +4581,6 @@ class ViewCirclesWidget:
             now=now,
             theme=self._effective_np_theme(),
             zone=int(clock_zone),
-            freeze_seconds=self._live_audio_widgets_on(),
         )
         if patch is not None and patch.size:
             _paste_patch_bgra(out, patch, zx, zy)
