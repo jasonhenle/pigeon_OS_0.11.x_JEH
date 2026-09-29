@@ -417,7 +417,7 @@ def _active_tmdb_poster_bgra(*, _tmdb_poster_cache, active_tmdb_title_key) -> np
     if not active_tmdb_title_key[0]:
         return None
     try:
-        from pigeon.media_cache import ASSET_POSTER_ART, find_cached_reformatted_asset
+        from pigeon.media_cache import ASSET_POSTER_ART, find_cached_reformatted_asset_recent
         from pigeon.image_ui_protocol import load_image_bgra
         from pigeon.tmdb_poster import split_query_and_year
     except Exception:
@@ -435,7 +435,7 @@ def _active_tmdb_poster_bgra(*, _tmdb_poster_cache, active_tmdb_title_key) -> np
         pass
     poster_path = None
     for tk in keys:
-        poster_path = find_cached_reformatted_asset(tk, ASSET_POSTER_ART)
+        poster_path = find_cached_reformatted_asset_recent(tk, ASSET_POSTER_ART)
         if poster_path is not None and poster_path.is_file():
             break
         poster_path = None
@@ -471,7 +471,7 @@ def _active_tmdb_tt_src_bgra(*, _tmdb_tt_src_cache, active_tmdb_display_title, a
         from pigeon.media_cache import (
             ASSET_LOGO,
             ASSET_LOGO_EN,
-            find_cached_reformatted_asset,
+            find_cached_reformatted_asset_recent,
             title_key as tmdb_title_key,
         )
         from pigeon.image_ui_protocol import load_image_bgra
@@ -500,7 +500,7 @@ def _active_tmdb_tt_src_bgra(*, _tmdb_tt_src_cache, active_tmdb_display_title, a
     logo_path = None
     for tk in keys:
         for asset in (ASSET_LOGO_EN, ASSET_LOGO):
-            logo_path = find_cached_reformatted_asset(tk, asset)
+            logo_path = find_cached_reformatted_asset_recent(tk, asset)
             if logo_path is not None and logo_path.is_file():
                 break
             logo_path = None

@@ -14,6 +14,7 @@ into each layout’s logo rectangle.
 from __future__ import annotations
 
 import shutil
+import time
 from pathlib import Path
 
 from pigeon.media_folders import (
@@ -59,6 +60,35 @@ def find_cached_reformatted_asset(title_key_str: str, asset_type: str) -> Path |
     return None
 
 
+# Render-path lookups: (title_key, asset_type) -> (checked_at, path or None).
+_RECENT_LOOKUPS: dict[tuple[str, str], tuple[float, Path | None]] = {}
+RECENT_LOOKUP_S = 1.0
+
+
+def find_cached_reformatted_asset_recent(title_key_str: str, asset_type: str) -> Path | None:
+    """:func:`find_cached_reformatted_asset`, remembered for ``RECENT_LOOKUP_S``.
+
+    For per-frame callers: a title with no logo otherwise costs up to four
+    ``is_file`` checks per key and asset, several times a frame. Writes here
+    call :func:`forget_recent_asset_lookups`; callers still check the returned
+    path exists. Never use this in a loop that deletes what it finds.
+    """
+    key = (title_key_str, asset_type)
+    now = time.monotonic()
+    hit = _RECENT_LOOKUPS.get(key)
+    if hit is not None and now - hit[0] < RECENT_LOOKUP_S:
+        return hit[1]
+    found = find_cached_reformatted_asset(title_key_str, asset_type)
+    if len(_RECENT_LOOKUPS) > 256:
+        _RECENT_LOOKUPS.clear()
+    _RECENT_LOOKUPS[key] = (now, found)
+    return found
+
+
+def forget_recent_asset_lookups() -> None:
+    _RECENT_LOOKUPS.clear()
+
+
 def copy_pulled_to_reformatted(src: Path, title_key_str: str, asset_type: str) -> Path:
     """Copy ``src`` to reformatted folder with ``{title}_{asset}{ext}``."""
     ensure_reformatted_media_dir()
@@ -71,4 +101,5 @@ def copy_pulled_to_reformatted(src: Path, title_key_str: str, asset_type: str) -
     shutil.copy2(src, dest)
     if asset_type in (ASSET_BACKDROP, ASSET_LOGO, ASSET_LOGO_EN, ASSET_POSTER_ART):
         trim_dir_to_max_files(dest_dir, max_files=TMDB_MEDIA_MAX_FILES)
+    forget_recent_asset_lookups()
     return dest
