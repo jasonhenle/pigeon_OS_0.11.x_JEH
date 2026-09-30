@@ -104,6 +104,15 @@
   .grow .thumbs { margin: 0; grid-template-columns: 1.1fr 1.6fr .55fr; }
   .grow .thumb img { max-height: 110px; }
   .grow.flagged { border-color: var(--bad); }
+  .grow, table.log tbody tr { cursor: pointer; }
+  .grow:hover { border-color: var(--accent); }
+
+  /* --- detail dialog --- */
+  dialog.detail { width: min(960px, calc(100vw - 32px)); max-height: calc(100vh - 48px); padding: 0; border: 0; background: transparent; color: var(--text); }
+  dialog.detail::backdrop { background: rgba(0,0,0,.6); }
+  dialog.detail .card { max-height: calc(100vh - 48px); overflow: auto; }
+  dialog.detail .card-h { position: sticky; top: 0; background: var(--panel); z-index: 1; }
+  dialog.detail .close { margin-left: 8px; }
 
   /* --- log --- */
   .logwrap { overflow: auto; border: 1px solid var(--line); border-radius: var(--radius); max-height: calc(100vh - 150px); }
@@ -166,10 +175,11 @@
   </section>
 </main>
 <div class="toast" id="toast"></div>
+<dialog class="detail" id="detail"></dialog>
 
 <script>
 const IMG = "https://image.tmdb.org/t/p/";
-let seq = 0, data = { devices: [], rows: [] }, lastOk = 0;
+let seq = 0, data = { devices: [], rows: [] }, lastOk = 0, detailId = null; // detailId: event open in the detail dialog
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
@@ -247,6 +257,43 @@ document.addEventListener("toggle", (e) => {
   if (d) e.target.open ? openRaw.add(d) : openRaw.delete(d);
 }, true);
 
+// Card body shared by the Live tab and the Gallery / Log detail dialog.
+// `live` is the device's in-progress snapshot (Live tab only); `rawKey` remembers the Raw JSON toggle.
+function cardBody(r, live, rawKey) {
+  live = live || {};
+  const md = (live.metadata && Object.keys(live.metadata).length ? live.metadata : r && r.metadata) || {};
+  const searching = live.state === "searching";
+  const stale = live.t && r && live.t > r.t && live.state !== "done";
+  const query = {
+    "Apple TV query": searching ? live.query : r && r.query_in,
+    "refined query": searching ? live.refined_query : r && r.refined_query,
+    "candidates": md.query_candidates,
+    "queries tried": !searching && r ? r.queries_tried : undefined,
+    "prefer": searching ? live.prefer : r && r.prefer,
+    "service hint": r && r.service_hint,
+    "match tier": r && !searching ? `${r.match_tier}${r.tier_ok === false ? " (below threshold)" : ""}` : undefined,
+    "TRT player / TMDb": r && !searching ? `${fmtS(r.trt_player_s) || "?"} / ${fmtS(r.trt_tmdb_s) || "?"}${r.trt_similarity != null ? "  (" + Math.round(r.trt_similarity * 100) + "%)" : ""}` : undefined,
+    "TMDb": r && r.tmdb_id && !searching ? `${r.tmdb_kind} ${r.tmdb_id}${r.tmdb_year ? " · " + r.tmdb_year : ""}` : undefined,
+    "trigger": r && !searching ? r.trigger : undefined,
+    "fetch time": r && r.fetch_ms && !searching ? r.fetch_ms + " ms" : undefined,
+    "title decision": md.title_decision,
+  };
+  const mdShown = Object.fromEntries(Object.entries(md).filter(([k]) => k !== "query_candidates" && k !== "title_decision"));
+  return `<div class="card-b">
+        <p class="assumed">${esc(searching ? (live.refined_query || live.query) : (r && (r.assumed_title || r.used_query)) || "—")}</p>
+        <div class="sub">${searching ? "Searching TMDb…" : r ? `Assumed title · ${when(r.t)} · Pigeon v${esc(r.pigeon_version || "?")}${stale ? " · metadata changed since" : ""}` : ""}</div>
+        ${!searching && r && r.failure ? `<div class="failure">${esc(r.failure)}</div>` : ""}
+        ${!searching && r && r.notes ? `<div class="sub" style="color:var(--text)">📝 ${esc(r.notes)}</div>` : ""}
+        ${thumbs(searching ? null : r)}
+        <div class="cols">
+          <div class="kv"><h3>From the player</h3>${kvTable(mdShown)}</div>
+          <div class="kv"><h3>TMDb query</h3>${kvTable(query)}</div>
+        </div>
+        ${searching ? "" : attemptsHtml(r)}
+        ${r ? `<details class="raw" data-dev="${esc(rawKey)}" ${openRaw.has(rawKey) ? "open" : ""}><summary>Raw event JSON</summary><pre>${esc(JSON.stringify(r, null, 2))}</pre></details>` : ""}
+      </div>`;
+}
+
 function renderLive() {
   const el = $("devices");
   if (!data.devices.length) {
@@ -255,41 +302,14 @@ function renderLive() {
     return;
   }
   el.innerHTML = data.devices.map((d) => {
-    const live = d.live || {}, r = d.last_event, md = (live.metadata && Object.keys(live.metadata).length ? live.metadata : r && r.metadata) || {};
+    const live = d.live || {}, r = d.last_event;
     const searching = live.state === "searching";
-    const stale = live.t && r && live.t > r.t && live.state !== "done";
     const pill = searching ? '<span class="pill searching">searching…</span>'
       : live.state === "music" || live.state === "youtube" ? `<span class="pill">${esc(live.state)} (no TMDb)</span>` : outcomePill(r);
-    const query = {
-      "Apple TV query": searching ? live.query : r && r.query_in,
-      "refined query": searching ? live.refined_query : r && r.refined_query,
-      "candidates": md.query_candidates,
-      "queries tried": !searching && r ? r.queries_tried : undefined,
-      "prefer": searching ? live.prefer : r && r.prefer,
-      "service hint": r && r.service_hint,
-      "match tier": r && !searching ? `${r.match_tier}${r.tier_ok === false ? " (below threshold)" : ""}` : undefined,
-      "TRT player / TMDb": r && !searching ? `${fmtS(r.trt_player_s) || "?"} / ${fmtS(r.trt_tmdb_s) || "?"}${r.trt_similarity != null ? "  (" + Math.round(r.trt_similarity * 100) + "%)" : ""}` : undefined,
-      "TMDb": r && r.tmdb_id && !searching ? `${r.tmdb_kind} ${r.tmdb_id}${r.tmdb_year ? " · " + r.tmdb_year : ""}` : undefined,
-      "trigger": r && !searching ? r.trigger : undefined,
-      "fetch time": r && r.fetch_ms && !searching ? r.fetch_ms + " ms" : undefined,
-      "title decision": md.title_decision,
-    };
-    const mdShown = Object.fromEntries(Object.entries(md).filter(([k]) => k !== "query_candidates" && k !== "title_decision"));
     return `<div class="card">
       <div class="card-h"><span class="dev">${esc(d.pigeon_id)}</span>${pill}<span class="pill">${esc(live.streaming_service || (r && r.streaming_service) || "—")}</span>
         <span class="ago">v${esc(d.pigeon_version || "?")} · seen <span data-ago="${d.last_seen || ""}">${ago(d.last_seen)}</span></span></div>
-      <div class="card-b">
-        <p class="assumed">${esc(searching ? (live.refined_query || live.query) : (r && (r.assumed_title || r.used_query)) || "—")}</p>
-        <div class="sub">${searching ? "Searching TMDb…" : r ? `Assumed title · ${when(r.t)} · Pigeon v${esc(r.pigeon_version || "?")}${stale ? " · metadata changed since" : ""}` : ""}</div>
-        ${!searching && r && r.failure ? `<div class="failure">${esc(r.failure)}</div>` : ""}
-        ${thumbs(searching ? null : r)}
-        <div class="cols">
-          <div class="kv"><h3>From the player</h3>${kvTable(mdShown)}</div>
-          <div class="kv"><h3>TMDb query</h3>${kvTable(query)}</div>
-        </div>
-        ${searching ? "" : attemptsHtml(r)}
-        ${r ? `<details class="raw" data-dev="${esc(d.pigeon_id)}" ${openRaw.has(d.pigeon_id) ? "open" : ""}><summary>Raw event JSON</summary><pre>${esc(JSON.stringify(r, null, 2))}</pre></details>` : ""}
-      </div></div>`;
+      ${cardBody(r, live, d.pigeon_id)}</div>`;
   }).join("");
 }
 
@@ -303,7 +323,7 @@ function filtered(dev, prob, q) {
 function renderGallery() {
   const rows = filtered($("gDev").value, $("gFail").checked, $("gSearch").value).slice(0, 300);
   $("gallery").innerHTML = rows.length ? rows.map((r) => `
-    <div class="grow ${r.flagged_wrong ? "flagged" : ""}">
+    <div class="grow ${r.flagged_wrong ? "flagged" : ""}" data-id="${esc(r.id)}">
       <div class="meta"><div class="t">${esc(r.assumed_title || r.used_query || "—")}</div>
         <div style="margin-top:6px">${outcomePill(r)} <span class="pill">${esc(r.pigeon_id)}</span> <span class="pill">v${esc(r.pigeon_version || "?")}</span> <span class="pill">${esc(r.streaming_service || "—")}</span></div>
         <div class="q">${when(r.t)}<br>query: ${esc((r.queries_tried || []).join(" → ") || r.refined_query)}</div>
@@ -336,7 +356,7 @@ function renderLog() {
   if (document.activeElement && document.activeElement.classList.contains("note")) return; // don't clobber typing
   const rows = filtered($("lDev").value, $("lFail").checked, $("lSearch").value);
   $("log").innerHTML = `<thead><tr>${LOG_COLS.map((c) => `<th>${c[0]}</th>`).join("")}</tr></thead><tbody>` +
-    rows.map((r) => `<tr class="${r.flagged_wrong ? "flagged" : ""}">${LOG_COLS.map((c) => `<td class="${c[2] || ""}">${c[1](r)}</td>`).join("")}</tr>`).join("") + "</tbody>";
+    rows.map((r) => `<tr class="${r.flagged_wrong ? "flagged" : ""}" data-id="${esc(r.id)}">${LOG_COLS.map((c) => `<td class="${c[2] || ""}">${c[1](r)}</td>`).join("")}</tr>`).join("") + "</tbody>";
   $("csvPath").textContent = data.csv_path ? "Auto-saved to " + data.csv_path : "";
 }
 
@@ -348,8 +368,38 @@ function syncFilters() {
   }
 }
 
+function renderDetail() {
+  const dlg = $("detail"), r = detailId && data.rows.find((x) => x.id === detailId);
+  if (!r) { closeDetail(); return; }
+  const scroll = dlg.querySelector(".card")?.scrollTop || 0;
+  dlg.innerHTML = `<div class="card">
+    <div class="card-h"><span class="dev">${esc(r.pigeon_id)}</span>${outcomePill(r)}<span class="pill">${esc(r.streaming_service || "—")}</span>
+      <span class="ago">v${esc(r.pigeon_version || "?")} · ${esc(when(r.t))}</span>
+      <button class="btn close" data-close>✕</button></div>
+    ${cardBody(r, null, "detail")}</div>`;
+  dlg.querySelector(".card").scrollTop = scroll;
+  if (!dlg.open) dlg.showModal();
+}
+function openDetail(id) { detailId = id; renderDetail(); }
+// The dialog's "close" event is async, so clear detailId here too or a render in between reopens it.
+function closeDetail() { detailId = null; if ($("detail").open) $("detail").close(); }
+$("detail").addEventListener("click", (e) => {
+  if (e.target === e.currentTarget || e.target.closest("[data-close]")) closeDetail();
+});
+$("detail").addEventListener("close", () => { detailId = null; });
+$("gallery").addEventListener("click", (e) => {
+  const row = e.target.closest(".grow[data-id]");
+  if (row) openDetail(row.dataset.id);
+});
+$("log").addEventListener("click", (e) => {
+  if (e.target.closest("input, a, button")) return; // editing notes / wrong-match flag
+  const row = e.target.closest("tbody tr[data-id]");
+  if (row) openDetail(row.dataset.id);
+});
+
 function render() {
   syncFilters();
+  if (detailId) renderDetail();
   const tab = document.querySelector("nav button.on").dataset.tab;
   if (tab === "live") renderLive(); else if (tab === "gallery") renderGallery(); else renderLog();
 }
