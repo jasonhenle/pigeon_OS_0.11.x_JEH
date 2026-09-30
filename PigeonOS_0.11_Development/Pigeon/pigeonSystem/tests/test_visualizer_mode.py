@@ -96,7 +96,8 @@ class GpioHoldScriptTests(unittest.TestCase):
                             sys.exit(0)
                         if self.pin != 22:
                             return 1
-                        return 0 if any(a <= t < b for a, b in PRESSES) else 1
+                        # Real gpiozero: pull_up inputs read 1 while pressed.
+                        return 1 if any(a <= t < b for a, b in PRESSES) else 0
             """))
             out = subprocess.run([sys.executable, "-c", script], env={**os.environ, "PYTHONPATH": d},
                                  capture_output=True, text=True, timeout=20)
@@ -106,6 +107,10 @@ class GpioHoldScriptTests(unittest.TestCase):
         self.assertEqual(self._run([(0.1, 0.2)]), ["PUSH"])
         self.assertEqual(self._run([(0.1, 0.9)]), ["HOLD"])
         self.assertEqual(self._run([(0.1, 0.2), (0.4, 1.2)]), ["PUSH", "HOLD"])
+
+    def test_contact_bounce_is_one_short_press(self) -> None:
+        bounce = [(0.100, 0.103), (0.105, 0.107), (0.109, 0.25), (0.252, 0.254)]
+        self.assertEqual(self._run(bounce), ["PUSH"])
 
 
 class NowPlayingZone6Tests(unittest.TestCase):
