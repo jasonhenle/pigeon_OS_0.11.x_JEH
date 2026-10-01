@@ -611,17 +611,21 @@ def _gpio_poll_encoder_script(
     ``hold`` once it has been down ``hold_s`` seconds; without, ``push`` on press.
     """
     if hold:
+        # gpiozero inverts pull-up inputs: value is 1 while the button is held
+        # to ground. Debounce by requiring 20 ms of a stable level.
         button = f"""
-        if bv != prev_btn:
-            if prev_btn == 1 and bv == 0 and (now - last_btn) >= 0.05:
+        if bv != raw_btn:
+            raw_btn = bv
+            raw_at = now
+        if raw_btn != prev_btn and (now - raw_at) >= 0.02:
+            prev_btn = raw_btn
+            if prev_btn == 1:
                 down_at = now
                 held = False
-                last_btn = now
-            elif prev_btn == 0 and bv == 1 and down_at is not None:
+            elif down_at is not None:
                 if not held:
                     print({push!r}, flush=True)
                 down_at = None
-            prev_btn = bv
         if down_at is not None and not held and (now - down_at) >= {float(hold_s)!r}:
             print({hold!r}, flush=True)
             held = True"""
@@ -643,6 +647,8 @@ TRANS = {_ENCODER_TRANSITIONS!r}
 state = 'idle'
 prev = (int(a.value) << 1) | int(b.value)
 prev_btn = int(btn.value)
+raw_btn = prev_btn
+raw_at = 0.0
 last_btn = 0.0
 down_at = None
 held = False
