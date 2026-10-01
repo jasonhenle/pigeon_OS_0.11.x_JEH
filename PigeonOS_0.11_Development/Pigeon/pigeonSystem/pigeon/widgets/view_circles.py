@@ -4376,19 +4376,21 @@ class ViewCirclesWidget:
         return bg
 
     def _theme_sources(self) -> tuple[np.ndarray | None, np.ndarray | None]:
-        """``(tt, poster)`` for the UI color — TMDb art only.
+        """``(tt, poster)`` for the UI color — TMDb art, or album art in music.
 
-        Music album art and YouTube thumbnails are not TMDb art, so they never
-        set the color.
+        Music has no TT, so album art (held as the poster) is the only source;
+        a stale video TT must not color it. YouTube thumbnails never set it.
         """
-        if self.content_mode == _CONTENT_MODE_MUSIC or self._state.is_youtube:
+        if self._state.is_youtube:
             return None, None
-        tt = self._tt_bgra
-        if tt is not None and getattr(tt, "size", 0) == 0:
-            tt = None
         poster = self._poster_bgra
         if poster is not None and getattr(poster, "size", 0) == 0:
             poster = None
+        if self.content_mode == _CONTENT_MODE_MUSIC:
+            return None, poster
+        tt = self._tt_bgra
+        if tt is not None and getattr(tt, "size", 0) == 0:
+            tt = None
         return tt, poster
 
     def _effective_np_theme(self) -> _NpTheme:
