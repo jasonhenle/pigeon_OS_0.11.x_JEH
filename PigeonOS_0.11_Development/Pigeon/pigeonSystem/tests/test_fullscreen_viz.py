@@ -91,6 +91,14 @@ class PresetTests(_Base):
         self.assertEqual(items[0]["colA"], fv.STYLES["bars"]["params"]["colA"][0])  # type: ignore[index]
         self.assertIn("fftSize", items[0])
 
+    def test_saved_retired_default_picks_up_the_new_one(self) -> None:
+        fv.config_path().write_text(json.dumps({"presets": [
+            {"name": "Old", "style": "sweep_vu", "track": "#1a1a1a"},
+            {"name": "Tuned", "style": "sweep_vu", "track": "#123456"}]}))
+        items, _ = fv.load_config()
+        self.assertEqual(items[0]["track"], fv.STYLES["sweep_vu"]["params"]["track"][0])  # type: ignore[index]
+        self.assertEqual(items[1]["track"], "#123456")
+
     def test_bad_file_falls_back_to_defaults(self) -> None:
         fv.config_path().write_text("{not json")
         self.assertEqual(len(fv.load_config()[0]), len(fv.DEFAULT_PRESETS))

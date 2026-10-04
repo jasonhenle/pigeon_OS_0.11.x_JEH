@@ -160,7 +160,7 @@ STYLES: dict[str, dict[str, object]] = {
         "needs": ("vu", "ppm"),
         "params": {
             "bg": ("#000000", _C),
-            "track": ("#1A1A1A", _C),
+            "track": ("#4D4D4D", _C),  # groove gray, matches the volume ring's unfilled track
             "lit": ("#4EA6F7", _C),
             "fillColor": ("#1F4F7A", _C),
             "red": ("#FF3B30", _C),
@@ -374,6 +374,14 @@ def style_specs(style: str) -> dict[str, tuple[object, tuple]]:
     return out
 
 
+# Defaults that changed, by (style, key): the old value. The lab saves every key,
+# so a saved preset still holding an old default picks up the new one; a value
+# someone actually tuned is kept.
+RETIRED_DEFAULTS: dict[tuple[str, str], object] = {
+    ("sweep_vu", "track"): "#1A1A1A",
+}
+
+
 def complete_preset(raw: dict[str, object]) -> dict[str, object]:
     """``raw`` over its style's defaults (unknown style → bars); keys the style doesn't use are dropped."""
     style = str(raw.get("style", "bars"))
@@ -381,7 +389,14 @@ def complete_preset(raw: dict[str, object]) -> dict[str, object]:
         style = "bars"
     specs = style_specs(style)
     p: dict[str, object] = {k: v[0] for k, v in specs.items()}
-    p.update({k: v for k, v in raw.items() if k in specs or k == "name"})
+    p.update({
+        k: v for k, v in raw.items()
+        if (k in specs or k == "name")
+        and not (
+            (style, k) in RETIRED_DEFAULTS
+            and str(v).strip().lower() == str(RETIRED_DEFAULTS[(style, k)]).lower()
+        )
+    })
     p["style"] = style
     p.setdefault("name", STYLES[style]["label"])
     return p
