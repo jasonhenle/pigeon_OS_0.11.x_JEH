@@ -3853,6 +3853,7 @@ class ViewCirclesWidget:
         # the timecodes sit below the zone box, so the zone rect alone misses them.
         self._status_bar_paint_bounds: tuple[int, int, int, int] | None = None
         self._zone4_eq = None
+        self._zone4_meter = None
         self._zone6_viz = None
         # Where _overlay_ticking last stamped TT-countdown digits (x, y, w, h).
         self._tt_time_paint_rects: list[tuple[int, int, int, int]] = []
@@ -6460,6 +6461,15 @@ class ViewCirclesWidget:
 
     def _draw_zone4_eq(self, out: np.ndarray) -> None:
         if self._assignments()[3] != ZONE4_VISUALIZER_WIDGET:
+            return
+        from pigeon import zone4_meter
+
+        if zone4_meter.selected():
+            if self._zone4_meter is None:
+                self._zone4_meter = zone4_meter.Zone4Meter()
+            self._zone4_meter.render_into(
+                out, zone4_visualizer_rect(), track_bgr=_VOLUME_CONTAINER_BGR
+            )
             return
         from pigeon.zone4_eq import Zone4EQ
 

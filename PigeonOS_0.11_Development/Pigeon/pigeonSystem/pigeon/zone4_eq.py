@@ -33,6 +33,9 @@ from pigeon.runtime_paths import pigeon_state_dir
 CONFIG_NAME = "zone4_eq.json"
 
 DEFAULT_PARAMS: dict[str, object] = {
+    # "meters": L/R peak + RMS ladders (pigeon.zone4_meter, tuned under "meter");
+    # "eq": the multi-band spectrum below.
+    "visualizer": "meters",
     # Position → band count
     "minBands": 4,
     "maxBands": 48,
