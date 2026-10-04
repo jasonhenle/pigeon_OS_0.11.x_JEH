@@ -1184,6 +1184,18 @@ def _format_zone0_date(now: datetime) -> str:
     return f"{now.strftime('%a')}, {now.strftime('%b')} {int(now.day)}".upper()
 
 
+def _zone3_clock_day_baseline_y() -> float:
+    """Design-Y baseline of the zone-3 clock's day / date line (``Monday Sep 7``)."""
+    _x, y = design_xy_from_local(
+        NOW_PLAYING_ZONES[3],
+        CLOCK_DAY_LOCAL[0],
+        CLOCK_DAY_LOCAL[1],
+        view_w=CLOCK_VIEW_W,
+        view_h=CLOCK_VIEW_H,
+    )
+    return float(y)
+
+
 def _clock_date_baseline_y(cy: float) -> float:
     """Baseline for the date line: 20px above the clock exterior top."""
     return float(cy) - float(_CLOCK_EXTERIOR_ACCENT_R) - float(_WIDGET_LABEL_BASELINE_GAP_PX)
@@ -5534,7 +5546,7 @@ class ViewCirclesWidget:
         return _receiver_volume_display_line(self._state.volume)
 
     def _draw_zone6_receiver_volume(self, out: np.ndarray) -> None:
-        """Volume (``-32.5 dB``) centered over zone 6 on the header baseline, above the visualizer."""
+        """Volume (``-32.5 dB``) centered over zone 6, on the zone-3 clock's date baseline."""
         label = self._zone6_receiver_volume_text()
         if not label:
             return
@@ -5549,7 +5561,7 @@ class ViewCirclesWidget:
         _key, patch, bbox_top = cached
         z6 = NOW_PLAYING_ZONES[6]
         _paste_baseline_centered(
-            out, patch, float(z6.x) + float(z6.w) * 0.5, header_clock_baseline_y(), bbox_top=bbox_top
+            out, patch, float(z6.x) + float(z6.w) * 0.5, _zone3_clock_day_baseline_y(), bbox_top=bbox_top
         )
 
     def _draw_weather_zones(self, out: np.ndarray) -> None:
