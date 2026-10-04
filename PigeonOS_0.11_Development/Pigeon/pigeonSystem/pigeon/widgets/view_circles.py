@@ -3863,6 +3863,7 @@ class ViewCirclesWidget:
         self._tt_theme_src_id: object | None = None
         self._tt_patch_cache: dict[tuple[object, ...], np.ndarray | None] = {}
         self._header_slot_patch_cache: tuple[object, ...] | None = None
+        self._zone6_volume_patch: tuple[object, np.ndarray, float] | None = None
         self._input_caption_patch_cache: tuple[object, ...] | None = None
         self._cached_bgra: np.ndarray | None = None
         self._cached_sig: tuple[object, ...] | None = None
@@ -5388,6 +5389,7 @@ class ViewCirclesWidget:
             rect = (int(round(zx)), int(round(zy)), int(round(zw)), int(round(zh)), 13)
             # No page fill: the visualizer draws over the wash / poster blur.
             self._zone6_visualizer().render(out, rect, clear=True)
+            self._draw_zone6_receiver_volume(out)
             from pigeon import visualizer_mode
             from pigeon.widgets.audio_meter_saver import program_audio_present
 
@@ -5513,12 +5515,42 @@ class ViewCirclesWidget:
         _paste_centered(out, patch, zx + zw * 0.5, zy + zh * 0.5)
 
     def _receiver_readout(self) -> str:
-        """Receiver input label and volume for zone 4, e.g. ``TV AUDIO   -32.5 dB``."""
+        """Receiver input label for zone 4, e.g. ``TV AUDIO`` (the volume sits over zone 6)."""
         if not self._has_receiver_connection():
             return ""  # unreachable: the last values would be stale
-        parts = [str(self._state.receiver_input or "").strip(),
-                 _receiver_volume_display_line(self._state.volume)]
-        return "   ".join(p for p in parts if p)
+        return str(self._state.receiver_input or "").strip()
+
+    def _zone6_receiver_volume_text(self) -> str:
+        """Receiver volume for the zone-6 header slot, when zone 4 shows the receiver."""
+        if not self._zone6_viz_on(self._assignments()) or not self._has_receiver_connection():
+            return ""
+        try:
+            from pigeon.auto_widgets import live_plan
+
+            if not bool(getattr(live_plan(), "zone4_receiver", False)):
+                return ""
+        except Exception:
+            return ""
+        return _receiver_volume_display_line(self._state.volume)
+
+    def _draw_zone6_receiver_volume(self, out: np.ndarray) -> None:
+        """Volume (``-32.5 dB``) centered over zone 6 on the header baseline, above the visualizer."""
+        label = self._zone6_receiver_volume_text()
+        if not label:
+            return
+        ink = _look_ink_rgb()
+        key = (label, ink)
+        cached = self._zone6_volume_patch
+        if cached is None or cached[0] != key:
+            font = _load_sharp_extrabold(int(NP_HEADER_CLOCK_SIZE_PX))
+            patch, _pw, _ph = _text_patch_font(label, font=font, fill_rgb=ink)
+            cached = (key, patch, _font_bbox_top(label, font))
+            self._zone6_volume_patch = cached
+        _key, patch, bbox_top = cached
+        z6 = NOW_PLAYING_ZONES[6]
+        _paste_baseline_centered(
+            out, patch, float(z6.x) + float(z6.w) * 0.5, header_clock_baseline_y(), bbox_top=bbox_top
+        )
 
     def _draw_weather_zones(self, out: np.ndarray) -> None:
         assignments = self._assignments()
