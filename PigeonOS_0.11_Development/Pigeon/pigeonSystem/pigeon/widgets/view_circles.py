@@ -2498,6 +2498,18 @@ def _load_sharp_extrabold(size: int) -> ImageFont.FreeTypeFont | ImageFont.Image
     return _load_sharp_italic(px)
 
 
+# Zone 6/7 TT slot when TMDb found no TT and no poster (instead of the typed title).
+NP_PIGEON_LOGO_FILENAME = "pigeon_logo_np.png"
+
+
+@lru_cache(maxsize=2)
+def _load_np_pigeon_logo_bgra(path: str) -> np.ndarray | None:
+    img = cv2.imread(path, cv2.IMREAD_UNCHANGED)
+    if img is None or img.ndim != 3 or img.shape[2] != 4:
+        return None
+    return img
+
+
 @lru_cache(maxsize=8)
 def _load_sharp_semibold(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     px = max(6, int(size))
@@ -5899,9 +5911,23 @@ class ViewCirclesWidget:
             str(self._state.tt_title or "").strip()
             or str(self._state.song_title or "").strip()
         )
+        logo = None
+        if (
+            wide
+            and (src is None or src.size == 0)
+            and self.content_mode != _CONTENT_MODE_MUSIC
+            and not self._tt_widget_loading()
+        ):
+            logo = _load_np_pigeon_logo_bgra(
+                str(self._assets_dir / "nowPlaying" / NP_PIGEON_LOGO_FILENAME)
+            )
         key: tuple[object, ...]
         if src is not None and src.size > 0:
             key = ("img", self.content_mode, id(src), box_w, box_h)
+        elif logo is not None:
+            # Nothing found for this video: the pigeon logo, not the typed title.
+            src = logo
+            key = ("logo", box_w, box_h)
         elif title:
             key = ("txt", title, box_w, box_h)
         else:
@@ -5913,7 +5939,11 @@ class ViewCirclesWidget:
             arr = src
             if arr.ndim == 3 and arr.shape[2] == 3:
                 arr = cv2.cvtColor(arr, cv2.COLOR_BGR2BGRA)
-            if self.content_mode != _CONTENT_MODE_MUSIC and not self._tt_art_is_poster_fallback():
+            if (
+                self.content_mode != _CONTENT_MODE_MUSIC
+                and key[0] != "logo"
+                and not self._tt_art_is_poster_fallback()
+            ):
                 try:
                     from pigeon.tmdb_tt_contrast import whiten_dark_tt_bgra
 

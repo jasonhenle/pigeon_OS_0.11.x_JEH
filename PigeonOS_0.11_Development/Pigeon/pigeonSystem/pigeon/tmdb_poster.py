@@ -45,6 +45,7 @@ import secrets
 import shutil
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -2473,10 +2474,74 @@ def _search_best_media_with_poster_one(
     return _prefer_duration_match(m, t)
 
 
+# Series that an episode-only title last resolved to, per streaming service:
+# normalized service name → (TMDb TV id, monotonic time). Lets an ambiguous episode
+# title (``Baby Shower``: The Office, Superstore, SNL …) follow the show being binged.
+_RECENT_EPISODE_SERIES: dict[str, tuple[int, float]] = {}
+_RECENT_EPISODE_SERIES_TTL_S = 4 * 3600.0
+
+
+def _recent_series_key(service: str | None) -> str:
+    return _norm_query(service or "")
+
+
+def _remember_episode_series(
+    service: str | None, hit: tuple[dict | None, MediaKind | None]
+) -> None:
+    key = _recent_series_key(service)
+    if not key or hit[1] != "tv" or hit[0] is None or hit[0].get("id") is None:
+        return
+    _RECENT_EPISODE_SERIES[key] = (int(hit[0]["id"]), time.monotonic())
+
+
+def _recent_episode_series_id(service: str | None) -> int | None:
+    row = _RECENT_EPISODE_SERIES.get(_recent_series_key(service))
+    if row is None or time.monotonic() - row[1] > _RECENT_EPISODE_SERIES_TTL_S:
+        return None
+    return row[0]
+
+
+def clear_recent_episode_series() -> None:
+    """For tests: forget which series each service was last playing."""
+    _RECENT_EPISODE_SERIES.clear()
+
+
+def _pick_wikidata_episode_series(
+    candidates: list[dict],
+    *,
+    service: str | None,
+    providers: frozenset[int] | None,
+) -> dict | None:
+    """
+    One parent series for an episode title from Wikidata's candidates.
+
+    Unambiguous → that series. Ambiguous → the series this service was just playing,
+    else the only candidate listed on the service; otherwise unresolved.
+    """
+    if len(candidates) == 1:
+        return candidates[0] if candidates[0].get("name") else None
+    ided = [c for c in candidates if c.get("tmdb_tv_id")]
+    recent = _recent_episode_series_id(service)
+    if recent is not None:
+        for c in ided:
+            if int(c["tmdb_tv_id"]) == recent:
+                return c
+    if providers:
+        on_service = [
+            c for c in ided
+            if _service_availability_score({"id": int(c["tmdb_tv_id"])}, "tv", providers)
+        ]
+        if len(on_service) == 1:
+            return on_service[0]
+    return None
+
+
 def _episode_title_series_fallback(
     query: str,
     *,
     require_poster: bool,
+    service: str | None = None,
+    providers: frozenset[int] | None = None,
 ) -> tuple[dict | None, MediaKind | None]:
     """
     Map an episode-only title to its parent series (system-wide, not kids-only).
@@ -2484,7 +2549,9 @@ def _episode_title_series_fallback(
     Order:
       1. Disk-cached kids/PBS episode index (same data PBS Kids uses)
       2. Local ``episode_series_hints.json`` / built-ins → TMDb TV search for that series
-      3. Wikidata unambiguous episode → series (Peacock / general streamers)
+      3. Wikidata episode → series (Peacock / general streamers); a title shared by
+         several series resolves only via the series ``service`` was just playing, or
+         the only one listed on ``providers``
 
     Used when normal TMDb title search misses or only yields a weak title match.
     """
@@ -2510,9 +2577,13 @@ def _episode_title_series_fallback(
         hinted = None
     if not hinted:
         try:
-            from pigeon.wikidata_episode import series_from_wikidata_episode_title
+            from pigeon.wikidata_episode import series_candidates_from_wikidata_episode_title
 
-            wd = series_from_wikidata_episode_title(q)
+            wd = _pick_wikidata_episode_series(
+                series_candidates_from_wikidata_episode_title(q),
+                service=service,
+                providers=providers,
+            )
         except Exception:
             wd = None
         if wd:
@@ -2539,6 +2610,7 @@ def _episode_series_on_service_instead(
     providers: frozenset[int],
     *,
     require_poster: bool,
+    service: str | None = None,
 ) -> tuple[dict | None, MediaKind | None] | None:
     """
     Swap a title-search hit that is **not** on the foreground service for the series an
@@ -2551,7 +2623,9 @@ def _episode_series_on_service_instead(
         return None
     if _service_availability_score(best[0], best[1], providers):
         return None
-    ep = _episode_title_series_fallback(raw, require_poster=require_poster)
+    ep = _episode_title_series_fallback(
+        raw, require_poster=require_poster, service=service, providers=providers
+    )
     if ep[0] is None or not _service_availability_score(ep[0], ep[1], providers):
         return None
     return ep
@@ -2624,12 +2698,18 @@ def search_best_media_with_poster(
             best = hit
             break
     if _tmdb_hit_is_weak_for_query(raw, best[0], require_poster=True):
-        ep = _episode_title_series_fallback(raw, require_poster=True)
+        ep = _episode_title_series_fallback(
+            raw, require_poster=True, service=hint, providers=providers
+        )
         if ep[0] is not None:
+            _remember_episode_series(hint, ep)
             return ep
     else:
-        swap = _episode_series_on_service_instead(raw, best, providers, require_poster=True)
+        swap = _episode_series_on_service_instead(
+            raw, best, providers, require_poster=True, service=hint
+        )
         if swap is not None:
+            _remember_episode_series(hint, swap)
             return swap
     return best
 
@@ -2681,12 +2761,18 @@ def search_best_media(
             best = hit
             break
     if _tmdb_hit_is_weak_for_query(raw, best[0]):
-        ep = _episode_title_series_fallback(raw, require_poster=False)
+        ep = _episode_title_series_fallback(
+            raw, require_poster=False, service=hint, providers=providers
+        )
         if ep[0] is not None:
+            _remember_episode_series(hint, ep)
             return ep
     else:
-        swap = _episode_series_on_service_instead(raw, best, providers, require_poster=False)
+        swap = _episode_series_on_service_instead(
+            raw, best, providers, require_poster=False, service=hint
+        )
         if swap is not None:
+            _remember_episode_series(hint, swap)
             return swap
     return best
 
