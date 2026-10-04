@@ -300,8 +300,11 @@ class ViewCirclesZone4Tests(unittest.TestCase):
             on = self._widget(visualizer=True).bgra_frame()
         off = self._widget(visualizer=False).bgra_frame()
         assert on is not None and off is not None
-        # Volume-widget grey (#232323) fills the zone-4 container.
-        self.assertEqual(tuple(int(v) for v in on[y + h // 2, x + w // 2, :3]), (35, 35, 35))
+        # No container fill: the page shows between the meters, arcs still drawn.
+        page = tuple(int(v) for v in on[y - 6, x + w // 2, :3])
+        self.assertEqual(tuple(int(v) for v in on[y + h // 2, x + w // 2, :3]), page)
+        arcs = np.abs(on[y : y + h, x : x + w, :3].astype(int) - page).max(axis=2) > 20
+        self.assertGreater(int(np.count_nonzero(arcs)), 500)
         # Zone 5: the only difference is a 2 px white CTI at 40% of the track.
         cti = x + int(round(0.4 * w))
         mid = 646 + 65 // 2
@@ -364,7 +367,8 @@ class YouTubeZone4Tests(unittest.TestCase):
         lit = lambda f: int(np.count_nonzero(f[zy : zy + zh, zx : zx + zw, :3].min(axis=2) > 180))  # noqa: E731
         self.assertGreater(lit(title), 300)  # white title text
         x, y, w, h, _r = zone4_visualizer_rect()
-        self.assertEqual(tuple(int(v) for v in viz[y + h // 2, x + w // 2, :3]), (35, 35, 35))
+        # No container fill: the poster blur shows through between the meters.
+        self.assertEqual(tuple(int(v) for v in viz[y + h // 2, x + w // 2, :3]), tuple(int(v) for v in viz[y - 6, x + w // 2, :3]))
         # No title text anywhere in zone 4 (in or around the container).
         self.assertLess(lit(viz), 50)
 

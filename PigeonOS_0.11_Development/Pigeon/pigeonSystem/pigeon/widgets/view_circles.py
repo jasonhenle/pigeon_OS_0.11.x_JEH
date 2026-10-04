@@ -279,6 +279,8 @@ class _NpTheme:
 # Now-playing clock / volume / bar use the most saturated TMDb-backdrop hue.
 # Menus still read ``settings_ui_colors``. Set False to restore settings UI on NP.
 _NP_UI_FROM_TT = True
+# No TMDb poster: wash the page in the UI color (False → plain black, as before).
+_NP_NO_POSTER_UI_WASH = True
 
 
 def np_theme_from_settings() -> _NpTheme:
@@ -345,6 +347,8 @@ _POSTER_MUSIC_X, _POSTER_MUSIC_Y, _POSTER_MUSIC_W, _POSTER_MUSIC_H, _POSTER_MUSI
 )
 
 _ARTWORK_BG_OPACITY = 0.34
+# No-poster UI-color wash: luma ceiling over black (light mode treats darker as wash).
+_UI_WASH_MAX_LUMA = 60.0
 _ARTWORK_BG_BLUR_DOWNSCALE = 4
 _ARTWORK_BG_BLUR_SIGMA = 6.0
 
@@ -3943,6 +3947,7 @@ class ViewCirclesWidget:
         self._tt_time_paint_rects: list[tuple[int, int, int, int]] = []
         self._artwork_blur_bgra: np.ndarray | None = None
         self._artwork_blur_poster_id: int | None = None
+        self._ui_wash_cache: tuple[str, np.ndarray] | None = None
         self._search_frames: tuple[np.ndarray, ...] | None = None
         self._search_frames_tried = False
         self._last_tick_mono: float | None = None
@@ -4111,6 +4116,23 @@ class ViewCirclesWidget:
         self._tt_theme_hex = None
         self._tt_theme_src_id = None
         return True
+
+    def _ui_color_wash_bgra(self, theme: _NpTheme) -> np.ndarray:
+        """Full-frame UI color at the artwork blur's opacity (the no-poster background)."""
+        key = theme.ui_hex.lower()
+        cached = self._ui_wash_cache
+        if cached is not None and cached[0] == key:
+            return cached[1]
+        b, g, r = theme.ui_bgr
+        luma = 0.114 * b + 0.587 * g + 0.299 * r
+        # Keep the wash under the light-mode wash threshold (compositing
+        # ``_BRIGHT_WASH_LUMA``) so a white / yellow UI color isn't snapped to ink.
+        opacity = min(_ARTWORK_BG_OPACITY, _UI_WASH_MAX_LUMA / max(1.0, luma))
+        wash = np.empty((int(DESIGN_H), int(DESIGN_W), 4), dtype=np.uint8)
+        wash[:, :, :3] = theme.ui_bgr
+        wash[:, :, 3] = int(round(255.0 * opacity))
+        self._ui_wash_cache = (key, wash)
+        return wash
 
     def _ensure_artwork_blur_bgra(self) -> np.ndarray | None:
         src = self._poster_bgra
@@ -6443,15 +6465,14 @@ class ViewCirclesWidget:
             return out
         out = _fallback_base_bgra()
         theme = self._effective_np_theme()
-        if (
-            self._state.content_active
-            and self._poster_bgra is not None
-            and self._poster_bgra.size > 0
-            and not self._state.searching
-        ):
+        has_poster = self._poster_bgra is not None and self._poster_bgra.size > 0
+        if self._state.content_active and has_poster and not self._state.searching:
             blur = self._ensure_artwork_blur_bgra()
             if blur is not None:
                 _paste_patch_bgra(out, blur, 0, 0)
+        elif _NP_NO_POSTER_UI_WASH and self._state.content_active and not has_poster:
+            # No TMDb poster to blur: wash the page in the UI color instead.
+            _paste_patch_bgra(out, self._ui_color_wash_bgra(theme), 0, 0)
         # Soft white halos behind active circular widgets (under poster + SVG chrome).
         _draw_zone_halos(
             out,
@@ -6596,9 +6617,8 @@ class ViewCirclesWidget:
         if zone4_meter.selected():
             if self._zone4_meter is None:
                 self._zone4_meter = zone4_meter.Zone4Meter()
-            self._zone4_meter.render_into(
-                out, zone4_visualizer_rect(), track_bgr=_VOLUME_CONTAINER_BGR
-            )
+            # No container plate: the meters sit straight on the background.
+            self._zone4_meter.render_into(out, zone4_visualizer_rect(), track_bgr=None)
             return
         from pigeon.zone4_eq import Zone4EQ
 
