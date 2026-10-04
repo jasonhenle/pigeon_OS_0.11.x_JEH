@@ -899,6 +899,8 @@ def now_playing_header_clock_text(now) -> str:
 NP_HEADER_INK_FRAC = 0.70
 NP_HEADER_BASELINE_NUDGE_PX = 15.0
 MUSIC_TITLE_BAND_INSET_PX = 8.0
+# Header TRT over the volume disc: gap above its ink and between it and the ring.
+NP_HEADER_TRT_MARGIN_PX = 14.0
 
 
 def zone6_1x1_album_art_rect() -> tuple[float, float, float, float]:
@@ -935,6 +937,19 @@ def np_label_baseline_y() -> float:
     art_top = zone6_1x1_album_art_top()
     ink_h = np_header_ink_height()
     return (float(art_top) + float(ink_h)) * 0.5 + float(NP_HEADER_BASELINE_NUDGE_PX)
+
+
+def header_trt_ink_box(zone: int) -> tuple[float, float, float, float]:
+    """Design ``(center_x, top, max_w, max_h)`` for the header TRT ink.
+
+    The TRT sits centered above the volume disc in portrait ``zone``: as wide
+    as the ring, filling the band from the screen top down to the ring top.
+    """
+    z = NOW_PLAYING_ZONES[int(zone)]
+    cx, cy = design_xy_from_local(z, VOLUME_LOCAL_CX, VOLUME_LOCAL_CY)
+    ring_top = float(cy) - float(VOLUME_OUTER_R)
+    margin = float(NP_HEADER_TRT_MARGIN_PX)
+    return (float(cx), margin, 2.0 * float(VOLUME_OUTER_R), max(12.0, ring_top - 2.0 * margin))
 
 
 def header_clock_baseline_y() -> float:

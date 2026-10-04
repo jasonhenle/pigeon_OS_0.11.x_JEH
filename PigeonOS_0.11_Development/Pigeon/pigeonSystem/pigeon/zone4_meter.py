@@ -262,7 +262,9 @@ class Zone4Meter:
         safe, wc, dc = _fv._bgr(p["colSafe"]), _fv._bgr(p["colWarn"]), _fv._bgr(p["colDanger"])
         return [dc if (k + 0.5) / n >= danger else wc if (k + 0.5) / n >= warn else safe for k in range(n)]
 
-    def _layers_for(self, p: dict, w: int, h: int, r: int, track: tuple[int, int, int]) -> dict[str, object]:
+    def _layers_for(self, p: dict, w: int, h: int, r: int, track: tuple[int, int, int] | None) -> dict[str, object]:
+        """Static art. ``track`` None → no plate: ``base`` / ``on`` are premultiplied
+        on black, with ``base_a`` / ``on_a`` alpha mattes (rendered on black and white)."""
         key = (w, h, r, track, json.dumps(p, sort_keys=True, default=str))
         if key == self._layers_key:
             return self._layers
@@ -270,10 +272,19 @@ class Zone4Meter:
         m = np.zeros((h * ss, w * ss), np.uint8)
         _fv._rrect(m, 0, 0, w * ss, h * ss, r * ss, 255)
         mask = cv2.resize(m, (w, h), interpolation=cv2.INTER_AREA).astype(np.float32) / 255.0
-        if p.get("style") == "sweep":
-            self._layers = dict(self._sweep_layers(p, w, h, track), mask=mask)
+        build = self._sweep_layers if p.get("style") == "sweep" else self._ladder_layers
+        if track is None:
+            black, white = build(p, w, h, (0, 0, 0)), build(p, w, h, (255, 255, 255))
+            layers = dict(black, mask=mask)
+            for name in ("base", "on"):
+                if name in black:
+                    k = black[name].astype(np.float32)  # type: ignore[union-attr]
+                    wh = white[name].astype(np.float32)  # type: ignore[union-attr]
+                    a = 1.0 - (wh - k).mean(axis=2) / 255.0
+                    layers[name + "_a"] = np.clip(a, 0.0, 1.0)[:, :, None]
+            self._layers = layers
         else:
-            self._layers = dict(self._ladder_layers(p, w, h, track), mask=mask)
+            self._layers = dict(build(p, w, h, track), mask=mask)
         self._layers_key = key
         return self._layers
 
@@ -299,11 +310,14 @@ class Zone4Meter:
         self,
         out: np.ndarray,
         track: tuple[int, int, int, int, int],
-        track_bgr: tuple[int, int, int] = (35, 35, 35),
+        track_bgr: tuple[int, int, int] | None = (35, 35, 35),
         *,
         capture: bool = True,
     ) -> None:
-        """Paint both meters into the rounded rect ``(x, y, w, h, r)`` of ``out`` (BGR or BGRA)."""
+        """Paint both meters into the rounded rect ``(x, y, w, h, r)`` of ``out`` (BGR or BGRA).
+
+        ``track_bgr`` fills the rect; None draws the meters straight over ``out``.
+        """
         p = params()
         now = time.monotonic()
         dt = 1.0 / 30.0 if self._last_t is None else max(1e-3, min(0.1, now - self._last_t))
@@ -318,22 +332,41 @@ class Zone4Meter:
         if tw < 8 or th < 8 or tx >= ow or ty >= oh:
             return
         tr = max(0, min(tr, tw // 2, th // 2))
-        L = self._layers_for(p, tw, th, tr, tuple(int(c) for c in track_bgr))
-        img = L["base"].copy()  # type: ignore[union-attr]
-        a = self.analysis
-        if sweep:
-            L["style"].draw(img, _PxXf(1.0), L["p"], a, L)  # type: ignore[union-attr]
-            self._composite(out, img, L["mask"], tx, ty, tw, th)  # type: ignore[arg-type]
+        clear = track_bgr is None
+        if clear and (tx < 0 or ty < 0 or tx + tw > ow or ty + th > oh):
             return
-        on = L["on"]
-        for kind, ch, run in L["runs"]:  # type: ignore[union-attr]
-            lvl = a.ppm[ch] if kind == "peak" else a.rms[ch]
-            k = int(round(self._defl(p, float(lvl)) * run.n))
-            run.reveal(img, on, 0, k)  # type: ignore[arg-type]
-            if kind == "peak" and p.get("peakHold", True):
-                kh = int(round(self._defl(p, float(a.hold[ch])) * run.n))
-                if kh > k:
-                    run.reveal(img, on, kh - 1, kh)  # type: ignore[arg-type]
+        L = self._layers_for(p, tw, th, tr, None if clear else tuple(int(c) for c in track_bgr))
+        if clear:
+            dst = out[ty : ty + th, tx : tx + tw]
+            under = dst[:, :, :3].astype(np.float32)
+
+            def over(name: str) -> np.ndarray:
+                lay = L[name].astype(np.float32)  # type: ignore[union-attr]
+                return np.clip(under * (1.0 - L[name + "_a"]) + lay, 0, 255).astype(np.uint8)  # type: ignore[operator]
+
+            img = over("base")
+            on = over("on") if "on" in L else None
+        else:
+            img = L["base"].copy()  # type: ignore[union-attr]
+            on = L.get("on")
+        a = self.analysis
+        if not sweep:
+            for kind, ch, run in L["runs"]:  # type: ignore[union-attr]
+                lvl = a.ppm[ch] if kind == "peak" else a.rms[ch]
+                k = int(round(self._defl(p, float(lvl)) * run.n))
+                run.reveal(img, on, 0, k)  # type: ignore[arg-type]
+                if kind == "peak" and p.get("peakHold", True):
+                    kh = int(round(self._defl(p, float(a.hold[ch])) * run.n))
+                    if kh > k:
+                        run.reveal(img, on, kh - 1, kh)  # type: ignore[arg-type]
+        else:
+            L["style"].draw(img, _PxXf(1.0), L["p"], a, L)  # type: ignore[union-attr]
+        if clear:
+            dst[:, :, :3] = img
+            if dst.shape[2] >= 4:
+                ink = (L["base_a"][:, :, 0] * 255.0).astype(np.uint8)  # type: ignore[index]
+                dst[:, :, 3] = np.maximum(dst[:, :, 3], ink)
+            return
         self._composite(out, img, L["mask"], tx, ty, tw, th)  # type: ignore[arg-type]
 
     @staticmethod

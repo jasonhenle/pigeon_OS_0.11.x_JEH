@@ -96,6 +96,7 @@ from pigeon.np_layout import (
     now_playing_header_clock_text,
     header_clock_baseline_y,
     header_clock_center_x,
+    header_trt_ink_box,
     status_bar_elapsed_left_x,
     status_bar_elapsed_opacity,
     status_bar_handoff_alphas,
@@ -278,6 +279,8 @@ class _NpTheme:
 # Now-playing clock / volume / bar use the most saturated TMDb-backdrop hue.
 # Menus still read ``settings_ui_colors``. Set False to restore settings UI on NP.
 _NP_UI_FROM_TT = True
+# No TMDb poster: wash the page in the UI color (False → plain black, as before).
+_NP_NO_POSTER_UI_WASH = True
 
 
 def np_theme_from_settings() -> _NpTheme:
@@ -344,6 +347,8 @@ _POSTER_MUSIC_X, _POSTER_MUSIC_Y, _POSTER_MUSIC_W, _POSTER_MUSIC_H, _POSTER_MUSI
 )
 
 _ARTWORK_BG_OPACITY = 0.34
+# No-poster UI-color wash: luma ceiling over black (light mode treats darker as wash).
+_UI_WASH_MAX_LUMA = 60.0
 _ARTWORK_BG_BLUR_DOWNSCALE = 4
 _ARTWORK_BG_BLUR_SIGMA = 6.0
 
@@ -3711,13 +3716,44 @@ def _header_digital7_size_px() -> int:
     return max(12, int(round(100.0 * (b - t) / max(1, b7 - t7))))
 
 
+@lru_cache(maxsize=8)
+def _header_trt_size_px(template: str, max_w: int, max_h: int) -> int:
+    """Largest Digital-7 size whose ``template`` ink fits ``max_w``×``max_h``.
+
+    Callers pass the label with every digit as ``8`` so the size only changes
+    when the readout drops a field (e.g. under an hour), not every second.
+    """
+
+    def ink(size: int) -> tuple[int, int]:
+        a = _matching_hhmm_patch(template, size_px=size, pad_y=size // 2)[:, :, 3] > 8
+        rows, cols = np.where(a.any(axis=1))[0], np.where(a.any(axis=0))[0]
+        if rows.size == 0:
+            return (0, 0)
+        return (int(cols.max() - cols.min() + 1), int(rows.max() - rows.min() + 1))
+
+    probe = 200
+    w, h = ink(probe)
+    if w <= 0 or h <= 0:
+        return 12
+    size = int(probe * min(max_w / w, max_h / h))
+    while size > 12:
+        w, h = ink(size)
+        if w <= max_w and h <= max_h:
+            break
+        size -= 1
+    return max(12, size)
+
+
 def _matching_hhmm_patch(
     text: str,
     *,
     size_px: int,
     fill_rgb: tuple[int, int, int] = (255, 255, 255),
+    pad_y: int = 10,
 ) -> np.ndarray:
-    """Digital-7 time using clock-saver matching-cell spacing (skinny ``1`` / ``:`` / ``-``)."""
+    """Digital-7 time using clock-saver matching-cell spacing (skinny ``1`` / ``:`` / ``-``).
+
+    Large sizes need a bigger ``pad_y``: Digital-7 ink overhangs its cell."""
     from pigeon.widgets.clock_saver import (
         _HHMMSS_CHAR_SET,
         _cell_metrics,
@@ -3742,7 +3778,6 @@ def _matching_hhmm_patch(
         advances.append(adv)
         total_w += adv
     pad_x = 4
-    pad_y = 10
     img = Image.new(
         "RGBA",
         (max(1, total_w + pad_x * 2), max(1, cell_h + pad_y * 2)),
@@ -3912,6 +3947,7 @@ class ViewCirclesWidget:
         self._tt_time_paint_rects: list[tuple[int, int, int, int]] = []
         self._artwork_blur_bgra: np.ndarray | None = None
         self._artwork_blur_poster_id: int | None = None
+        self._ui_wash_cache: tuple[str, np.ndarray] | None = None
         self._search_frames: tuple[np.ndarray, ...] | None = None
         self._search_frames_tried = False
         self._last_tick_mono: float | None = None
@@ -4080,6 +4116,23 @@ class ViewCirclesWidget:
         self._tt_theme_hex = None
         self._tt_theme_src_id = None
         return True
+
+    def _ui_color_wash_bgra(self, theme: _NpTheme) -> np.ndarray:
+        """Full-frame UI color at the artwork blur's opacity (the no-poster background)."""
+        key = theme.ui_hex.lower()
+        cached = self._ui_wash_cache
+        if cached is not None and cached[0] == key:
+            return cached[1]
+        b, g, r = theme.ui_bgr
+        luma = 0.114 * b + 0.587 * g + 0.299 * r
+        # Keep the wash under the light-mode wash threshold (compositing
+        # ``_BRIGHT_WASH_LUMA``) so a white / yellow UI color isn't snapped to ink.
+        opacity = min(_ARTWORK_BG_OPACITY, _UI_WASH_MAX_LUMA / max(1.0, luma))
+        wash = np.empty((int(DESIGN_H), int(DESIGN_W), 4), dtype=np.uint8)
+        wash[:, :, :3] = theme.ui_bgr
+        wash[:, :, 3] = int(round(255.0 * opacity))
+        self._ui_wash_cache = (key, wash)
+        return wash
 
     def _ensure_artwork_blur_bgra(self) -> np.ndarray | None:
         src = self._poster_bgra
@@ -5287,12 +5340,18 @@ class ViewCirclesWidget:
         if _zone_clock_hides_header(self._assignments()):
             return
         if self._header_slot_ticks():
-            # Digital-7 clock over zone 3; zone 6's header slot holds the TRT.
-            z3 = NOW_PLAYING_ZONES[3]
+            # Digital-7 clock centered on the wide TT when the TRT sits over
+            # the volume disc; otherwise over zone 3.
+            assignments = self._assignments()
+            if self._header_trt_volume_zone() is not None:
+                cx = header_clock_center_x(assignments)
+            else:
+                z3 = NOW_PLAYING_ZONES[3]
+                cx = float(z3.x) + float(z3.w) * 0.5
             self._paste_header_digital7(
                 out,
                 now_playing_header_clock_text(now),
-                float(z3.x) + float(z3.w) * 0.5,
+                cx,
                 fill_rgb=_look_chrome_rgb(),
             )
             return
@@ -6067,11 +6126,46 @@ class ViewCirclesWidget:
         _paste_patch_bgra(out, patch, px, py)
         return (px, py, int(pw), int(ph))
 
-    def _draw_header_trt(self, out: np.ndarray, z: NowPlayingZone, label: str) -> None:
-        """White Digital-7 TRT in the header slot over ``z``."""
-        rect = self._paste_header_digital7(out, label, float(z.x) + float(z.w) * 0.5)
-        if rect is not None:
-            self._tt_time_paint_rects.append(rect)
+    def _header_trt_volume_zone(self) -> int | None:
+        """Portrait slot beside the wide TT when it holds the volume disc.
+
+        The wide TT covers zone 6 (slots 1+2) or 7 (slots 2+3); the TRT sits
+        over the remaining slot when that slot is the volume widget.
+        """
+        assignments = self._assignments()
+        wide = tt_countdown_16x9_zone(assignments)
+        if wide is None:
+            return None
+        slot = 3 if int(wide) == 6 else 1
+        if str(assignments[slot - 1] or "").strip() in ("volume", "clock_saver_volume"):
+            return slot
+        return None
+
+    def _draw_header_trt(self, out: np.ndarray, wide_zone: int, label: str) -> None:
+        """Header TRT. Over the volume disc: Digital-7 in the UI color, as large
+        as fits above the ring. Otherwise white, in the wide TT's header slot."""
+        vol_zone = self._header_trt_volume_zone()
+        if vol_zone is None:
+            z = _zone_spec(int(wide_zone))
+            rect = self._paste_header_digital7(out, label, float(z.x) + float(z.w) * 0.5)
+            if rect is not None:
+                self._tt_time_paint_rects.append(rect)
+            return
+        cx, top, max_w, max_h = header_trt_ink_box(vol_zone)
+        template = re.sub(r"\d", "8", label)
+        size = _header_trt_size_px(template, int(max_w), int(max_h))
+        fill_rgb = tuple(reversed(self._effective_np_theme().ui_bgr))
+        patch = _matching_hhmm_patch(label, size_px=size, fill_rgb=fill_rgb, pad_y=size // 2)
+        a = patch[:, :, 3] > 8
+        rows, cols = np.where(a.any(axis=1))[0], np.where(a.any(axis=0))[0]
+        if rows.size == 0:
+            return
+        patch = patch[int(rows.min()) : int(rows.max()) + 1, int(cols.min()) : int(cols.max()) + 1]
+        ph, pw = patch.shape[:2]
+        px = int(round(cx - pw / 2.0))
+        py = int(round(top + (max_h - ph) / 2.0))
+        _paste_patch_bgra(out, patch, px, py)
+        self._tt_time_paint_rects.append((px, py, int(pw), int(ph)))
 
     def _draw_tt_countdown(
         self, out: np.ndarray, *, zone: int, wide: bool = False, part: str = "all"
@@ -6110,7 +6204,7 @@ class ViewCirclesWidget:
                 # 16:9 TRT lives in the header slot above the art, so the art
                 # lays out alone below.
                 if part in ("all", "time"):
-                    self._draw_header_trt(out, z, label)
+                    self._draw_header_trt(out, int(zone), label)
             elif label:
                 sx = float(z.w) / view_w
                 size_px = max(12, int(round(TT_COUNTDOWN_TEXT_SIZE_PX * sx)))
@@ -6371,15 +6465,14 @@ class ViewCirclesWidget:
             return out
         out = _fallback_base_bgra()
         theme = self._effective_np_theme()
-        if (
-            self._state.content_active
-            and self._poster_bgra is not None
-            and self._poster_bgra.size > 0
-            and not self._state.searching
-        ):
+        has_poster = self._poster_bgra is not None and self._poster_bgra.size > 0
+        if self._state.content_active and has_poster and not self._state.searching:
             blur = self._ensure_artwork_blur_bgra()
             if blur is not None:
                 _paste_patch_bgra(out, blur, 0, 0)
+        elif _NP_NO_POSTER_UI_WASH and self._state.content_active and not has_poster:
+            # No TMDb poster to blur: wash the page in the UI color instead.
+            _paste_patch_bgra(out, self._ui_color_wash_bgra(theme), 0, 0)
         # Soft white halos behind active circular widgets (under poster + SVG chrome).
         _draw_zone_halos(
             out,
@@ -6524,9 +6617,8 @@ class ViewCirclesWidget:
         if zone4_meter.selected():
             if self._zone4_meter is None:
                 self._zone4_meter = zone4_meter.Zone4Meter()
-            self._zone4_meter.render_into(
-                out, zone4_visualizer_rect(), track_bgr=_VOLUME_CONTAINER_BGR
-            )
+            # No container plate: the meters sit straight on the background.
+            self._zone4_meter.render_into(out, zone4_visualizer_rect(), track_bgr=None)
             return
         from pigeon.zone4_eq import Zone4EQ
 

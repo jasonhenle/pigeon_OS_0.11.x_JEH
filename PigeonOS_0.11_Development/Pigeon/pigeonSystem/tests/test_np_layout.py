@@ -192,17 +192,28 @@ class LegacyMarkTests(unittest.TestCase):
 _ZONE4_ENV = None
 
 
+_NO_WASH = None
+
+
 def setUpModule() -> None:
     """Layout tests expect info in zone 4, whatever this machine's zone-4 toggle
-    says; visualizer layouts are covered in ``test_zone4_eq``."""
-    global _ZONE4_ENV
+    says; visualizer layouts are covered in ``test_zone4_eq``. They also read
+    chrome against a black page, so the no-poster UI wash is off
+    (``NoPosterUiWashTests`` turns it back on)."""
+    global _ZONE4_ENV, _NO_WASH
+    from pigeon.widgets import view_circles as vc
+
     _ZONE4_ENV = mock.patch.dict(os.environ, {"PIGEON_ZONE4_EQ": "0"})
     _ZONE4_ENV.start()
+    _NO_WASH = mock.patch.object(vc, "_NP_NO_POSTER_UI_WASH", False)
+    _NO_WASH.start()
 
 
 def tearDownModule() -> None:
     if _ZONE4_ENV is not None:
         _ZONE4_ENV.stop()
+    if _NO_WASH is not None:
+        _NO_WASH.stop()
 
 
 def _force_default_np_zones() -> None:
@@ -1315,11 +1326,11 @@ class NowPlayingHeaderClockTests(unittest.TestCase):
             header_clock_baseline_y(),
             (art_top + np_header_ink_height()) * 0.5 + NP_HEADER_BASELINE_NUDGE_PX,
         )
-        # The clock sits over zone 3.
-        z3 = NOW_PLAYING_ZONES[3]
+        # The clock sits in zone 6's header slot, centered on the wide TT.
+        z6 = NOW_PLAYING_ZONES[6]
         band = frame[
             max(0, baseline - 56) : baseline + 8,
-            int(z3.x) : int(z3.x + z3.w),
+            int(z6.x) : int(z6.x + z6.w),
         ]
         ink = np.where(band[:, :, 3] > 16)
         self.assertGreater(int(ink[0].size), 0)
@@ -1327,23 +1338,31 @@ class NowPlayingHeaderClockTests(unittest.TestCase):
         mid_y = int(ink[0].min() + (int(ink[0].max()) - int(ink[0].min())) / 2)
         side = band[mid_y, 4, :3]
         self.assertLess(int(side.max()), 40)
-        # The TRT takes zone 6's header slot, digits as tall as the clock's,
-        # bottoms on the same baseline.
-        z6 = NOW_PLAYING_ZONES[6]
-        trt = frame[
-            max(0, baseline - 56) : baseline + 8,
-            int(z6.x) : int(z6.x + z6.w),
-        ]
-        trt_ink = np.where(trt[:, :, 3] > 16)
+        clock_cx = int(z6.x) + (int(ink[1].min()) + int(ink[1].max())) / 2.0
+        self.assertLess(abs(clock_cx - (z6.x + z6.w / 2.0)), 4.0)
+        # The TRT sits above the volume disc in zone 3: centered on it, larger
+        # than the clock, in the UI color, and clear of the ring.
+        from pigeon.np_layout import VOLUME_LOCAL_CX, VOLUME_LOCAL_CY, VOLUME_OUTER_R
+
+        z3 = NOW_PLAYING_ZONES[3]
+        ring_top = int(z3.y + VOLUME_LOCAL_CY - VOLUME_OUTER_R)
+        trt = frame[0:ring_top, int(z3.x) : int(z3.x + z3.w)]
+        trt_ink = np.where(trt[:, :, :3].max(axis=2) > 40)
         self.assertGreater(int(trt_ink[0].size), 0)
-        self.assertLessEqual(abs(int(trt_ink[0].max()) - int(ink[0].max())), 2)
-        self.assertLessEqual(
-            abs(
-                (int(trt_ink[0].max()) - int(trt_ink[0].min()))
-                - (int(ink[0].max()) - int(ink[0].min()))
-            ),
-            3,
+        self.assertLess(int(trt_ink[0].max()), ring_top - 10)
+        trt_cx = int(z3.x) + (int(trt_ink[1].min()) + int(trt_ink[1].max())) / 2.0
+        self.assertLess(abs(trt_cx - (z3.x + VOLUME_LOCAL_CX)), 4.0)
+        clock_rows = np.where((band[:, :, :3].max(axis=2) > 40).any(axis=1))[0]
+        self.assertGreater(
+            int(trt_ink[0].max()) - int(trt_ink[0].min()),
+            2 * (int(clock_rows.max()) - int(clock_rows.min())),
         )
+        self.assertLessEqual(int(trt_ink[1].max()) - int(trt_ink[1].min()), int(2 * VOLUME_OUTER_R))
+        b, g, r = (int(v) for v in widget._effective_np_theme().ui_bgr)
+        ys, xs = trt_ink
+        px = trt[ys, xs, :3].astype(int)
+        solid = px[np.abs(px - (b, g, r)).max(axis=1) <= 3]
+        self.assertGreater(len(solid), len(px) // 2)
 
     def test_header_clock_hidden_when_zone_has_clock(self) -> None:
         from datetime import datetime
@@ -1702,6 +1721,60 @@ class StatusBarTickTests(unittest.TestCase):
         assert frame is not None
         np.testing.assert_array_equal(frame[rows, :, :3], ref[rows, :, :3])
         np.testing.assert_array_equal(canvas[rows], ref_canvas[rows])
+
+
+class NoPosterUiWashTests(unittest.TestCase):
+    """No TMDb poster: the page is washed in the UI color instead of black."""
+
+    def _frame(self, *, poster: bool) -> tuple[np.ndarray, object]:
+        from pigeon.widgets import view_circles as vc
+        from pigeon.widgets.view_circles import ViewCirclesWidget
+
+        wash = mock.patch.object(vc, "_NP_NO_POSTER_UI_WASH", True)
+        wash.start()
+        self.addCleanup(wash.stop)
+        self.addCleanup(_force_default_np_zones)
+        _force_default_np_zones()
+        w = ViewCirclesWidget(assets_dir=Path(__file__).resolve().parents[2] / "pigeonAssets")
+        w.update_state(
+            progress=0.4,
+            elapsed_text="40:00",
+            remaining_text="-1:28:00",
+            volume_text="-22.5 dB",
+            has_now_playing=True,
+            has_position=True,
+            content_active=True,
+            content_mode="video",
+            poster_bgra=np.full((90, 60, 3), (0, 0, 200), dtype=np.uint8) if poster else None,
+        )
+        frame = w.bgra_frame()
+        assert frame is not None
+        return frame, w
+
+    def test_no_poster_washes_page_in_ui_color(self) -> None:
+        from pigeon.widgets.view_circles import _ARTWORK_BG_OPACITY
+
+        frame, w = self._frame(poster=False)
+        b, g, r = w._effective_np_theme().ui_bgr  # type: ignore[attr-defined]
+        want = tuple(int(round(c * _ARTWORK_BG_OPACITY)) for c in (b, g, r))
+        got = tuple(int(v) for v in frame[790, 640, :3])  # empty strip under zone 5
+        for gv, wv in zip(got, want):
+            self.assertLessEqual(abs(gv - wv), 2)
+
+    def test_poster_blur_wins_over_ui_wash(self) -> None:
+        frame, _w = self._frame(poster=True)
+        b, g, r = (int(v) for v in frame[790, 640, :3])
+        self.assertGreater(r, 40)  # red poster blur
+        self.assertLess(max(b, g), 10)
+
+    def test_white_ui_wash_stays_below_light_mode_threshold(self) -> None:
+        from pigeon.compositing import _BRIGHT_WASH_LUMA
+        from pigeon.widgets.view_circles import ViewCirclesWidget, _NpTheme
+
+        w = ViewCirclesWidget(assets_dir=Path(__file__).resolve().parents[2] / "pigeonAssets")
+        wash = w._ui_color_wash_bgra(_NpTheme(ui_hex="#FFFFFF"))
+        luma = 255.0 * float(wash[0, 0, 3]) / 255.0
+        self.assertLess(luma, _BRIGHT_WASH_LUMA)
 
 
 class TtCountdownTickTests(unittest.TestCase):
