@@ -1315,11 +1315,11 @@ class NowPlayingHeaderClockTests(unittest.TestCase):
             header_clock_baseline_y(),
             (art_top + np_header_ink_height()) * 0.5 + NP_HEADER_BASELINE_NUDGE_PX,
         )
-        # The clock sits over zone 3.
-        z3 = NOW_PLAYING_ZONES[3]
+        # The clock sits in zone 6's header slot, centered on the wide TT.
+        z6 = NOW_PLAYING_ZONES[6]
         band = frame[
             max(0, baseline - 56) : baseline + 8,
-            int(z3.x) : int(z3.x + z3.w),
+            int(z6.x) : int(z6.x + z6.w),
         ]
         ink = np.where(band[:, :, 3] > 16)
         self.assertGreater(int(ink[0].size), 0)
@@ -1327,23 +1327,31 @@ class NowPlayingHeaderClockTests(unittest.TestCase):
         mid_y = int(ink[0].min() + (int(ink[0].max()) - int(ink[0].min())) / 2)
         side = band[mid_y, 4, :3]
         self.assertLess(int(side.max()), 40)
-        # The TRT takes zone 6's header slot, digits as tall as the clock's,
-        # bottoms on the same baseline.
-        z6 = NOW_PLAYING_ZONES[6]
-        trt = frame[
-            max(0, baseline - 56) : baseline + 8,
-            int(z6.x) : int(z6.x + z6.w),
-        ]
-        trt_ink = np.where(trt[:, :, 3] > 16)
+        clock_cx = int(z6.x) + (int(ink[1].min()) + int(ink[1].max())) / 2.0
+        self.assertLess(abs(clock_cx - (z6.x + z6.w / 2.0)), 4.0)
+        # The TRT sits above the volume disc in zone 3: centered on it, larger
+        # than the clock, in the UI color, and clear of the ring.
+        from pigeon.np_layout import VOLUME_LOCAL_CX, VOLUME_LOCAL_CY, VOLUME_OUTER_R
+
+        z3 = NOW_PLAYING_ZONES[3]
+        ring_top = int(z3.y + VOLUME_LOCAL_CY - VOLUME_OUTER_R)
+        trt = frame[0:ring_top, int(z3.x) : int(z3.x + z3.w)]
+        trt_ink = np.where(trt[:, :, :3].max(axis=2) > 40)
         self.assertGreater(int(trt_ink[0].size), 0)
-        self.assertLessEqual(abs(int(trt_ink[0].max()) - int(ink[0].max())), 2)
-        self.assertLessEqual(
-            abs(
-                (int(trt_ink[0].max()) - int(trt_ink[0].min()))
-                - (int(ink[0].max()) - int(ink[0].min()))
-            ),
-            3,
+        self.assertLess(int(trt_ink[0].max()), ring_top - 10)
+        trt_cx = int(z3.x) + (int(trt_ink[1].min()) + int(trt_ink[1].max())) / 2.0
+        self.assertLess(abs(trt_cx - (z3.x + VOLUME_LOCAL_CX)), 4.0)
+        clock_rows = np.where((band[:, :, :3].max(axis=2) > 40).any(axis=1))[0]
+        self.assertGreater(
+            int(trt_ink[0].max()) - int(trt_ink[0].min()),
+            2 * (int(clock_rows.max()) - int(clock_rows.min())),
         )
+        self.assertLessEqual(int(trt_ink[1].max()) - int(trt_ink[1].min()), int(2 * VOLUME_OUTER_R))
+        b, g, r = (int(v) for v in widget._effective_np_theme().ui_bgr)
+        ys, xs = trt_ink
+        px = trt[ys, xs, :3].astype(int)
+        solid = px[np.abs(px - (b, g, r)).max(axis=1) <= 3]
+        self.assertGreater(len(solid), len(px) // 2)
 
     def test_header_clock_hidden_when_zone_has_clock(self) -> None:
         from datetime import datetime

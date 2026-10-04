@@ -96,6 +96,7 @@ from pigeon.np_layout import (
     now_playing_header_clock_text,
     header_clock_baseline_y,
     header_clock_center_x,
+    header_trt_ink_box,
     status_bar_elapsed_left_x,
     status_bar_elapsed_opacity,
     status_bar_handoff_alphas,
@@ -3711,13 +3712,44 @@ def _header_digital7_size_px() -> int:
     return max(12, int(round(100.0 * (b - t) / max(1, b7 - t7))))
 
 
+@lru_cache(maxsize=8)
+def _header_trt_size_px(template: str, max_w: int, max_h: int) -> int:
+    """Largest Digital-7 size whose ``template`` ink fits ``max_w``×``max_h``.
+
+    Callers pass the label with every digit as ``8`` so the size only changes
+    when the readout drops a field (e.g. under an hour), not every second.
+    """
+
+    def ink(size: int) -> tuple[int, int]:
+        a = _matching_hhmm_patch(template, size_px=size, pad_y=size // 2)[:, :, 3] > 8
+        rows, cols = np.where(a.any(axis=1))[0], np.where(a.any(axis=0))[0]
+        if rows.size == 0:
+            return (0, 0)
+        return (int(cols.max() - cols.min() + 1), int(rows.max() - rows.min() + 1))
+
+    probe = 200
+    w, h = ink(probe)
+    if w <= 0 or h <= 0:
+        return 12
+    size = int(probe * min(max_w / w, max_h / h))
+    while size > 12:
+        w, h = ink(size)
+        if w <= max_w and h <= max_h:
+            break
+        size -= 1
+    return max(12, size)
+
+
 def _matching_hhmm_patch(
     text: str,
     *,
     size_px: int,
     fill_rgb: tuple[int, int, int] = (255, 255, 255),
+    pad_y: int = 10,
 ) -> np.ndarray:
-    """Digital-7 time using clock-saver matching-cell spacing (skinny ``1`` / ``:`` / ``-``)."""
+    """Digital-7 time using clock-saver matching-cell spacing (skinny ``1`` / ``:`` / ``-``).
+
+    Large sizes need a bigger ``pad_y``: Digital-7 ink overhangs its cell."""
     from pigeon.widgets.clock_saver import (
         _HHMMSS_CHAR_SET,
         _cell_metrics,
@@ -3742,7 +3774,6 @@ def _matching_hhmm_patch(
         advances.append(adv)
         total_w += adv
     pad_x = 4
-    pad_y = 10
     img = Image.new(
         "RGBA",
         (max(1, total_w + pad_x * 2), max(1, cell_h + pad_y * 2)),
@@ -5287,12 +5318,18 @@ class ViewCirclesWidget:
         if _zone_clock_hides_header(self._assignments()):
             return
         if self._header_slot_ticks():
-            # Digital-7 clock over zone 3; zone 6's header slot holds the TRT.
-            z3 = NOW_PLAYING_ZONES[3]
+            # Digital-7 clock centered on the wide TT when the TRT sits over
+            # the volume disc; otherwise over zone 3.
+            assignments = self._assignments()
+            if self._header_trt_volume_zone() is not None:
+                cx = header_clock_center_x(assignments)
+            else:
+                z3 = NOW_PLAYING_ZONES[3]
+                cx = float(z3.x) + float(z3.w) * 0.5
             self._paste_header_digital7(
                 out,
                 now_playing_header_clock_text(now),
-                float(z3.x) + float(z3.w) * 0.5,
+                cx,
                 fill_rgb=_look_chrome_rgb(),
             )
             return
@@ -6067,11 +6104,46 @@ class ViewCirclesWidget:
         _paste_patch_bgra(out, patch, px, py)
         return (px, py, int(pw), int(ph))
 
-    def _draw_header_trt(self, out: np.ndarray, z: NowPlayingZone, label: str) -> None:
-        """White Digital-7 TRT in the header slot over ``z``."""
-        rect = self._paste_header_digital7(out, label, float(z.x) + float(z.w) * 0.5)
-        if rect is not None:
-            self._tt_time_paint_rects.append(rect)
+    def _header_trt_volume_zone(self) -> int | None:
+        """Portrait slot beside the wide TT when it holds the volume disc.
+
+        The wide TT covers zone 6 (slots 1+2) or 7 (slots 2+3); the TRT sits
+        over the remaining slot when that slot is the volume widget.
+        """
+        assignments = self._assignments()
+        wide = tt_countdown_16x9_zone(assignments)
+        if wide is None:
+            return None
+        slot = 3 if int(wide) == 6 else 1
+        if str(assignments[slot - 1] or "").strip() in ("volume", "clock_saver_volume"):
+            return slot
+        return None
+
+    def _draw_header_trt(self, out: np.ndarray, wide_zone: int, label: str) -> None:
+        """Header TRT. Over the volume disc: Digital-7 in the UI color, as large
+        as fits above the ring. Otherwise white, in the wide TT's header slot."""
+        vol_zone = self._header_trt_volume_zone()
+        if vol_zone is None:
+            z = _zone_spec(int(wide_zone))
+            rect = self._paste_header_digital7(out, label, float(z.x) + float(z.w) * 0.5)
+            if rect is not None:
+                self._tt_time_paint_rects.append(rect)
+            return
+        cx, top, max_w, max_h = header_trt_ink_box(vol_zone)
+        template = re.sub(r"\d", "8", label)
+        size = _header_trt_size_px(template, int(max_w), int(max_h))
+        fill_rgb = tuple(reversed(self._effective_np_theme().ui_bgr))
+        patch = _matching_hhmm_patch(label, size_px=size, fill_rgb=fill_rgb, pad_y=size // 2)
+        a = patch[:, :, 3] > 8
+        rows, cols = np.where(a.any(axis=1))[0], np.where(a.any(axis=0))[0]
+        if rows.size == 0:
+            return
+        patch = patch[int(rows.min()) : int(rows.max()) + 1, int(cols.min()) : int(cols.max()) + 1]
+        ph, pw = patch.shape[:2]
+        px = int(round(cx - pw / 2.0))
+        py = int(round(top + (max_h - ph) / 2.0))
+        _paste_patch_bgra(out, patch, px, py)
+        self._tt_time_paint_rects.append((px, py, int(pw), int(ph)))
 
     def _draw_tt_countdown(
         self, out: np.ndarray, *, zone: int, wide: bool = False, part: str = "all"
@@ -6110,7 +6182,7 @@ class ViewCirclesWidget:
                 # 16:9 TRT lives in the header slot above the art, so the art
                 # lays out alone below.
                 if part in ("all", "time"):
-                    self._draw_header_trt(out, z, label)
+                    self._draw_header_trt(out, int(zone), label)
             elif label:
                 sx = float(z.w) / view_w
                 size_px = max(12, int(round(TT_COUNTDOWN_TEXT_SIZE_PX * sx)))
