@@ -98,6 +98,9 @@ class PresetTests(_Base):
         items, _ = fv.load_config()
         self.assertEqual(items[0]["track"], fv.STYLES["sweep_vu"]["params"]["track"][0])  # type: ignore[index]
         self.assertEqual(items[1]["track"], "#123456")
+        fv.config_path().write_text(json.dumps({"presets": [{"name": "Bars", "style": "bars", "showSlots": True}]}))
+        fv._cfg_checked = 0.0
+        self.assertFalse(fv.load_config()[0][0]["showSlots"])
 
     def test_bad_file_falls_back_to_defaults(self) -> None:
         fv.config_path().write_text("{not json")

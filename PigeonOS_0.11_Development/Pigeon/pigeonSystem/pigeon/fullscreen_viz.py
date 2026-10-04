@@ -187,7 +187,7 @@ STYLES: dict[str, dict[str, object]] = {
             "colB": ("#FF6A00", _C),
             "peakColor": ("#FFFFFF", _C),
             "slotColor": ("#141414", _C),
-            "showSlots": (True, _B),
+            "showSlots": (False, _B),  # no dark slot tracks behind the bars
             "bands": (64.0, _n(8, 160, 1)),
             "gapPct": (30.0, _n(0, 80, 1)),
             "minGapPx": (2.0, _n(0, 12, 1)),
@@ -379,6 +379,7 @@ def style_specs(style: str) -> dict[str, tuple[object, tuple]]:
 # someone actually tuned is kept.
 RETIRED_DEFAULTS: dict[tuple[str, str], object] = {
     ("sweep_vu", "track"): "#1A1A1A",
+    ("bars", "showSlots"): True,
 }
 
 

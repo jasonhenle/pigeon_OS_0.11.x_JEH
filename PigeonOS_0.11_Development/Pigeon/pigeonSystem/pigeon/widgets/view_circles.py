@@ -1196,6 +1196,30 @@ def _zone3_clock_day_baseline_y() -> float:
     return float(y)
 
 
+# Zone-6 receiver volume: margin above its ink and at the zone sides.
+_ZONE6_VOLUME_MARGIN_PX = 14.0
+
+
+@lru_cache(maxsize=1)
+def _zone6_volume_font_px() -> int:
+    """Largest Sharp Sans size whose widest readout fits over zone 6: from the
+    screen-top margin down to the zone-3 date baseline, zone 6 wide."""
+    z6 = NOW_PLAYING_ZONES[6]
+    margin = float(_ZONE6_VOLUME_MARGIN_PX)
+    max_w = float(z6.w) - 2.0 * margin
+    max_h = _zone3_clock_day_baseline_y() - margin
+    template = "-88.8 dB"
+    size = int(NP_HEADER_CLOCK_SIZE_PX)
+    for trial in range(size, 400):
+        patch, pw, _ph = _text_patch_font(template, font=_load_sharp_extrabold(trial), fill_rgb=(255, 255, 255))
+        rows = np.where(patch[:, :, 3].max(axis=1) > 8)[0]
+        ink_h = float(rows.max() - rows.min() + 1) if rows.size else 0.0
+        if pw > max_w or ink_h > max_h:
+            break
+        size = trial
+    return size
+
+
 def _clock_date_baseline_y(cy: float) -> float:
     """Baseline for the date line: 20px above the clock exterior top."""
     return float(cy) - float(_CLOCK_EXTERIOR_ACCENT_R) - float(_WIDGET_LABEL_BASELINE_GAP_PX)
@@ -5546,7 +5570,8 @@ class ViewCirclesWidget:
         return _receiver_volume_display_line(self._state.volume)
 
     def _draw_zone6_receiver_volume(self, out: np.ndarray) -> None:
-        """Volume (``-32.5 dB``) centered over zone 6, on the zone-3 clock's date baseline."""
+        """Volume (``-32.5 dB``) centered over zone 6, on the zone-3 clock's date baseline,
+        as large as the band above that baseline allows."""
         label = self._zone6_receiver_volume_text()
         if not label:
             return
@@ -5554,7 +5579,7 @@ class ViewCirclesWidget:
         key = (label, ink)
         cached = self._zone6_volume_patch
         if cached is None or cached[0] != key:
-            font = _load_sharp_extrabold(int(NP_HEADER_CLOCK_SIZE_PX))
+            font = _load_sharp_extrabold(_zone6_volume_font_px())
             patch, _pw, _ph = _text_patch_font(label, font=font, fill_rgb=ink)
             cached = (key, patch, _font_bbox_top(label, font))
             self._zone6_volume_patch = cached
