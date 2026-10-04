@@ -3361,7 +3361,13 @@ def annular_sector_mask(
     inner_r: float,
     fraction: float,
     start_deg: float = -90.0,
+    round_end: bool = False,
 ) -> np.ndarray:
+    """Filled annulus from ``start_deg`` clockwise by ``fraction`` of a turn.
+
+    ``round_end`` caps the leading edge with a near-semicircle (the origin edge
+    stays straight).
+    """
     s = max(1, int(size))
     mask = np.zeros((s, s), dtype=np.uint8)
     frac = max(0.0, min(1.0, float(fraction)))
@@ -3390,7 +3396,51 @@ def annular_sector_mask(
     wedge = np.zeros((s, s), dtype=np.uint8)
     poly = np.vstack([[[cx_i, cy_i]], arc])
     cv2.fillPoly(wedge, [poly], 255)
-    return cv2.bitwise_and(mask, wedge)
+    sector = cv2.bitwise_and(mask, wedge)
+    if round_end and outer - inner >= 2:
+        _add_round_sector_end(sector, cx=cx_i, cy=cy_i, outer=outer, inner=inner, start=start, sweep=sweep)
+    return sector
+
+
+# Cap radius vs. half the band width: just under 1 so the cap reads as "almost"
+# a semicircle and stays inside the track rims.
+_ROUND_END_CAP_SCALE = 0.96
+
+
+def _add_round_sector_end(
+    sector: np.ndarray,
+    *,
+    cx: int,
+    cy: int,
+    outer: int,
+    inner: int,
+    start: float,
+    sweep: float,
+) -> None:
+    """Union a disc at the sector's leading edge into ``sector`` (in place).
+
+    Only the half ahead of the end line is new ink; the trailing half is
+    clipped so it can't poke behind the straight origin at tiny fractions.
+    """
+    mid_r = (outer + inner) / 2.0
+    cap_r = (outer - inner) / 2.0 * _ROUND_END_CAP_SCALE
+    end_rad = math.radians(start + sweep)
+    shift = 4
+    one = 1 << shift
+    centre = (
+        int(round((cx + mid_r * math.cos(end_rad)) * one)),
+        int(round((cy + mid_r * math.sin(end_rad)) * one)),
+    )
+    cap = np.zeros_like(sector)
+    cv2.circle(cap, centre, int(round(cap_r * one)), 255, -1, lineType=cv2.LINE_AA, shift=shift)
+    ys, xs = np.nonzero(cap)
+    if xs.size == 0:
+        return
+    rel = (np.degrees(np.arctan2(ys - cy, xs - cx)) - start) % 360.0
+    cap_deg = math.degrees(math.asin(min(1.0, cap_r / max(mid_r, 1e-6))))
+    keep = rel <= sweep + cap_deg + 1.0
+    ys, xs = ys[keep], xs[keep]
+    sector[ys, xs] = np.maximum(sector[ys, xs], cap[ys, xs])
 
 
 def _halo_pad(sigma: float) -> int:
@@ -3505,6 +3555,7 @@ def _draw_progress_ring(
     stroke_backdrop: np.ndarray | None = None,
     stroke_backdrop_x: int = 0,
     stroke_backdrop_y: int = 0,
+    round_end: bool = False,
 ) -> None:
     frac = max(0.0, min(1.0, float(fraction)))
     if frac <= 1e-6:
@@ -3516,6 +3567,7 @@ def _draw_progress_ring(
         outer_r=outer_r,
         inner_r=inner_r,
         fraction=frac,
+        round_end=round_end,
     )
     fill_a = int(round(255.0 * max(0.0, min(1.0, float(fill_opacity)))))
     fill = np.zeros((size, size, 4), dtype=np.uint8)
@@ -3797,6 +3849,7 @@ def _draw_volume_selected_pie(
         fill_bgr=th.ui_bgr,
         fill_opacity=1.0,
         stroke=0,
+        round_end=True,
     )
 
 
