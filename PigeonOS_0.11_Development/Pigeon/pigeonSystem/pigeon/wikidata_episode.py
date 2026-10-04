@@ -39,8 +39,8 @@ _PART_WORDS = {
 # ``instance of`` classes that mark an item as an episode (TV, two-part, generic, podcast).
 _EPISODE_CLASSES = frozenset({"Q21191270", "Q21664088", "Q1983062", "Q61855877"})
 
-# In-process cache: normalized episode title → ``{"name", "tmdb_tv_id"}`` or None (negative).
-_cache: dict[str, dict[str, Any] | None] = {}
+# In-process cache: normalized episode title → candidate series list (empty = miss).
+_cache: dict[str, list[dict[str, Any]]] = {}
 
 
 def _norm(s: str) -> str:
@@ -200,21 +200,22 @@ def _search_exact_episode_series(episode_title: str) -> list[dict[str, Any]]:
     return out
 
 
-def series_from_wikidata_episode_title(episode_title: str | None) -> dict[str, Any] | None:
+def series_candidates_from_wikidata_episode_title(episode_title: str | None) -> list[dict[str, Any]]:
     """
-    Return ``{"name", "tmdb_tv_id"}`` for an unambiguous episode title, or ``None``.
+    Every parent series (``{"name", "tmdb_tv_id"}``) with an episode labeled this title.
 
-    Ambiguous titles (multiple Wikidata episodes with the same name, from different
-    series) return ``None`` rather than guessing. ``tmdb_tv_id`` may be ``None``.
+    ``Baby Shower`` is an episode of The Office, ER, Superstore and SNL; callers that
+    know more (the series that was just playing) can pick among them. Empty on a miss
+    or a transient network / rate-limit failure (which is not cached).
     """
     t = (episode_title or "").strip()
     if not t or len(t) < 2:
-        return None
+        return []
     key = _norm(t)
     if not key:
-        return None
+        return []
     if key in _cache:
-        return _cache[key]
+        return list(_cache[key])
 
     try:
         candidates = _search_exact_episode_series(t)
@@ -228,12 +229,24 @@ def series_from_wikidata_episode_title(episode_title: str | None) -> dict[str, A
         KeyError,
     ):
         # Transient network/rate-limit failures: do not cache a negative.
-        return None
+        return []
 
-    # Exactly one distinct series → use it; 0 or 2+ → unresolved (cache either way).
-    series = candidates[0] if len(candidates) == 1 and candidates[0].get("name") else None
-    _cache[key] = series
-    return series
+    _cache[key] = candidates
+    return list(candidates)
+
+
+def series_from_wikidata_episode_title(episode_title: str | None) -> dict[str, Any] | None:
+    """
+    Return ``{"name", "tmdb_tv_id"}`` for an unambiguous episode title, or ``None``.
+
+    Ambiguous titles (multiple Wikidata episodes with the same name, from different
+    series) return ``None`` rather than guessing. ``tmdb_tv_id`` may be ``None``.
+    """
+    candidates = series_candidates_from_wikidata_episode_title(episode_title)
+    # Exactly one distinct series → use it; 0 or 2+ → unresolved.
+    if len(candidates) == 1 and candidates[0].get("name"):
+        return candidates[0]
+    return None
 
 
 def series_name_from_wikidata_episode_title(episode_title: str | None) -> str | None:

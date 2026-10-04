@@ -46,6 +46,11 @@ _SEARCH = {
         },
         {"id": "Q12", "label": "Business Ethics", "description": "2019 Canadian film"},
     ],
+    "Baby Shower": [
+        {"id": "Q40", "label": "Baby Shower", "description": "episode of The Office (S5 E4)"},
+        {"id": "Q41", "label": "Baby Shower", "description": "episode of ER (S7 E3)"},
+        {"id": "Q42", "label": "Baby Shower", "description": "episode of Superstore (S2 E4)"},
+    ],
     "Pilot": [
         {"id": "Q20", "label": "Pilot", "description": "episode of Welcome to Night Vale published on June 15 2012 (E1)"},
         {"id": "Q21", "label": "Pilot", "description": "episode of Manifest (S1 E1)"},
@@ -61,7 +66,12 @@ _ENTITIES = {
     "Q12": _ent(p31=["Q11424"]),
     "Q20": _ent(p31=["Q61855877"], p179=["Q30"]),
     "Q21": _ent(p31=[_TV_EPISODE], p179=["Q31"]),
+    "Q40": _ent(p31=[_TV_EPISODE], p179=[_OFFICE]),
+    "Q41": _ent(p31=[_TV_EPISODE], p179=["Q50"]),
+    "Q42": _ent(p31=[_TV_EPISODE], p179=["Q51"]),
     _OFFICE: _ent(label="The Office", tmdb="2316"),
+    "Q50": _ent(label="ER", tmdb="4588"),
+    "Q51": _ent(label="Superstore", tmdb="62649"),
     "Q30": _ent(label="Welcome to Night Vale"),
     "Q31": _ent(label="Manifest", tmdb="79696"),
 }
@@ -111,6 +121,70 @@ class SeriesLookupTests(unittest.TestCase):
 
     def test_episodes_of_two_series_stay_ambiguous(self) -> None:
         self.assertIsNone(wd.series_from_wikidata_episode_title("Pilot"))
+
+    def test_ambiguous_title_lists_every_series(self) -> None:
+        self.assertIsNone(wd.series_from_wikidata_episode_title("Baby Shower"))
+        self.assertEqual(
+            wd.series_candidates_from_wikidata_episode_title("Baby Shower"),
+            [
+                {"name": "The Office", "tmdb_tv_id": 2316},
+                {"name": "ER", "tmdb_tv_id": 4588},
+                {"name": "Superstore", "tmdb_tv_id": 62649},
+            ],
+        )
+
+
+class PickSeriesTests(unittest.TestCase):
+    """tmdb_poster picks among ambiguous Wikidata candidates."""
+
+    _CANDS = [
+        {"name": "The Office", "tmdb_tv_id": 2316},
+        {"name": "ER", "tmdb_tv_id": 4588},
+        {"name": "Superstore", "tmdb_tv_id": 62649},
+    ]
+
+    def setUp(self) -> None:
+        from pigeon import tmdb_poster as tp
+
+        self.tp = tp
+        tp.clear_recent_episode_series()
+        self.addCleanup(tp.clear_recent_episode_series)
+        # Peacock carries The Office and Superstore, not ER.
+        on_peacock = {2316, 62649}
+        patcher = mock.patch.object(
+            tp, "_service_availability_score", side_effect=lambda item, _k, _p: int(item["id"] in on_peacock)
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def pick(self, service: str = "Peacock"):
+        return self.tp._pick_wikidata_episode_series(
+            list(self._CANDS), service=service, providers=frozenset({386})
+        )
+
+    def test_ambiguous_without_history_stays_unresolved(self) -> None:
+        self.assertIsNone(self.pick())
+
+    def test_follows_series_just_playing_on_same_service(self) -> None:
+        self.tp._remember_episode_series("Peacock", ({"id": 2316}, "tv"))
+        self.assertEqual(self.pick()["name"], "The Office")
+        # Another service's history does not carry over.
+        self.assertIsNone(self.pick(service="Hulu"))
+
+    def test_history_expires(self) -> None:
+        self.tp._remember_episode_series("Peacock", ({"id": 2316}, "tv"))
+        later = mock.patch.object(
+            self.tp.time, "monotonic", return_value=self.tp.time.monotonic() + 5 * 3600
+        )
+        with later:
+            self.assertIsNone(self.pick())
+
+    def test_only_candidate_on_service_wins(self) -> None:
+        cands = [{"name": "The Office", "tmdb_tv_id": 2316}, {"name": "ER", "tmdb_tv_id": 4588}]
+        self.assertEqual(
+            self.tp._pick_wikidata_episode_series(cands, service="Peacock", providers=frozenset({386}))["name"],
+            "The Office",
+        )
 
 
 if __name__ == "__main__":
