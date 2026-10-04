@@ -41,6 +41,7 @@ import select
 import socket
 import threading
 import time
+from collections import deque
 from collections.abc import Callable
 from typing import Iterable
 
@@ -280,18 +281,47 @@ def _denon_mv_to_db(digits: str) -> str:
       * 3-digit form ``NNN`` where the third digit is a 0.5 dB flag
         (e.g. ``"575"`` = 57.5 → -22.5 dB, since 80 = 0 dB reference).
     """
-    try:
-        if len(digits) == 2:
-            n = int(digits)
-        elif len(digits) == 3:
-            n = int(digits[:2]) + (0.5 if digits[2] == "5" else 0.0)
-        else:
-            return ""
-    except ValueError:
+    n = denon_mv_to_units(digits)
+    if n is None:
         return ""
     db = n - 80.0
     # Always one decimal + spaced lowercase-d suffix: ``-22.5 dB``.
     return f"{db:.1f} dB"
+
+
+# Highest master-volume step the protocol can express (MV98 = +18 dB).
+DENON_MV_HARD_MAX = 98.0
+
+
+def denon_mv_to_units(digits: str) -> float | None:
+    """``"525"`` → ``52.5``; ``"05"`` → ``5.0``. 80 units == 0 dB.
+
+    ``99`` / ``995`` are the protocol's below-``00`` minimum (``995`` =
+    -80.5 dB), so they map to negative units rather than +19 dB.
+    """
+    d = str(digits or "").strip()
+    if not d.isdigit():
+        return None
+    if len(d) == 2:
+        n = float(int(d))
+    elif len(d) == 3:
+        n = int(d[:2]) + (0.5 if d[2] == "5" else 0.0)
+    else:
+        return None
+    if n >= 99.0:
+        n -= 100.0
+    return n
+
+
+def denon_units_to_mv(units: float) -> str:
+    """Absolute ``MV`` argument for ``units``: ``52.5`` → ``"525"``, ``5`` → ``"05"``.
+
+    Rounds to the 0.5 dB grid and clamps to ``00``…``98``.
+    """
+    u = round(float(units) * 2.0) / 2.0
+    u = max(0.0, min(DENON_MV_HARD_MAX, u))
+    whole = int(u)
+    return f"{whole:02d}5" if (u - whole) >= 0.25 else f"{whole:02d}"
 
 
 def _telnet_ack_matches(command: str, line: str) -> bool:
@@ -373,6 +403,9 @@ def send_denon_telnet_commands(
     if not cmds:
         return False, "No receiver command."
     per = max(0.35, min(1.2, float(timeout) / max(1, len(cmds))))
+    if port == _DEFAULT_PORT and _VOLUME_HUB.is_managing(h):
+        # The hub owns TCP/23 for this host. Never open a second client.
+        return _send_denon_telnet_commands_via_hub(h, cmds, per=per)
     connect_t = min(1.0, max(0.4, float(timeout) * 0.35))
     _VOLUME_HUB.suspend()
     try:
@@ -381,6 +414,26 @@ def send_denon_telnet_commands(
         )
     finally:
         _VOLUME_HUB.resume()
+
+
+def _send_denon_telnet_commands_via_hub(
+    h: str, cmds: list[str], *, per: float
+) -> tuple[bool, str]:
+    acks: list[str] = []
+    for cmd in cmds:
+        tx = _VOLUME_HUB.send(h, cmd, timeout=per)
+        if tx is None:
+            return False, f"Denon: {cmd} not sent (telnet hub not connected)"
+        line = _VOLUME_HUB.wait_line(
+            lambda ln, c=cmd: _telnet_ack_matches(c, ln), after=tx, timeout=per
+        )
+        if not line:
+            return False, f"Denon: {cmd} sent, no reply"
+        acks.append(line)
+        pause = _CMD_PAUSE_S.get(cmd, 0.0)
+        if pause > 0:
+            time.sleep(pause)
+    return True, " / ".join(f"Denon: {c} → {a}" for c, a in zip(cmds, acks))
 
 
 def _send_denon_telnet_commands_locked(
@@ -609,12 +662,37 @@ def _poll_denon_telnet_locked(
     return parsed
 
 
+class _TxTicket:
+    """One queued command. The hub thread sets ``mono`` when it hits the wire."""
+
+    __slots__ = ("command", "done", "mono")
+
+    def __init__(self, command: str) -> None:
+        self.command = command
+        self.done = threading.Event()
+        self.mono = 0.0  # 0.0 = not written (dropped on disconnect)
+
+
+# Denon asks for >= 50 ms between commands on TCP/23.
+_HUB_WRITE_GAP_S = 0.05
+# A hub ``MV`` / ``MU`` reading older than this, with the socket down, is
+# stale and must not stand in for a live readout.
+_HUB_SNAPSHOT_FRESH_S = 5.0
+
+
 class _DenonTelnetHub:
     """One long-lived TCP/23 session. Denon allows a single client.
 
+    The hub thread is the only reader *and* writer on the socket. Other
+    threads queue commands with :meth:`send` and wait for replies with
+    :meth:`wait_line` / :meth:`volume_state`; every reading carries the
+    monotonic time it arrived so a pre-command snapshot can never pass for a
+    post-command confirmation.
+
     Unsolicited ``MV`` / ``MU`` lines (IR, front panel, HEOS) update the
-    snapshot. Periodic ``MV?`` covers firmware that stays quiet. One-shot
-    send/poll calls ``suspend`` so they can take the socket, then resume.
+    snapshot. ``MV?`` is re-sent when the unit has been quiet for a second.
+    One-shot polls for a *different* host ``suspend`` the hub to borrow the
+    global lock, then resume.
     """
 
     def __init__(self) -> None:
@@ -622,29 +700,59 @@ class _DenonTelnetHub:
         self._stop = threading.Event()
         self._suspend = threading.Event()
         self._host = ""
+        self._port = _DEFAULT_PORT
         self._snap: dict[str, str] = {}
         self._snap_lock = threading.Lock()
+        self._state = threading.Condition(self._snap_lock)
         self._listener: Callable[[dict[str, str]], None] | None = None
+        self._observers: list[Callable[[], None]] = []
         self._last_vol = ""
+        self._connected = ""
+        self._mv_mono = 0.0
+        self._mu_mono = 0.0
+        self._lines: deque[tuple[float, str]] = deque(maxlen=64)
+        self._outbox: deque[_TxTicket] = deque()
+        self._wake_r: socket.socket | None = None
+        self._wake_w: socket.socket | None = None
 
     def set_listener(self, cb: Callable[[dict[str, str]], None] | None) -> None:
         self._listener = cb
 
-    def ensure(self, host: str) -> None:
+    def add_observer(self, cb: Callable[[], None]) -> None:
+        """``cb()`` runs on the hub thread after every MV / MU / PW reading."""
+        if cb not in self._observers:
+            self._observers.append(cb)
+
+    def remove_observer(self, cb: Callable[[], None]) -> None:
+        if cb in self._observers:
+            self._observers.remove(cb)
+
+    def ensure(self, host: str, *, port: int = _DEFAULT_PORT) -> None:
         h = _normalize_host(host)
         if not h:
             self.stop()
             return
         alive = bool(self._thread and self._thread.is_alive())
-        if alive and self._host == h:
+        if alive and self._host == h and self._port == port:
             return
         self.stop()
+        self._port = int(port)
         self._stop = threading.Event()
         self._suspend = threading.Event()
         self._host = h
-        with self._snap_lock:
+        with self._state:
             self._snap = {}
+            self._mv_mono = 0.0
+            self._mu_mono = 0.0
+            self._lines.clear()
         self._last_vol = ""
+        if self._wake_r is None:
+            try:
+                self._wake_r, self._wake_w = socket.socketpair()
+                self._wake_r.setblocking(False)
+                self._wake_w.setblocking(False)
+            except OSError:
+                self._wake_r = self._wake_w = None
         self._thread = threading.Thread(
             target=self._run, name="denon-telnet-hub", daemon=True
         )
@@ -653,14 +761,18 @@ class _DenonTelnetHub:
     def stop(self) -> None:
         self._stop.set()
         self._suspend.clear()
+        self._wake()
         t = self._thread
         self._thread = None
         if t is not None and t.is_alive() and t is not threading.current_thread():
             t.join(timeout=1.2)
         self._host = ""
+        self._set_connected("")
+        self._fail_outbox()
 
     def suspend(self) -> None:
         self._suspend.set()
+        self._wake()
 
     def resume(self) -> None:
         self._suspend.clear()
@@ -672,20 +784,131 @@ class _DenonTelnetHub:
             and self._thread.is_alive()
         )
 
+    def is_connected(self, host: str) -> bool:
+        h = _normalize_host(host)
+        return bool(h) and self._connected == h and self.is_managing(h)
+
     def volume_snapshot(self, host: str) -> dict[str, str]:
         if not self.is_managing(host):
             return {}
-        with self._snap_lock:
+        with self._state:
             snap = dict(self._snap)
-        if snap.get("MV") or snap.get("MV_DB") or snap.get("MU"):
-            return snap
-        return {}
+            newest = max(self._mv_mono, self._mu_mono)
+        if not (snap.get("MV") or snap.get("MV_DB") or snap.get("MU")):
+            return {}
+        # While the socket is down the snapshot is whatever the last session
+        # saw. Hand back nothing so callers use their fresh HTTP reading.
+        if not self.is_connected(host) and (
+            time.monotonic() - newest > _HUB_SNAPSHOT_FRESH_S
+        ):
+            return {}
+        return snap
 
     def full_snapshot(self, host: str) -> dict[str, str]:
         if not self.is_managing(host):
             return {}
-        with self._snap_lock:
+        with self._state:
             return dict(self._snap)
+
+    def volume_state(self, host: str) -> dict[str, object]:
+        """Parsed live volume with arrival times. Empty when not managing ``host``."""
+        if not self.is_managing(host):
+            return {}
+        with self._state:
+            snap = dict(self._snap)
+            mv_mono = self._mv_mono
+            mu_mono = self._mu_mono
+        mu = str(snap.get("MU") or "").upper()
+        return {
+            "connected": self.is_connected(host),
+            "mv": denon_mv_to_units(str(snap.get("MV") or "")),
+            "mv_mono": mv_mono,
+            "max": denon_mv_to_units(str(snap.get("MVMAX") or "")),
+            "mu": True if mu == "ON" else False if mu == "OFF" else None,
+            "mu_mono": mu_mono,
+            "pw": str(snap.get("PW") or "").upper(),
+        }
+
+    def send(self, host: str, command: str, *, timeout: float = 0.6) -> float | None:
+        """Queue ``command`` for the hub thread to write.
+
+        Returns the monotonic time it was written, or ``None`` when the hub
+        is not connected to ``host`` within ``timeout``. A command that times
+        out still queued is withdrawn, so it can never go out late.
+        """
+        cmd = str(command or "").strip().upper()
+        h = _normalize_host(host)
+        if not cmd or not self.is_managing(h):
+            return None
+        deadline = time.monotonic() + max(0.05, float(timeout))
+        with self._state:
+            while not self.is_connected(h):
+                left = deadline - time.monotonic()
+                if left <= 0 or not self.is_managing(h):
+                    return None
+                self._state.wait(min(left, 0.1))
+            ticket = _TxTicket(cmd)
+            self._outbox.append(ticket)
+        self._wake()
+        if ticket.done.wait(max(0.0, deadline - time.monotonic())):
+            return ticket.mono or None
+        with self._state:
+            if ticket in self._outbox:
+                self._outbox.remove(ticket)
+                return None
+        # Already popped by the hub thread: the write is in progress.
+        ticket.done.wait(0.2)
+        return ticket.mono or None
+
+    def wait_line(
+        self,
+        match: Callable[[str], bool],
+        *,
+        after: float,
+        timeout: float,
+    ) -> str:
+        """First line received after ``after`` (monotonic) that ``match`` accepts."""
+        deadline = time.monotonic() + max(0.0, float(timeout))
+        with self._state:
+            while True:
+                for mono, line in self._lines:
+                    if mono >= after and match(line):
+                        return line
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    return ""
+                self._state.wait(min(left, 0.1))
+
+    def _wake(self) -> None:
+        w = self._wake_w
+        if w is None:
+            return
+        try:
+            w.send(b"\0")
+        except OSError:
+            pass
+
+    def _drain_wake(self) -> None:
+        r = self._wake_r
+        if r is None:
+            return
+        try:
+            while r.recv(64):
+                pass
+        except OSError:
+            pass
+
+    def _fail_outbox(self) -> None:
+        with self._state:
+            pending = list(self._outbox)
+            self._outbox.clear()
+        for t in pending:
+            t.done.set()
+
+    def _set_connected(self, h: str) -> None:
+        with self._state:
+            self._connected = h
+            self._state.notify_all()
 
     def _run(self) -> None:
         while not self._stop.is_set():
@@ -701,6 +924,8 @@ class _DenonTelnetHub:
             except Exception:
                 pass
             finally:
+                self._set_connected("")
+                self._fail_outbox()
                 _TELNET_LOCK.release()
             if not self._stop.is_set():
                 time.sleep(0.8)
@@ -711,9 +936,10 @@ class _DenonTelnetHub:
             return
         sock: socket.socket | None = None
         try:
-            sock = socket.create_connection((h, _DEFAULT_PORT), timeout=1.0)
+            sock = socket.create_connection((h, self._port), timeout=1.0)
             sock.setblocking(False)
             last_ping = 0.0
+            last_write = 0.0
             leftover = b""
             last_si = 0.0
             banner = _recv_until_idle(
@@ -724,22 +950,54 @@ class _DenonTelnetHub:
                 sock.sendall(b"PW?\rMV?\rMU?\rSI?\r")
             except OSError:
                 return
+            last_write = time.monotonic()
+            self._drain_wake()
+            self._set_connected(h)
             while not self._stop.is_set() and not self._suspend.is_set():
                 now = time.monotonic()
-                if now - last_ping >= 1.0:
+                # Queued commands first, spaced by the protocol's minimum gap.
+                wait_s = 0.2
+                with self._state:
+                    has_out = bool(self._outbox)
+                if has_out:
+                    gap = _HUB_WRITE_GAP_S - (now - last_write)
+                    if gap <= 0:
+                        with self._state:
+                            ticket = self._outbox.popleft() if self._outbox else None
+                        if ticket is not None:
+                            try:
+                                sock.sendall((ticket.command + "\r").encode("ascii", errors="ignore"))
+                            except OSError:
+                                ticket.done.set()
+                                return
+                            last_write = time.monotonic()
+                            ticket.mono = last_write
+                            ticket.done.set()
+                        with self._state:
+                            has_out = bool(self._outbox)
+                        wait_s = _HUB_WRITE_GAP_S if has_out else 0.2
+                    else:
+                        wait_s = gap
+                # Re-ask MV? only when the unit has been quiet for a second.
+                if now - max(last_ping, self._mv_mono) >= 1.0 and now - last_write >= _HUB_WRITE_GAP_S:
                     try:
                         sock.sendall(b"MV?\r")
                     except OSError:
                         return
-                    last_ping = now
-                if now - last_si >= 8.0:
+                    last_ping = last_write = now
+                if now - last_si >= 8.0 and now - last_write >= _HUB_WRITE_GAP_S:
                     try:
                         sock.sendall(b"SI?\rSSFUN ?\r")
                     except OSError:
                         return
-                    last_si = now
-                r, _, _ = select.select([sock], [], [], 0.2)
-                if not r:
+                    last_si = last_write = now
+                watch: list[socket.socket] = [sock]
+                if self._wake_r is not None:
+                    watch.append(self._wake_r)
+                r, _, _ = select.select(watch, [], [], max(0.0, wait_s))
+                if self._wake_r is not None and self._wake_r in r:
+                    self._drain_wake()
+                if sock not in r:
                     continue
                 try:
                     chunk = sock.recv(4096)
@@ -770,12 +1028,28 @@ class _DenonTelnetHub:
     def _ingest(self, blob: bytes) -> None:
         if not blob:
             return
-        parsed = _parse_denon_response_lines(_split_cr_lines(blob))
+        lines = _split_cr_lines(blob)
+        parsed = _parse_denon_response_lines(lines)
+        now = time.monotonic()
+        with self._state:
+            for line in lines:
+                self._lines.append((now, line))
+            if parsed:
+                self._snap.update(parsed)
+                if "MV" in parsed:
+                    self._mv_mono = now
+                if "MU" in parsed:
+                    self._mu_mono = now
+            snap = dict(self._snap)
+            self._state.notify_all()
         if not parsed:
             return
-        with self._snap_lock:
-            self._snap.update(parsed)
-            snap = dict(self._snap)
+        if "MV" in parsed or "MU" in parsed or "PW" in parsed:
+            for obs in list(self._observers):
+                try:
+                    obs()
+                except Exception:
+                    pass
         vol = str(snap.get("MV_DB") or "").strip()
         if not vol and snap.get("MV"):
             vol = _denon_mv_to_db(str(snap.get("MV") or ""))
@@ -798,16 +1072,36 @@ def start_denon_telnet_hub(
     host: str,
     *,
     on_change: Callable[[dict[str, str]], None] | None = None,
+    port: int = _DEFAULT_PORT,
 ) -> None:
     """Keep one telnet session on ``host`` and notify when master volume moves."""
     if on_change is not None:
         _VOLUME_HUB.set_listener(on_change)
-    _VOLUME_HUB.ensure(host)
+    _VOLUME_HUB.ensure(host, port=port)
 
 
 def stop_denon_telnet_hub() -> None:
     _VOLUME_HUB.stop()
     _VOLUME_HUB.set_listener(None)
+
+
+def denon_hub_host() -> str:
+    """Host the hub is bound to (``""`` when none)."""
+    return _VOLUME_HUB._host if _VOLUME_HUB.is_managing(_VOLUME_HUB._host) else ""
+
+
+def denon_hub_volume_state(host: str) -> dict[str, object]:
+    """Live MV / MU / PW with arrival times; see ``_DenonTelnetHub.volume_state``."""
+    return _VOLUME_HUB.volume_state(host)
+
+
+def denon_hub_send(host: str, command: str, *, timeout: float = 0.6) -> float | None:
+    """Write one command on the hub's socket; monotonic write time or ``None``."""
+    return _VOLUME_HUB.send(host, command, timeout=timeout)
+
+
+def denon_hub_add_observer(cb: Callable[[], None]) -> None:
+    _VOLUME_HUB.add_observer(cb)
 
 
 def prime_denon_telnet_hub_snapshot_for_tests(
@@ -819,6 +1113,8 @@ def prime_denon_telnet_hub_snapshot_for_tests(
     _VOLUME_HUB._thread = threading.current_thread()
     with _VOLUME_HUB._snap_lock:
         _VOLUME_HUB._snap = dict(fields)
+        _VOLUME_HUB._mv_mono = time.monotonic()
+    _VOLUME_HUB._connected = h
     _VOLUME_HUB._last_vol = str(fields.get("MV_DB") or "")
 
 

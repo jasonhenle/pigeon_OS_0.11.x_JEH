@@ -639,71 +639,22 @@ def apply_denon_master_volume(
     mute_toggles: int = 0,
     timeout: float = 3.5,
 ) -> tuple[bool, str, str]:
-    """Apply knob steps to master volume on this host.
+    """Apply knob steps to master volume on this host (blocking one-shot).
 
-    Telnet ``MV*`` first; if the reported level does not move, HEOS for the
-    player at this IP. A telnet echo of the *current* ``MV`` is not success.
-    AppCommand ``zone1`` Power is not trusted.
+    Same path as the rotary worker (``pigeon.receiver_volume``): one absolute
+    ``MV`` on the telnet hub's socket once a live baseline is known, confirmed
+    only by an ``MV`` that arrives after the write. No AppCommand status reads.
+    HEOS player volume is used only when fresh feedback proves the AVR ignored
+    ``MV``; the returned line is always AVR master volume.
     """
-    from pigeon.receiver_denon_telnet import (
-        query_denon_volume_telnet,
-        send_denon_telnet_commands,
-    )
+    from pigeon.receiver_volume import apply_receiver_volume_once
 
     h = _normalize_host(host)
     if not h:
         return False, "No receiver host.", ""
-    before = read_denon_appcommand_status(h, timeout=min(1.2, timeout))
-    try:
-        before_tn = query_denon_volume_telnet(h, timeout=0.7, blocking=False)
-    except Exception:
-        before_tn = {}
-    prev = _volume_fields_line(before_tn) or _volume_fields_line(before)
-    n = max(-24, min(24, int(steps)))
-    if before and _denon_power_is_standby(before) and not before_tn:
-        try:
-            send_denon_http_command(h, "PWON", timeout=min(0.8, timeout))
-        except Exception:
-            pass
-    cmds: list[str] = []
-    fields = before_tn or before or {}
-    muted = str(fields.get("Mute") or fields.get("MU") or "").strip().lower() in (
-        "on",
-        "1",
-        "true",
-        "yes",
+    return apply_receiver_volume_once(
+        h, steps=steps, mute_toggles=mute_toggles, timeout=timeout
     )
-    if int(mute_toggles) % 2 == 1:
-        cmds.append("MUOFF" if muted else "MUON")
-    if n > 0:
-        cmds.extend(["MVUP"] * n)
-    elif n < 0:
-        cmds.extend(["MVDOWN"] * (-n))
-    if not cmds:
-        return True, "No receiver volume change.", prev
-    ok, msg = send_denon_telnet_commands(h, cmds, timeout=max(2.5, float(timeout)))
-    try:
-        after_tn = query_denon_volume_telnet(h, timeout=0.8, blocking=True)
-    except Exception:
-        after_tn = {}
-    after = read_denon_appcommand_status(h, timeout=min(1.2, timeout))
-    vol = _volume_fields_line(after_tn) or _volume_fields_line(after)
-    moved = _volume_lines_moved(prev, vol, steps=n)
-    if ok and moved:
-        return True, msg, vol
-    ok_h, msg_h = send_heos_volume_control(
-        h, steps=n, mute_toggles=mute_toggles, timeout=min(1.8, timeout)
-    )
-    if ok_h:
-        try:
-            after_tn = query_denon_volume_telnet(h, timeout=0.8, blocking=True)
-        except Exception:
-            after_tn = {}
-        after_h = read_denon_appcommand_status(h, timeout=min(1.2, timeout))
-        master = _volume_fields_line(after_tn) or _volume_fields_line(after_h) or vol
-        return True, msg_h, master
-    msg = f"{msg} / {msg_h}"
-    return False, msg, vol or prev
 
 
 def send_denon_volume_control(
