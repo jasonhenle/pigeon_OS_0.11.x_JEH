@@ -149,10 +149,14 @@ class PickSeriesTests(unittest.TestCase):
         self.tp = tp
         tp.clear_recent_episode_series()
         self.addCleanup(tp.clear_recent_episode_series)
-        # Peacock carries The Office and Superstore, not ER.
-        on_peacock = {2316, 62649}
+        # Peacock (386) carries The Office and Superstore; ER is on Hulu (15).
+        self.providers_by_id: dict[int, frozenset[int] | None] = {
+            2316: frozenset({386}),
+            62649: frozenset({386}),
+            4588: frozenset({15}),
+        }
         patcher = mock.patch.object(
-            tp, "_service_availability_score", side_effect=lambda item, _k, _p: int(item["id"] in on_peacock)
+            tp, "_tmdb_watch_provider_ids", side_effect=lambda _k, i: self.providers_by_id.get(i)
         )
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -187,12 +191,27 @@ class PickSeriesTests(unittest.TestCase):
         self.assertNotIn(self.tp.EPISODE_SERIES_FLAG, row)
         self.assertEqual(self.tp._mark_episode_series((None, None)), (None, None))
 
+    def _pick_from(self, cands: list[dict]):
+        return self.tp._pick_wikidata_episode_series(cands, service="Peacock", providers=frozenset({386}))
+
     def test_only_candidate_on_service_wins(self) -> None:
         cands = [{"name": "The Office", "tmdb_tv_id": 2316}, {"name": "ER", "tmdb_tv_id": 4588}]
-        self.assertEqual(
-            self.tp._pick_wikidata_episode_series(cands, service="Peacock", providers=frozenset({386}))["name"],
-            "The Office",
-        )
+        self.assertEqual(self._pick_from(cands)["name"], "The Office")
+
+    def test_candidate_without_tmdb_id_keeps_it_unresolved(self) -> None:
+        # The id-less series could also be on Peacock; don't guess.
+        cands = [{"name": "The Office", "tmdb_tv_id": 2316}, {"name": "Some Sitcom", "tmdb_tv_id": None}]
+        self.assertIsNone(self._pick_from(cands))
+
+    def test_failed_provider_lookup_keeps_it_unresolved(self) -> None:
+        self.providers_by_id[4588] = None
+        cands = [{"name": "The Office", "tmdb_tv_id": 2316}, {"name": "ER", "tmdb_tv_id": 4588}]
+        self.assertIsNone(self._pick_from(cands))
+
+    def test_id_less_candidate_still_yields_to_recent_series(self) -> None:
+        self.tp._remember_episode_series("Peacock", ({"id": 2316}, "tv"))
+        cands = [{"name": "The Office", "tmdb_tv_id": 2316}, {"name": "Some Sitcom", "tmdb_tv_id": None}]
+        self.assertEqual(self._pick_from(cands)["name"], "The Office")
 
 
 if __name__ == "__main__":

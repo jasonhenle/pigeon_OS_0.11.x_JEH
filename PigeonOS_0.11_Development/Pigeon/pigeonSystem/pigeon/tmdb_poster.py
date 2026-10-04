@@ -2530,24 +2530,27 @@ def _pick_wikidata_episode_series(
     One parent series for an episode title from Wikidata's candidates.
 
     Unambiguous → that series. Ambiguous → the series this service was just playing,
-    else the only candidate listed on the service; otherwise unresolved.
+    else the only candidate listed on the service — provided every other candidate is
+    known not to be (no TMDb id or a failed provider lookup could hide a second match);
+    otherwise unresolved.
     """
     if len(candidates) == 1:
         return candidates[0] if candidates[0].get("name") else None
-    ided = [c for c in candidates if c.get("tmdb_tv_id")]
     recent = _recent_episode_series_id(service)
     if recent is not None:
-        for c in ided:
-            if int(c["tmdb_tv_id"]) == recent:
+        for c in candidates:
+            if c.get("tmdb_tv_id") and int(c["tmdb_tv_id"]) == recent:
                 return c
-    if providers:
-        on_service = [
-            c for c in ided
-            if _service_availability_score({"id": int(c["tmdb_tv_id"])}, "tv", providers)
-        ]
-        if len(on_service) == 1:
-            return on_service[0]
-    return None
+    if not providers:
+        return None
+    on_service: list[dict] = []
+    for c in candidates:
+        have = _tmdb_watch_provider_ids("tv", int(c["tmdb_tv_id"])) if c.get("tmdb_tv_id") else None
+        if have is None:
+            return None  # can't rule this one out
+        if have & providers:
+            on_service.append(c)
+    return on_service[0] if len(on_service) == 1 else None
 
 
 def _episode_title_series_fallback(
