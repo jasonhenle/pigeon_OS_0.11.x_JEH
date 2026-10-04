@@ -148,7 +148,9 @@ class NowPlayingZone6Tests(unittest.TestCase):
         self.assertEqual(w._assignments()[0], "visualizer_zone6")
         self.assertTrue(w.wants_live_audio())
         self.assertTrue(w._zone3_clock_is_analog_fallback())
-        self.assertEqual(w._receiver_readout(), "TV AUDIO   -32.5 dB")
+        # Zone 4 keeps the input; the volume moves over the zone-6 visualizer.
+        self.assertEqual(w._receiver_readout(), "TV AUDIO")
+        self.assertEqual(w._zone6_receiver_volume_text(), "-32.5 dB")
         t = np.arange(4800) / 48000.0
         x = (0.3 * np.sin(2 * np.pi * 220 * t)).astype(np.float32)
         frame = None
@@ -160,6 +162,19 @@ class NowPlayingZone6Tests(unittest.TestCase):
         viz = frame[zy + 20 : zy + zh - 20, zx + 20 : zx + zw - 20]
         self.assertTrue((viz[:, :, 3] == 255).all(), "zone 6 is painted every frame")
         self.assertGreater(int(viz[:, :, :3].max()), 40)
+        from pigeon.widgets.view_circles import _zone3_clock_day_baseline_y
+
+        base = int(round(_zone3_clock_day_baseline_y()))
+        band = frame[max(0, base - 56) : base + 4, zx : zx + zw, :3].min(axis=2) > 200  # white ink
+        cols = np.where(band.any(axis=0))[0]
+        self.assertGreater(cols.size, 0, "volume over zone 6")
+        self.assertLess(abs((cols.min() + cols.max()) / 2.0 - zw / 2.0), 6.0, "centered on zone 6")
+        # Same baseline as the zone-3 clock's date: ink bottoms line up.
+        z3 = NOW_PLAYING_ZONES[3]
+        date = frame[max(0, base - 56) : base + 4, int(z3.x) : int(z3.x + z3.w), :3].min(axis=2) > 200
+        vol_bottom = int(np.where(band.any(axis=1))[0].max())
+        date_bottom = int(np.where(date.any(axis=1))[0].max())
+        self.assertLessEqual(abs(vol_bottom - date_bottom), 2)
 
     def test_zone4_eq_stays_off_beside_the_zone6_visualizer(self) -> None:
         with mock.patch.object(zone4_eq, "enabled", return_value=True):
