@@ -15,7 +15,6 @@ from pigeon.core import stage_render as _core_stage_render
 from pigeon.core import startup as _core_startup
 from pigeon.core.binding import bind_deps as _bind_deps
 from pigeon.core.binding import late as _late
-import queue
 import sys
 import threading
 
@@ -151,13 +150,16 @@ def run(ctx) -> None:
 
     _volume_rotary_fail_log_count = [0]
     _volume_rotary_ok_log_count = [0]
-    _receiver_volume_queue: queue.Queue[tuple[str, str]] = queue.Queue(maxsize=16)
+    # One replaceable volume intent per receiver — not a queue of commands.
+    from pigeon.receiver_volume import get_receiver_volume_controller
+
+    _receiver_volume_controller = get_receiver_volume_controller()
 
     _receiver_volume_worker = _bind_deps(
         _core_device_control._receiver_volume_worker,
         _clock_saver_volume=_clock_saver_volume,
         _note_volume_graphics=_note_volume_graphics,
-        _receiver_volume_queue=_receiver_volume_queue,
+        _receiver_volume_controller=_receiver_volume_controller,
         _volume_rotary_fail_log_count=_volume_rotary_fail_log_count,
         _volume_rotary_ok_log_count=_volume_rotary_ok_log_count,
         denon_vol_cache=denon_vol_cache,
@@ -177,8 +179,9 @@ def run(ctx) -> None:
 
     _queue_receiver_volume_action = _bind_deps(
         _core_device_control._queue_receiver_volume_action,
-        _receiver_volume_queue=_receiver_volume_queue,
+        _receiver_volume_controller=_receiver_volume_controller,
         avr_slot_holder=avr_slot_holder,
+        receiver_power_on_pending=receiver_power_on_pending,
     )
 
     _nudge_clock_saver_volume = _bind_deps(
