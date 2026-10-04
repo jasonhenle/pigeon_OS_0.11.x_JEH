@@ -99,6 +99,73 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(zone4_eq.params()["fMin"], zone4_eq.DEFAULT_PARAMS["fMin"])
 
 
+class InputGainTests(unittest.TestCase):
+    """Visualizer input gain: auto gain steers program loudness toward a target, plus a trim."""
+
+    SR = 48_000.0
+
+    def setUp(self) -> None:
+        self._p = _params()
+        patch = mock.patch.object(zone4_eq, "params", side_effect=lambda: self._p)
+        patch.start()
+        self.addCleanup(patch.stop)
+        zone4_eq.reset_input_gain()
+        self.addCleanup(zone4_eq.reset_input_gain)
+        self._rng = np.random.default_rng(0)
+
+    def _feed(self, rms_db: float, seconds: float) -> None:
+        amp = 10.0 ** (rms_db / 20.0)
+        for _ in range(int(seconds * 30)):
+            x = self._rng.standard_normal(1600) * amp
+            zone4_eq.feed_pcm_stereo(x, x, self.SR)
+
+    def _read_db(self) -> float:
+        x = zone4_eq.latest_samples(4800)
+        return 10.0 * float(np.log10((x * x).mean() + 1e-12))
+
+    def test_quiet_program_is_lifted_to_the_target(self) -> None:
+        self._feed(-40.0, 3.0)
+        self.assertAlmostEqual(zone4_eq.input_gain_db(), 20.0, delta=0.5)
+        self.assertAlmostEqual(self._read_db(), -20.0, delta=0.5)
+
+    def test_loud_program_is_cut_up_to_the_limit(self) -> None:
+        self._feed(-12.0, 3.0)
+        self.assertAlmostEqual(zone4_eq.input_gain_db(), -8.0, delta=0.5)
+        zone4_eq.reset_input_gain()
+        self._feed(-3.0, 3.0)
+        self.assertAlmostEqual(zone4_eq.input_gain_db(), -12.0, delta=0.01)  # inputMaxCutDb
+
+    def test_boost_is_capped(self) -> None:
+        self._feed(-58.0, 3.0)
+        self.assertAlmostEqual(zone4_eq.input_gain_db(), 30.0, delta=0.01)  # inputMaxBoostDb
+
+    def test_silence_holds_the_gain(self) -> None:
+        self._feed(-40.0, 3.0)
+        g = zone4_eq.input_gain_db()
+        self._feed(-80.0, 5.0)  # below inputGateDb: hiss between tracks
+        self.assertAlmostEqual(zone4_eq.input_gain_db(), g, delta=0.01)
+
+    def test_gain_drops_fast_and_climbs_slowly(self) -> None:
+        self._feed(-40.0, 3.0)
+        self._feed(-20.0, 1.5)  # louder: follows within a couple of rise constants
+        self.assertLess(zone4_eq.input_gain_db(), 2.0)
+        self._feed(-40.0, 1.5)  # quieter again: only part of the way back up
+        self.assertLess(zone4_eq.input_gain_db(), 8.0)
+
+    def test_trim_adds_and_auto_can_be_off(self) -> None:
+        self._feed(-40.0, 3.0)
+        self._p = _params(inputTrimDb=-6.0)
+        self.assertAlmostEqual(zone4_eq.input_gain_db(), 14.0, delta=0.5)
+        self._p = _params(inputAutoGain=False, inputTrimDb=6.0)
+        self.assertAlmostEqual(zone4_eq.input_gain_db(), 6.0)
+        self.assertAlmostEqual(self._read_db(), -34.0, delta=0.5)
+
+    def test_gain_clips_at_full_scale(self) -> None:
+        self._p = _params(inputAutoGain=False, inputTrimDb=40.0)
+        self._feed(-20.0, 0.2)
+        self.assertLessEqual(float(np.abs(zone4_eq.latest_samples(4800)).max()), 1.0)
+
+
 class RenderTests(unittest.TestCase):
     TRACK = (113, 536, 1067, 100, 13)
 

@@ -36,6 +36,17 @@ DEFAULT_PARAMS: dict[str, object] = {
     # "meters": L/R peak + RMS ladders (pigeon.zone4_meter, tuned under "meter");
     # "eq": the multi-band spectrum below.
     "visualizer": "meters",
+    # Visualizer input gain: scales the PCM every visualizer reads (zone-4
+    # meters / EQ, fullscreen presets; not the meter-face screensaver). Auto
+    # gain steers program loudness toward ``inputTargetDb``; the trim adds on top.
+    "inputAutoGain": True,
+    "inputTrimDb": 0.0,
+    "inputTargetDb": -20.0,  # program RMS the auto gain aims for (dBFS)
+    "inputMaxBoostDb": 30.0,
+    "inputMaxCutDb": 12.0,
+    "inputGateDb": -60.0,  # quieter blocks (silence, hiss) hold the gain
+    "inputRiseS": 0.5,  # loudness estimate follows louder program this fast (gain drops)
+    "inputFallS": 6.0,  # ...and quieter program this slowly (gain climbs)
     # Position → band count
     "minBands": 4,
     "maxBands": 48,
@@ -167,6 +178,42 @@ _sample_rate = 48_000.0
 _last_feed_mono = 0.0
 
 
+# Visualizer input gain (see the ``input*`` params). The ring keeps the raw
+# capture; readers get it scaled by ``input_gain_db()``.
+_agc_loud_db: float | None = None  # slow program-loudness estimate, dBFS
+_agc_db = 0.0
+
+
+def _track_input_level(x: np.ndarray, dt: float) -> None:
+    """Update the auto gain from one fed block (feeding thread)."""
+    global _agc_loud_db, _agc_db
+    p = params()
+    ms = float((x * x).mean(axis=0).max())  # louder channel
+    db = 10.0 * math.log10(ms + 1e-12)
+    if db < _f(p, "inputGateDb"):
+        return  # silence / hiss between tracks: hold
+    if _agc_loud_db is None:
+        _agc_loud_db = db
+    else:
+        tau = _f(p, "inputRiseS") if db > _agc_loud_db else _f(p, "inputFallS")
+        k = 1.0 - math.exp(-dt / tau) if tau > 0 else 1.0
+        _agc_loud_db += (db - _agc_loud_db) * k
+    want = _f(p, "inputTargetDb") - _agc_loud_db
+    _agc_db = max(-abs(_f(p, "inputMaxCutDb")), min(abs(_f(p, "inputMaxBoostDb")), want))
+
+
+def input_gain_db() -> float:
+    """Gain applied to the PCM visualizers read: auto (when on) + trim."""
+    p = params()
+    auto = _agc_db if p.get("inputAutoGain", True) else 0.0
+    return auto + _f(p, "inputTrimDb")
+
+
+def reset_input_gain() -> None:
+    global _agc_loud_db, _agc_db
+    _agc_loud_db, _agc_db = None, 0.0
+
+
 def feed_pcm_stereo(left: np.ndarray, right: np.ndarray, sample_rate: float) -> None:
     """Append L/R samples in ``[-1, 1]`` (any thread)."""
     global _ring_pos, _sample_rate, _last_feed_mono
@@ -177,6 +224,7 @@ def feed_pcm_stereo(left: np.ndarray, right: np.ndarray, sample_rate: float) -> 
     n = int(x.shape[0])
     if n < 1:
         return
+    _track_input_level(x, n / float(sample_rate))
     with _ring_lock:
         _sample_rate = float(sample_rate)
         if n >= RING_SIZE:
@@ -200,12 +248,18 @@ def feed_pcm(mono: np.ndarray, sample_rate: float) -> None:
 
 
 def _latest_samples(n: int) -> np.ndarray:
-    """Most recent ``n`` frames as ``(n, 2)``."""
+    """Most recent ``n`` frames as ``(n, 2)``, scaled by :func:`input_gain_db` (clipped to ±1)."""
     with _ring_lock:
         pos = _ring_pos
         if pos >= n:
-            return _ring[pos - n : pos].copy()
-        return np.concatenate((_ring[RING_SIZE - (n - pos) :], _ring[:pos]))
+            out = _ring[pos - n : pos].copy()
+        else:
+            out = np.concatenate((_ring[RING_SIZE - (n - pos) :], _ring[:pos]))
+    g_db = input_gain_db()
+    if abs(g_db) > 0.01:
+        out *= np.float32(10.0 ** (g_db / 20.0))
+        np.clip(out, -1.0, 1.0, out=out)
+    return out
 
 
 def latest_samples(n: int) -> np.ndarray:
