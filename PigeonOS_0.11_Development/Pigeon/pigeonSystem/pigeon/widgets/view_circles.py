@@ -5452,7 +5452,8 @@ class ViewCirclesWidget:
             z = NOW_PLAYING_ZONES[6]
             zx, zy, zw, zh = z.xywh
             rect = (int(round(zx)), int(round(zy)), int(round(zw)), int(round(zh)), 13)
-            self._zone6_visualizer().render(out, rect)
+            # No page fill: the visualizer draws over the wash / poster blur.
+            self._zone6_visualizer().render(out, rect, clear=True)
             from pigeon import visualizer_mode
             from pigeon.widgets.audio_meter_saver import program_audio_present
 
@@ -6596,6 +6597,7 @@ class ViewCirclesWidget:
             threading.Thread(
                 target=self._zone6_viz.prewarm,
                 args=(int(round(zw)), int(round(zh))),
+                kwargs={"clear": True},
                 name="pigeon-zone6-viz-prewarm",
                 daemon=True,
             ).start()

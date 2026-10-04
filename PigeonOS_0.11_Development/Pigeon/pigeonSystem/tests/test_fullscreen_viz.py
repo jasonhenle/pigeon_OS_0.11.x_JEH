@@ -173,6 +173,25 @@ class RenderTests(_Base):
             # Rounded corner: the outermost pixel keeps what was under it.
             self.assertTrue((app[y, x, :3] == 7).all())
 
+    def test_clear_render_draws_over_the_page_with_no_fill(self) -> None:
+        feed = _Feed(_sine(-10.0, 1.0))
+        page = (90, 60, 30)
+        x, y, w, h, _r = fv.ZONE6_RECT
+        for style in ("pixel_vu", "sweep_vu", "bars", "led_ladder", "rta", "dots", "bounce", "fireflies"):
+            viz = _viz_for(style)
+            out = np.empty((fv.DESIGN_H, fv.DESIGN_W, 4), np.uint8)
+            for _ in range(5):
+                feed.step()
+                out[:, :, :3] = page
+                out[:, :, 3] = 7
+                viz.render(out, fv.ZONE6_RECT, capture=False, toast=False, clear=True)
+            box = out[y : y + h, x : x + w, :3]
+            shows = np.all(box == page, axis=2)
+            self.assertGreater(float(shows.mean()), 0.2, f"{style}: page hidden under a fill")
+            self.assertGreater(float((~shows).mean()), 0.005, f"{style}: nothing drawn")
+            self.assertTrue((out[y + 1, x + 1, :3] == page).all(), style)  # corner keeps the page
+            self.assertTrue((out[5, 5] == (*page, 7)).all(), "nothing outside the zone-6 box")
+
     def test_text_switch_changes_the_art(self) -> None:
         for style, layer in (("pixel_vu", "lo"), ("arc_vu", "base"), ("sweep_vu", "base"),
                              ("led_ladder", "base"), ("rta", "base")):

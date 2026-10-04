@@ -57,6 +57,9 @@ _LAYER_CACHE = 24
 STATE_KEY = "fullscreen_viz_preset"  # app state: preset last picked with the encoder
 REMEMBER_AFTER_S = 2.0
 
+# Set on a preset copy while building alpha-matted layers (``render(clear=True)``).
+MATTE_BG_KEY = "_matte_bg"
+
 # Zone 6 on the now-playing canvas (design px); the eventual zone-6 visualizer
 # is a preset rendered into this box.
 ZONE6_RECT = (44, 34, 793, 488, 13)
@@ -1033,6 +1036,8 @@ class PixelVU(AnalogVU):
     def _cols(self, p: dict) -> tuple[tuple[int, int, int], ...]:
         pal = self.PALETTES.get(str(p.get("palette")))
         if pal:
+            if MATTE_BG_KEY in p:  # matte pass: the palette's page goes clear too
+                pal = (str(p[MATTE_BG_KEY]),) + tuple(pal[1:])
             return tuple(_bgr(c) for c in pal)
         return tuple(_bgr(p[k]) for k in ("bg", "face", "ink", "red", "cover"))
 
@@ -1112,7 +1117,14 @@ class PixelVU(AnalogVU):
         ww, hh = int(round(DESIGN_W * xf.s)), int(round(DESIGN_H * xf.s))
         up = cv2.resize(lo, (ww, hh), interpolation=cv2.INTER_NEAREST)
         H_, W_ = img.shape[:2]
-        img[y0 : min(H_, y0 + hh), x0 : min(W_, x0 + ww)] = up[: H_ - y0, : W_ - x0]
+        dst = img[y0 : min(H_, y0 + hh), x0 : min(W_, x0 + ww)]
+        src = up[: H_ - y0, : W_ - x0]
+        if MATTE_BG_KEY in p:  # no page: leave the background pixels showing through
+            keep = np.any(lo != np.array(_bg, np.uint8), axis=2).astype(np.uint8)
+            keep = cv2.resize(keep, (ww, hh), interpolation=cv2.INTER_NEAREST)[: H_ - y0, : W_ - x0]
+            cv2.copyTo(src, keep, dst)
+        else:
+            dst[:] = src
 
 
 # -- 1d. sweep VU: no needle; light travels along an arched track ------------------------
@@ -1922,6 +1934,8 @@ class FullscreenViz:
         self._work: np.ndarray | None = None
         self._mask_key: tuple | None = None
         self._mask = np.zeros((0, 0, 1), np.float32)
+        self._matte: tuple[tuple, dict[str, object]] | None = None
+        self._matte_over: tuple[tuple, dict[str, object]] | None = None
         self.last_render_ms = 0.0
 
     # -- presets / encoder ----------------------------------------------------
@@ -1986,15 +2000,57 @@ class FullscreenViz:
                 self._layers.popitem(last=False)
         return got
 
-    def prewarm(self, w: int = DESIGN_W, h: int = DESIGN_H) -> None:
-        """Build every preset's static layers for ``w×h`` (e.g. on a background thread)."""
+    def _matte_layers_for(self, p: dict, w: int, h: int) -> dict[str, object]:
+        """Layers with no page: each image layer premultiplied on black plus a
+        ``<name>_a`` alpha matte (static art built on black and on white)."""
+        black = self._layers_for(dict(p, bg="#000000", **{MATTE_BG_KEY: "#000000"}), w, h)
+        white = self._layers_for(dict(p, bg="#FFFFFF", **{MATTE_BG_KEY: "#FFFFFF"}), w, h)
+        key = (w, h, json.dumps(p, sort_keys=True, default=str))
+        if self._matte is not None and self._matte[0] == key:
+            return self._matte[1]
+        out: dict[str, object] = dict(black)
+        for name, k in black.items():
+            wh = white.get(name)
+            if isinstance(k, np.ndarray) and isinstance(wh, np.ndarray) and k.shape == (h, w, 3) == wh.shape:
+                a = 1.0 - (wh.astype(np.float32) - k.astype(np.float32)).mean(axis=2) / 255.0
+                out[name + "_a"] = np.clip(a, 0.0, 1.0)[:, :, None]
+        self._matte = (key, out)
+        self._matte_over = None
+        return out
+
+    def _over(self, L: dict[str, object], under: np.ndarray) -> dict[str, object]:
+        """``L`` with every matted image layer composited over ``under`` (cached per background)."""
+        fp = (self._matte[0] if self._matte else None, under.shape, hash(under[::8, ::8].tobytes()))
+        if self._matte_over is not None and self._matte_over[0] == fp:
+            return self._matte_over[1]
+        u = under.astype(np.float32)
+        out = dict(L)
+        for name, a in L.items():
+            if name.endswith("_a") and isinstance(a, np.ndarray):
+                lay = L[name[:-2]].astype(np.float32)  # type: ignore[union-attr]
+                out[name[:-2]] = np.clip(u * (1.0 - a) + lay, 0, 255).astype(np.uint8)
+        self._matte_over = (fp, out)
+        return out
+
+    def prewarm(self, w: int = DESIGN_W, h: int = DESIGN_H, *, clear: bool = False) -> None:
+        """Build every preset's static layers for ``w×h`` (e.g. on a background thread).
+
+        ``clear`` builds the black / white pair :meth:`render` mattes with ``clear=True``."""
         for p in presets():
-            self._layers_for(p, w, h)
+            if clear:
+                for bg in ("#000000", "#FFFFFF"):
+                    self._layers_for(dict(p, bg=bg, **{MATTE_BG_KEY: bg}), w, h)
+            else:
+                self._layers_for(p, w, h)
 
     # -- frame --------------------------------------------------------------------
     def render(self, out: np.ndarray, rect: tuple[int, ...] | None = None, *, capture: bool = True,
-               toast: bool = True) -> None:
-        """Draw the active preset into ``out`` (BGR or BGRA), or into ``rect = (x, y, w, h[, r])``."""
+               toast: bool = True, clear: bool = False) -> None:
+        """Draw the active preset into ``out`` (BGR or BGRA), or into ``rect = (x, y, w, h[, r])``.
+
+        ``clear``: no page fill — the art draws straight over what ``rect`` already
+        holds (``rect`` must lie inside ``out``).
+        """
         t_start = time.perf_counter()
         p = self.preset()
         style = STYLE_IMPLS[str(p["style"])]
@@ -2012,6 +2068,24 @@ class FullscreenViz:
             x, y, w, h = (int(v) for v in rect[:4])
             r = int(rect[4]) if len(rect) > 4 else 0
         if w < 16 or h < 16:
+            return
+        if clear:
+            if x < 0 or y < 0 or x + w > ow or y + h > oh:
+                return
+            dst = out[y : y + h, x : x + w]
+            L = self._over(self._matte_layers_for(p, w, h), np.ascontiguousarray(dst[:, :, :3]))
+            img = L["base"].copy()  # type: ignore[union-attr]
+            # Same black page the matte's ``base`` layer was built on.
+            style.draw(img, Xf(w, h), dict(p, bg="#000000", **{MATTE_BG_KEY: "#000000"}), self.analysis, L)
+            if toast and now < self._toast_until:
+                self._draw_toast(img, w, h)
+            dst[:, :, :3] = img
+            if dst.shape[2] >= 4:
+                ink = (L["base_a"][:, :, 0] * 255.0).astype(np.uint8)  # type: ignore[index]
+                dst[:, :, 3] = np.maximum(dst[:, :, 3], ink)
+            if self._save_at is not None and now >= self._save_at:
+                self._save_index()
+            self.last_render_ms = (time.perf_counter() - t_start) * 1000.0
             return
         direct = rect is None and out.ndim == 3 and out.shape[2] == 3 and out.flags.c_contiguous
         if direct:
