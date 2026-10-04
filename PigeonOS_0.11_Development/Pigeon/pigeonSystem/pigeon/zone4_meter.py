@@ -46,6 +46,7 @@ COMMON_DEFAULTS: dict[str, object] = {
 
 SWEEP_DEFAULTS: dict[str, object] = {
     "bandW": 22.0,  # arc band thickness, px
+    "track": "#4D4D4D",  # groove gray, matches the volume ring's unfilled track
 }
 
 LADDER_DEFAULTS: dict[str, object] = {
