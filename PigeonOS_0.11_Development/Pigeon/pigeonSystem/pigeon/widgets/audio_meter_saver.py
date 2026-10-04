@@ -1851,7 +1851,7 @@ def _capture_loop_body(
                     f"R rms={sample.rms_r:.5f} env={sample.env_r:.5f} peak={peak_r:.5f} "
                     f"cap={sample.dbfs_r:.1f} cal={sample.cal_dbfs_r:.1f} "
                     f"fill={sample.fill_r:.3f} seg={sample.seg_r} | "
-                    f"lfe={sample.lfe_fill:.3f}"
+                    f"lfe={sample.lfe_fill:.3f} | viz_gain={_zone4_eq.input_gain_db():+.1f}dB"
                 )
         err = b""
         proc = _proc

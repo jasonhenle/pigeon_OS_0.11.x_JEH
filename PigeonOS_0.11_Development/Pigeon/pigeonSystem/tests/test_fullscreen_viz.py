@@ -49,6 +49,8 @@ class _Base(unittest.TestCase):
         patches = [
             mock.patch.object(fv, "config_path", lambda: Path(self._tmp.name) / fv.CONFIG_NAME),
             mock.patch.object(zone4_eq, "want_mic_capture", lambda: None),
+            # Metering checks read calibrated levels: no visualizer input gain.
+            mock.patch.object(zone4_eq, "input_gain_db", lambda: 0.0),
         ]
         for p in patches:
             p.start()
