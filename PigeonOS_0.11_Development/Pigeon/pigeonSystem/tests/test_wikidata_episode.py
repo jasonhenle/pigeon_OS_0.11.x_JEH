@@ -179,6 +179,14 @@ class PickSeriesTests(unittest.TestCase):
         with later:
             self.assertIsNone(self.pick())
 
+    def test_episode_series_hit_is_flagged_without_mutating_search_row(self) -> None:
+        row = {"id": 2316, "name": "The Office"}
+        item, kind = self.tp._mark_episode_series((row, "tv"))
+        self.assertTrue(item[self.tp.EPISODE_SERIES_FLAG])
+        self.assertEqual(kind, "tv")
+        self.assertNotIn(self.tp.EPISODE_SERIES_FLAG, row)
+        self.assertEqual(self.tp._mark_episode_series((None, None)), (None, None))
+
     def test_only_candidate_on_service_wins(self) -> None:
         cands = [{"name": "The Office", "tmdb_tv_id": 2316}, {"name": "ER", "tmdb_tv_id": 4588}]
         self.assertEqual(

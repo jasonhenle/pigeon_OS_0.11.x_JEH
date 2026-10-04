@@ -2506,6 +2506,20 @@ def clear_recent_episode_series() -> None:
     _RECENT_EPISODE_SERIES.clear()
 
 
+# Set on a series hit that came from an episode title (``Employee Transfer`` → The
+# Office). Its title shares no words with the query, so the literal match tier would
+# be 0 and the caller would reject it as a loose match.
+EPISODE_SERIES_FLAG = "_pigeon_episode_series"
+
+
+def _mark_episode_series(
+    hit: tuple[dict | None, MediaKind | None],
+) -> tuple[dict | None, MediaKind | None]:
+    if hit[0] is None:
+        return hit
+    return {**hit[0], EPISODE_SERIES_FLAG: True}, hit[1]
+
+
 def _pick_wikidata_episode_series(
     candidates: list[dict],
     *,
@@ -2703,14 +2717,14 @@ def search_best_media_with_poster(
         )
         if ep[0] is not None:
             _remember_episode_series(hint, ep)
-            return ep
+            return _mark_episode_series(ep)
     else:
         swap = _episode_series_on_service_instead(
             raw, best, providers, require_poster=True, service=hint
         )
         if swap is not None:
             _remember_episode_series(hint, swap)
-            return swap
+            return _mark_episode_series(swap)
     return best
 
 
@@ -2766,14 +2780,14 @@ def search_best_media(
         )
         if ep[0] is not None:
             _remember_episode_series(hint, ep)
-            return ep
+            return _mark_episode_series(ep)
     else:
         swap = _episode_series_on_service_instead(
             raw, best, providers, require_poster=False, service=hint
         )
         if swap is not None:
             _remember_episode_series(hint, swap)
-            return swap
+            return _mark_episode_series(swap)
     return best
 
 
@@ -3482,6 +3496,13 @@ def apply_tmdb_movie_query(
         )
 
     match_tier = int(_match_rank(q, item)[0])
+    canon_q = canonical_tv_display_name_for_search_query(q)
+    if canon_q:
+        # ``SNL`` shares no words with ``Saturday Night Live``; rank the known full name too.
+        match_tier = max(match_tier, int(_match_rank(canon_q, item)[0]))
+    if item.get(EPISODE_SERIES_FLAG):
+        # The episode → series lookup vouched for this show; trust it like an exact title.
+        match_tier = 5
 
     display_title = _display_title(item, kind)
     # TMDb may classify an SNL sketch row as a **movie**; still normalize the on-screen title.
