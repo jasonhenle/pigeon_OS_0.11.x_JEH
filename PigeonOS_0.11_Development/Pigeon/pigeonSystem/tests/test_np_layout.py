@@ -1735,6 +1735,50 @@ class TtCountdownTickTests(unittest.TestCase):
         np.testing.assert_array_equal(canvas[rows, cols], ref_canvas[rows, cols])
 
 
+class Zone6PigeonLogoFallbackTests(unittest.TestCase):
+    """No TT and no poster: zone 6 shows the pigeon logo, not the typed title."""
+
+    def _widget(self, mode: str):
+        from pigeon.widgets.view_circles import ViewCirclesWidget
+
+        assets = Path(__file__).resolve().parents[2] / "pigeonAssets"
+        w = ViewCirclesWidget(assets_dir=assets)
+        zones = ("tt_countdown_16x9", "", "volume", "cast_info", "status_bar")
+        w._assignments = lambda: zones  # type: ignore[method-assign]
+        w.update_state(
+            progress=0.1,
+            elapsed_text="2:00",
+            remaining_text="-21:40",
+            volume_text="-22.5 dB",
+            has_now_playing=True,
+            content_active=True,
+            content_mode=mode,
+            tt_title="Baby Shower",
+        )
+        return w
+
+    @staticmethod
+    def _logo_blue_px(patch) -> int:
+        # Logo outline #4b9eec in BGR.
+        b, g, r, a = (patch[:, :, i].astype(int) for i in range(4))
+        near = (abs(b - 0xEC) < 24) & (abs(g - 0x9E) < 24) & (abs(r - 0x4B) < 24) & (a > 200)
+        return int(near.sum())
+
+    def test_video_without_art_draws_logo(self) -> None:
+        from pigeon.np_layout import NOW_PLAYING_ZONES
+
+        patch = self._widget("video")._tt_countdown_tt_patch(NOW_PLAYING_ZONES[6], wide=True)
+        assert patch is not None
+        self.assertGreater(self._logo_blue_px(patch), 1000)
+
+    def test_music_keeps_typed_title(self) -> None:
+        from pigeon.np_layout import NOW_PLAYING_ZONES
+
+        patch = self._widget("music")._tt_countdown_tt_patch(NOW_PLAYING_ZONES[6], wide=True)
+        if patch is not None:
+            self.assertEqual(self._logo_blue_px(patch), 0)
+
+
 class SixteenByNinePosterTests(unittest.TestCase):
     def test_youtube_and_landscape_art_request_16x9(self) -> None:
         from pigeon.np_layout import wants_16x9_poster
