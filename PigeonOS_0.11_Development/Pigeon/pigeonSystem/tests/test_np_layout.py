@@ -495,6 +495,45 @@ class NowPlayingFrameTests(unittest.TestCase):
         self.assertGreater(int(inner[3]), 200)
         self.assertLess(int(inner[:3].max()), 40)
 
+    def test_seconds_blend_matches_full_clock_render(self) -> None:
+        from datetime import datetime
+
+        from pigeon.widgets.view_circles import (
+            _apply_standalone_clock_ticks,
+            _finish_widget_raster,
+            _now_playing_widget_path,
+            _rasterize_named_widget,
+            _svg_tree_from_path,
+            np_theme_from_settings,
+        )
+
+        assets = Path(__file__).resolve().parents[2] / "pigeonAssets"
+        theme = np_theme_from_settings()
+        z = NOW_PLAYING_ZONES[1]
+        w, h = int(z.w), int(z.h)
+        path = _now_playing_widget_path(assets, "clock", 1)
+        for when in (
+            datetime(2026, 8, 24, 14, 22, 7),
+            datetime(2026, 8, 24, 14, 23, 30),
+            datetime(2026, 8, 24, 3, 44, 59),
+        ):
+            root = _svg_tree_from_path(path)
+            _apply_standalone_clock_ticks(root, when, theme=theme)
+            full = _finish_widget_raster(root, "clock", dest_w=w, dest_h=h)
+            blended = _rasterize_named_widget(
+                assets_dir=assets,
+                widget_key="clock",
+                dest_w=w,
+                dest_h=h,
+                now=when,
+                theme=theme,
+                zone=1,
+            )
+            assert blended is not None
+            off = np.abs(blended.astype(int) - full.astype(int)).max(axis=2) > 40
+            # Only antialiasing along the moving seconds edge may differ.
+            self.assertLess(int(off.sum()), 80, msg=str(when))
+
     def test_minute_ticks_are_half_opaque(self) -> None:
         from datetime import datetime
 

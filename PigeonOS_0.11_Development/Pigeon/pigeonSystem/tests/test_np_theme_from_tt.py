@@ -1,4 +1,4 @@
-"""Now-playing UI color: TMDb TT, then poster, then the settings color — never the backdrop."""
+"""Now-playing UI color: TMDb TT, then poster (album art in music), then the settings color — never the backdrop."""
 
 from __future__ import annotations
 
@@ -67,7 +67,7 @@ class NpThemeFromTtTests(unittest.TestCase):
         w.set_backdrop_bgr(np.full((90, 160, 3), (0, 200, 0), dtype=np.uint8))
         self.assertEqual(w._effective_np_theme().ui_hex, np_theme_from_settings().ui_hex)
 
-    def test_music_album_art_does_not_set_color(self) -> None:
+    def _music(self, **state) -> ViewCirclesWidget:
         w = ViewCirclesWidget(assets_dir=_ASSETS)
         w.update_state(
             progress=0.3,
@@ -76,8 +76,22 @@ class NpThemeFromTtTests(unittest.TestCase):
             volume_text="-25.0 dB",
             content_active=True,
             content_mode="music",
+            **state,
+        )
+        return w
+
+    def test_music_album_art_sets_color(self) -> None:
+        # Blue album art; a leftover red video TT is ignored in music.
+        w = self._music(
+            tt_bgra=_logo((20, 20, 220)),
             poster_bgra=np.full((90, 90, 3), (220, 60, 20), dtype=np.uint8),
         )
+        b, g, r = w._effective_np_theme().ui_bgr
+        self.assertGreater(b, 150)
+        self.assertLess(r, 110)
+
+    def test_colorless_album_art_keeps_settings_color(self) -> None:
+        w = self._music(poster_bgra=np.full((90, 90, 3), 90, dtype=np.uint8))
         self.assertEqual(w._effective_np_theme().ui_hex, np_theme_from_settings().ui_hex)
 
 if __name__ == "__main__":

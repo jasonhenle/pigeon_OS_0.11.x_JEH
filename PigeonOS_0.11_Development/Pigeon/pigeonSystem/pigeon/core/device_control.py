@@ -7,7 +7,6 @@ takes the app state it used to close over as keyword-only arguments;
 
 from __future__ import annotations
 
-import queue
 import time
 from pigeon.app_state import read_last_receiver
 from pigeon.app_state import read_saved_av_receiver
@@ -130,25 +129,27 @@ def _schedule_hdmi_frame_check_from_poll(*, _on_hdmi_frame_checked, apple_tv_aut
         apple_tv_auto_state["hdmi_check_in_flight"] = False
 
 
-def _queue_receiver_volume_action(action: str, *, _receiver_volume_queue, avr_slot_holder) -> bool:
+def _queue_receiver_volume_action(action: str, *, _receiver_volume_controller, avr_slot_holder, receiver_power_on_pending) -> bool:
+    """Fold one knob action into the controller's pending intent (no I/O)."""
     row = avr_slot_holder[0]
     if not row:
         return False
     host = str(row.get("address") or row.get("identifier") or "").strip()
     if not host:
         return False
+    return _receiver_volume_controller.submit(
+        host, action, wake=bool(receiver_power_on_pending[0])
+    )
+
+
+def _receiver_readout_superseded(line: str) -> bool:
+    """True while the knob is driving to a level ``line`` has not reached."""
     try:
-        _receiver_volume_queue.put_nowait((host, action))
-    except queue.Full:
-        try:
-            _receiver_volume_queue.get_nowait()
-        except queue.Empty:
-            pass
-        try:
-            _receiver_volume_queue.put_nowait((host, action))
-        except queue.Full:
-            pass
-    return True
+        from pigeon.receiver_volume import receiver_volume_readout_superseded
+
+        return receiver_volume_readout_superseded(line)
+    except Exception:
+        return False
 
 
 def _note_volume_source_lines(*, telnet_line: str = "", http_line: str = "", denon_vol_cache) -> None:
@@ -505,6 +506,8 @@ def _commit_receiver_volume(vol: str, *, _clock_saver_volume, _note_volume_graph
             return False
     except Exception:
         pass
+    if _receiver_readout_superseded(line):
+        return False
     prev = ""
     try:
         prev = str(denon_vol_cache.get("effective") or "")
@@ -1141,82 +1144,62 @@ def _apple_tv_auto_poll_tick(*, APPLE_TV_FAIL_POLL_MAX_MS, APPLE_TV_IDLE_POLL_MS
     threading.Thread(target=worker, daemon=True).start()
 
 
-def _receiver_volume_worker(*, _clock_saver_volume, _note_volume_graphics, _receiver_volume_queue, _volume_rotary_fail_log_count, _volume_rotary_ok_log_count, denon_vol_cache, receiver_overlay_state, receiver_power_on_pending, receiver_standby_holder, receiver_volume_cmd_busy, render_once, root) -> None:
-    while True:
-        host, action = _receiver_volume_queue.get()
-        burst = [action]
-        while True:
+def _receiver_volume_worker(*, _clock_saver_volume, _note_volume_graphics, _receiver_volume_controller, _volume_rotary_fail_log_count, _volume_rotary_ok_log_count, denon_vol_cache, receiver_overlay_state, receiver_power_on_pending, receiver_standby_holder, receiver_volume_cmd_busy, render_once, root) -> None:
+    """Run the receiver volume controller; paint confirmed AVR levels on Tk."""
+
+    def on_busy(busy: bool) -> None:
+        receiver_volume_cmd_busy[0] = bool(busy)
+
+    def on_confirmed(_host: str, v: str) -> None:
+        def _apply_confirmed_volume() -> None:
             try:
-                _h, nxt = _receiver_volume_queue.get_nowait()
-            except queue.Empty:
-                break
-            burst.append(nxt)
-        receiver_volume_cmd_busy[0] = True
-        vol = ""
-        try:
-            from pigeon.receiver_denon import (
-                apply_denon_master_volume,
-                coalesce_receiver_volume_actions,
-            )
-
-            steps, mutes = coalesce_receiver_volume_actions(burst)
-            ok, msg, vol = apply_denon_master_volume(
-                host, steps=steps, mute_toggles=mutes, timeout=4.0
-            )
-            if ok:
-                receiver_standby_holder[0] = False
-                receiver_power_on_pending[0] = False
-                try:
-                    from pigeon.runtime_state import update_receiver_runtime
-
-                    update_receiver_runtime(standby=False, reachable=True)
-                except Exception:
-                    pass
-        except Exception as exc:
-            ok, msg = False, str(exc)
-        finally:
-            receiver_volume_cmd_busy[0] = False
-        if ok and vol:
-            confirmed = vol
-
-            def _apply_confirmed_volume(v: str = confirmed) -> None:
-                try:
-                    denon_vol_cache["effective"] = v
-                    denon_vol_cache["np_hold"] = v
-                except NameError:
-                    pass
-                try:
-                    receiver_overlay_state["volume"] = v
-                except NameError:
-                    pass
-                try:
-                    _clock_saver_volume.remember(v, source="poll")
-                    _note_volume_graphics(v)
-                except Exception:
-                    pass
-                try:
-                    render_once()
-                except Exception:
-                    pass
-
+                denon_vol_cache["effective"] = v
+                denon_vol_cache["np_hold"] = v
+            except NameError:
+                pass
             try:
-                root.after(0, _apply_confirmed_volume)
+                receiver_overlay_state["volume"] = v
+            except NameError:
+                pass
+            try:
+                _clock_saver_volume.remember(v, source="poll")
+                _note_volume_graphics(v)
             except Exception:
                 pass
+            try:
+                render_once()
+            except Exception:
+                pass
+
+        try:
+            root.after(0, _apply_confirmed_volume)
+        except Exception:
+            pass
+
+    def on_result(_host: str, ok: bool, msg: str) -> None:
         if ok:
+            receiver_standby_holder[0] = False
+            receiver_power_on_pending[0] = False
+            try:
+                from pigeon.runtime_state import update_receiver_runtime
+
+                update_receiver_runtime(standby=False, reachable=True)
+            except Exception:
+                pass
             if _volume_rotary_ok_log_count[0] < 8:
-                sys.stderr.write(
-                    f"pigeon: rotary_volume_gpio: receiver {burst!r}: {msg}\n"
-                )
+                sys.stderr.write(f"pigeon: rotary_volume_gpio: receiver: {msg}\n")
                 sys.stderr.flush()
                 _volume_rotary_ok_log_count[0] += 1
-            continue
+            return
         if _volume_rotary_fail_log_count[0] < 16:
-            sys.stderr.write(
-                f"pigeon: rotary_volume_gpio: receiver {burst!r} failed: {msg}\n"
-            )
+            sys.stderr.write(f"pigeon: rotary_volume_gpio: receiver failed: {msg}\n")
             sys.stderr.flush()
             _volume_rotary_fail_log_count[0] += 1
+
+    _receiver_volume_controller.on_busy = on_busy
+    _receiver_volume_controller.on_confirmed = on_confirmed
+    _receiver_volume_controller.on_result = on_result
+    _receiver_volume_controller.run_forever()
 
 
 def _receiver_volume_poll_tick(*, RECEIVER_VOLUME_POLL_MS, _PIGEON_EXT, _bind_receiver_volume_hub, _quick_receiver_volume_poll, _receiver_volume_poll_tick, receiver_http_host, root) -> None:
@@ -1461,6 +1444,12 @@ def _receiver_poll_tick(*, RECEIVER_POLL_MS, _PIGEON_EXT, _bind_receiver_volume_
                 receiver_overlay_state["volume"] = ""
             receiver_http_host["host"] = _slot_adr
             denon_vol_cache["bound_host"] = _slot_adr
+            try:
+                from pigeon.receiver_volume import reset_receiver_volume
+
+                reset_receiver_volume(_slot_adr)
+            except Exception:
+                pass
     host = str(receiver_http_host.get("host") or "").strip()
     if not host:
         return
@@ -1492,7 +1481,9 @@ def _receiver_poll_tick(*, RECEIVER_POLL_MS, _PIGEON_EXT, _bind_receiver_volume_
         receiver_overlay_state["incoming"] = new_in
         receiver_overlay_state["config"] = new_cf
         saver_up = bool(_clock_saver_for_compose(time.monotonic()) or clock_saver_force_on[0])
-        stale_poll = _clock_saver_volume.is_stale_poll(new_vol)
+        stale_poll = _clock_saver_volume.is_stale_poll(
+            new_vol
+        ) or _receiver_readout_superseded(new_vol)
         if (new_vol or not saver_up) and not stale_poll:
             receiver_overlay_state["volume"] = new_vol
         if not stale_poll:
@@ -1711,8 +1702,9 @@ def _receiver_poll_tick(*, RECEIVER_POLL_MS, _PIGEON_EXT, _bind_receiver_volume_
             try:
                 # Only ignore a poll that is still the pre-knob level.
                 # A new AVR readout (remote, knob, or HEOS) always wins.
-                accept_vol = not _clock_saver_volume.is_stale_poll(
-                    denon_vol_effective
+                accept_vol = not (
+                    _clock_saver_volume.is_stale_poll(denon_vol_effective)
+                    or _receiver_readout_superseded(denon_vol_effective)
                 )
             except Exception:
                 accept_vol = True

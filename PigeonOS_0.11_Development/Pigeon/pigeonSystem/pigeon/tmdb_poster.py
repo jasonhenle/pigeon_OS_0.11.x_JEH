@@ -2510,11 +2510,18 @@ def _episode_title_series_fallback(
         hinted = None
     if not hinted:
         try:
-            from pigeon.wikidata_episode import series_name_from_wikidata_episode_title
+            from pigeon.wikidata_episode import series_from_wikidata_episode_title
 
-            hinted = series_name_from_wikidata_episode_title(q)
+            wd = series_from_wikidata_episode_title(q)
         except Exception:
-            hinted = None
+            wd = None
+        if wd:
+            hinted = str(wd.get("name") or "") or None
+            # Wikidata's TMDb id pins the exact series (The Office US vs UK).
+            if wd.get("tmdb_tv_id"):
+                detail = _tmdb_tv_detail(int(wd["tmdb_tv_id"]))
+                if detail is not None and (not require_poster or detail.get("poster_path")):
+                    return detail, "tv"
     if hinted and not is_degenerate_tmdb_query(hinted):
         if require_poster:
             hit = search_tv_best_with_poster(hinted, forgiving=True, kids_bias=False)
@@ -2524,6 +2531,30 @@ def _episode_title_series_fallback(
             if not require_poster or hit.get("poster_path"):
                 return hit, "tv"
     return None, None
+
+
+def _episode_series_on_service_instead(
+    raw: str,
+    best: tuple[dict | None, MediaKind | None],
+    providers: frozenset[int],
+    *,
+    require_poster: bool,
+) -> tuple[dict | None, MediaKind | None] | None:
+    """
+    Swap a title-search hit that is **not** on the foreground service for the series an
+    episode title belongs to, when that series **is** on the service.
+
+    Peacock reports only the episode line (``Business Ethics``); TMDb title search then
+    lands on an unrelated same-named film that ranks as a strong match.
+    """
+    if not providers or best[0] is None:
+        return None
+    if _service_availability_score(best[0], best[1], providers):
+        return None
+    ep = _episode_title_series_fallback(raw, require_poster=require_poster)
+    if ep[0] is None or not _service_availability_score(ep[0], ep[1], providers):
+        return None
+    return ep
 
 
 # Back-compat alias (older call sites / docs).
@@ -2596,6 +2627,10 @@ def search_best_media_with_poster(
         ep = _episode_title_series_fallback(raw, require_poster=True)
         if ep[0] is not None:
             return ep
+    else:
+        swap = _episode_series_on_service_instead(raw, best, providers, require_poster=True)
+        if swap is not None:
+            return swap
     return best
 
 
@@ -2649,6 +2684,10 @@ def search_best_media(
         ep = _episode_title_series_fallback(raw, require_poster=False)
         if ep[0] is not None:
             return ep
+    else:
+        swap = _episode_series_on_service_instead(raw, best, providers, require_poster=False)
+        if swap is not None:
+            return swap
     return best
 
 

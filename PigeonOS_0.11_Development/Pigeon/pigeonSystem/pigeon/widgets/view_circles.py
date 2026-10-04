@@ -1978,6 +1978,89 @@ def _prepare_status_bar_svg(root: ET.Element) -> None:
 
 _NAMED_WIDGET_CACHE: dict[tuple[object, ...], np.ndarray] = {}
 _NAMED_WIDGET_CACHE_MAX = 64
+_CLOCK_SECONDS_LAYERS: dict[tuple[object, ...], tuple[np.ndarray, ...]] = {}
+_CLOCK_SECONDS_LAYERS_MAX = 4
+
+
+def _finish_widget_raster(
+    root: ET.Element, widget_key: str, *, dest_w: int, dest_h: int
+) -> np.ndarray:
+    bgra = _rasterize_svg_tree(root, dest_w=dest_w, dest_h=dest_h)
+    bgra = _decanvas_white_bgra(bgra)
+    if widget_key == "clock":
+        bgra = _punch_clock_open_ring_white(bgra)
+    return bgra
+
+
+def _clock_seconds_layers(
+    path: Path, *, dest_w: int, dest_h: int, theme: _NpTheme, odd_minute: bool
+) -> tuple[np.ndarray, ...]:
+    """Seconds-ring pixels with every tick flipped vs none, plus each pixel's angle.
+
+    Only the outer ring (seconds ticks + accent wedge) changes within a
+    minute, and only its colors depend on the minute's parity, so these are
+    rasterized once per size / theme / parity.
+    """
+    key = (str(path), int(dest_w), int(dest_h), theme.cache_key, bool(odd_minute))
+    hit = _CLOCK_SECONDS_LAYERS.get(key)
+    if hit is not None:
+        return hit
+    ref = datetime(2000, 1, 1, 12, 1 if odd_minute else 2)
+
+    def render(second: int, wedge_idx: int | None) -> np.ndarray:
+        root = _svg_tree_from_path(path)
+        _apply_standalone_clock_ticks(root, ref.replace(second=second), theme=theme)
+        if wedge_idx is None:
+            _remove_by_key(root, "clock_exterior_seconds_fill")
+        else:
+            _apply_exterior_seconds_fill(root, None, sec_idx=wedge_idx, theme=theme)
+        return _finish_widget_raster(root, "clock", dest_w=dest_w, dest_h=dest_h)
+
+    # Tick 60 never flips (``:00`` resets the ring), but the wedge reaches it.
+    flipped = render(59, 60)
+    unflipped = render(0, None)
+    sx = float(dest_w) / CLOCK_VIEW_W
+    sy = float(dest_h) / CLOCK_VIEW_H
+    yy, xx = np.ogrid[:dest_h, :dest_w]
+    # The seconds live on the outer ring; keep minute ticks touching its inner edge.
+    on_ring = np.hypot((xx + 0.5) / sx - CLOCK_LOCAL_CX, (yy + 0.5) / sy - CLOCK_LOCAL_CY) >= (
+        _CLOCK_MIDDLE_ACCENT_R - 1.0
+    )
+    ys, xs = np.nonzero(np.any(flipped != unflipped, axis=2) & on_ring)
+    dx = xs + 0.5 - CLOCK_LOCAL_CX * sx
+    dy = ys + 0.5 - CLOCK_LOCAL_CY * sy
+    # Degrees clockwise from 12 o'clock, and pixels per degree at that radius.
+    deg = np.degrees(np.arctan2(dx, -dy)) % 360.0
+    px_per_deg = np.hypot(dx, dy) * (math.pi / 180.0)
+    layers = (
+        ys,
+        xs,
+        deg.astype(np.float32),
+        px_per_deg.astype(np.float32),
+        flipped[ys, xs].astype(np.float32),
+        unflipped[ys, xs].astype(np.float32),
+    )
+    while len(_CLOCK_SECONDS_LAYERS) >= _CLOCK_SECONDS_LAYERS_MAX:
+        _CLOCK_SECONDS_LAYERS.pop(next(iter(_CLOCK_SECONDS_LAYERS)))
+    _CLOCK_SECONDS_LAYERS[key] = layers
+    return layers
+
+
+def _blend_clock_seconds(
+    face: np.ndarray, *, path: Path, now: datetime, theme: _NpTheme
+) -> np.ndarray:
+    """``face`` (the clock at ``:00``) with the seconds ring advanced to ``now``."""
+    h, w = face.shape[:2]
+    ys, xs, deg, px_per_deg, flipped, unflipped = _clock_seconds_layers(
+        path, dest_w=w, dest_h=h, theme=theme, odd_minute=bool(now.minute % 2)
+    )
+    edge = 6.0 * max(1, min(59, int(now.second)))
+    # Ticks and wedge both span 12 o'clock → ``edge``; antialias both ends.
+    t = np.clip(np.minimum(deg, edge - deg) * px_per_deg + 0.5, 0.0, 1.0)[:, None]
+    out = face.copy()
+    out[ys, xs] = (unflipped + (flipped - unflipped) * t + 0.5).astype(np.uint8)
+    return out
+
 
 
 def _rasterize_named_widget(
@@ -1991,13 +2074,29 @@ def _rasterize_named_widget(
     zone: int | None = None,
     include_play_overlay: bool = True,
     include_clock_ticks: bool | None = None,
-    freeze_seconds: bool = False,
 ) -> np.ndarray | None:
     path = _now_playing_widget_path(assets_dir, widget_key, zone)
     if not path.is_file():
         return None
     paint_ticks = widget_key == "clock" and include_clock_ticks is not False
-    hold_seconds = bool(paint_ticks and freeze_seconds)
+    if paint_ticks and now.second:
+        # Rasterizing the clock SVG costs ~100 ms on the Pi, enough to hitch
+        # VU / visualizers if done every second. Rasterize the face once a
+        # minute and blend just the seconds ring on top each second.
+        face = _rasterize_named_widget(
+            assets_dir=assets_dir,
+            widget_key=widget_key,
+            dest_w=dest_w,
+            dest_h=dest_h,
+            now=now.replace(second=0, microsecond=0),
+            theme=theme,
+            zone=zone,
+            include_play_overlay=include_play_overlay,
+            include_clock_ticks=include_clock_ticks,
+        )
+        if face is None:
+            return None
+        return _blend_clock_seconds(face, path=path, now=now, theme=theme)
     h12 = now.hour % 12
     if h12 == 0:
         h12 = 12
@@ -2012,7 +2111,6 @@ def _rasterize_named_widget(
         bool(paint_ticks),
         h12 if paint_ticks else -1,
         int(now.minute) if paint_ticks else -1,
-        -1 if hold_seconds else (int(now.second) if paint_ticks else -1),
     )
     cached = _NAMED_WIDGET_CACHE.get(cache_key)
     if cached is not None:
@@ -2020,8 +2118,7 @@ def _rasterize_named_widget(
     root = _svg_tree_from_path(path)
     if widget_key == "clock":
         if paint_ticks:
-            tick_now = now.replace(second=0, microsecond=0) if hold_seconds else now
-            _apply_standalone_clock_ticks(root, tick_now, theme=theme)
+            _apply_standalone_clock_ticks(root, now, theme=theme)
         else:
             _apply_clock_black_rings(root, zone=None)
             _detach_clock_tick_groups(root, zone=None)
@@ -2043,10 +2140,7 @@ def _rasterize_named_widget(
         if overlay is None:
             overlay = _find_by_id(root, "_50_percent_overlay")
         _detach_element(root, overlay)
-    bgra = _rasterize_svg_tree(root, dest_w=dest_w, dest_h=dest_h)
-    bgra = _decanvas_white_bgra(bgra)
-    if widget_key == "clock":
-        bgra = _punch_clock_open_ring_white(bgra)
+    bgra = _finish_widget_raster(root, widget_key, dest_w=dest_w, dest_h=dest_h)
     while len(_NAMED_WIDGET_CACHE) >= _NAMED_WIDGET_CACHE_MAX:
         _NAMED_WIDGET_CACHE.pop(next(iter(_NAMED_WIDGET_CACHE)))
     _NAMED_WIDGET_CACHE[cache_key] = bgra
@@ -4376,19 +4470,21 @@ class ViewCirclesWidget:
         return bg
 
     def _theme_sources(self) -> tuple[np.ndarray | None, np.ndarray | None]:
-        """``(tt, poster)`` for the UI color — TMDb art only.
+        """``(tt, poster)`` for the UI color — TMDb art, or album art in music.
 
-        Music album art and YouTube thumbnails are not TMDb art, so they never
-        set the color.
+        Music has no TT, so album art (held as the poster) is the only source;
+        a stale video TT must not color it. YouTube thumbnails never set it.
         """
-        if self.content_mode == _CONTENT_MODE_MUSIC or self._state.is_youtube:
+        if self._state.is_youtube:
             return None, None
-        tt = self._tt_bgra
-        if tt is not None and getattr(tt, "size", 0) == 0:
-            tt = None
         poster = self._poster_bgra
         if poster is not None and getattr(poster, "size", 0) == 0:
             poster = None
+        if self.content_mode == _CONTENT_MODE_MUSIC:
+            return None, poster
+        tt = self._tt_bgra
+        if tt is not None and getattr(tt, "size", 0) == 0:
+            tt = None
         return tt, poster
 
     def _effective_np_theme(self) -> _NpTheme:
@@ -4547,10 +4643,6 @@ class ViewCirclesWidget:
             return True
         if zone6_span_widget(keys) in ("clock", "clock_saver", "pausesaver"):
             return True
-        # VU already paints at 30 Hz. Rebuilding the analog clock
-        # SVG every wall-clock second hitchs those widgets for ~100 ms.
-        if self._live_audio_widgets_on():
-            return False
         return any(k in ("clock", "clock_16x9") for k in keys)
 
     def _ticking_sig(self) -> tuple[object, ...]:
@@ -4584,7 +4676,6 @@ class ViewCirclesWidget:
             now=now,
             theme=self._effective_np_theme(),
             zone=int(clock_zone),
-            freeze_seconds=self._live_audio_widgets_on(),
         )
         if patch is not None and patch.size:
             _paste_patch_bgra(out, patch, zx, zy)
