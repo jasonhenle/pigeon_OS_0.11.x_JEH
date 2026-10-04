@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from unittest import mock
 import sys
 import unittest
 from pathlib import Path
@@ -186,6 +187,22 @@ class LegacyMarkTests(unittest.TestCase):
         self.assertFalse(
             is_native_design_frame(np.zeros((LEGACY_DESIGN_H, LEGACY_DESIGN_W, 3), dtype=np.uint8))
         )
+
+
+_ZONE4_ENV = None
+
+
+def setUpModule() -> None:
+    """Layout tests expect info in zone 4, whatever this machine's zone-4 toggle
+    says; visualizer layouts are covered in ``test_zone4_eq``."""
+    global _ZONE4_ENV
+    _ZONE4_ENV = mock.patch.dict(os.environ, {"PIGEON_ZONE4_EQ": "0"})
+    _ZONE4_ENV.start()
+
+
+def tearDownModule() -> None:
+    if _ZONE4_ENV is not None:
+        _ZONE4_ENV.stop()
 
 
 def _force_default_np_zones() -> None:

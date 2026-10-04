@@ -312,5 +312,62 @@ class ViewCirclesZone4Tests(unittest.TestCase):
         self.assertEqual(sorted(np.where(diff)[0].tolist()), [cti - 1, cti])
 
 
+class YouTubeZone4Tests(unittest.TestCase):
+    """The zone-4 toggle applies to the YouTube layout, whose zone 4 is the video title."""
+
+    def _widget(self, *, visualizer: bool):
+        from pigeon.widgets.view_circles import ViewCirclesWidget
+
+        env = mock.patch.dict(os.environ, {"PIGEON_ZONE4_EQ": "1" if visualizer else "0"})
+        env.start()
+        self.addCleanup(env.stop)
+        mic = mock.patch.object(zone4_eq, "want_mic_capture", lambda: None)
+        mic.start()
+        self.addCleanup(mic.stop)
+        assets = Path(__file__).resolve().parents[2] / "pigeonAssets"
+        w = ViewCirclesWidget(assets_dir=assets)
+        w.update_state(
+            progress=0.2,
+            elapsed_text="0:10",
+            remaining_text="-1:00",
+            volume_text="-22.5 dB",
+            has_now_playing=True,
+            has_position=True,
+            content_active=True,
+            content_mode="video",
+            is_youtube=True,
+            song_title="Never Gonna Give You Up",
+            artist_title="Rick Astley",
+            poster_bgra=np.full((90, 160, 3), (0, 255, 0), dtype=np.uint8),
+        )
+        return w
+
+    def test_toggle_swaps_video_title_for_visualizer(self) -> None:
+        from pigeon.np_layout import YOUTUBE_ZONE_WIDGETS
+        from pigeon.widgets.view_circles import ZONE4_VISUALIZER_WIDGET
+
+        self.assertEqual(self._widget(visualizer=False)._assignments(), YOUTUBE_ZONE_WIDGETS)
+        w = self._widget(visualizer=True)
+        zones = w._assignments()
+        self.assertEqual(zones[3], ZONE4_VISUALIZER_WIDGET)
+        self.assertEqual((zones[2], zones[4]), (YOUTUBE_ZONE_WIDGETS[2], YOUTUBE_ZONE_WIDGETS[4]))
+        self.assertEqual(w._poster_zone(), 6)  # thumbnail stays
+        self.assertTrue(w.wants_live_audio())
+
+    def test_visualizer_replaces_the_title_in_the_frame(self) -> None:
+        from pigeon.widgets.view_circles import _zone4_title_xywh, zone4_visualizer_rect
+
+        zx, zy, zw, zh = _zone4_title_xywh()
+        title = self._widget(visualizer=False).bgra_frame()
+        viz = self._widget(visualizer=True).bgra_frame()
+        assert title is not None and viz is not None
+        lit = lambda f: int(np.count_nonzero(f[zy : zy + zh, zx : zx + zw, :3].min(axis=2) > 180))  # noqa: E731
+        self.assertGreater(lit(title), 300)  # white title text
+        x, y, w, h, _r = zone4_visualizer_rect()
+        self.assertEqual(tuple(int(v) for v in viz[y + h // 2, x + w // 2, :3]), (35, 35, 35))
+        # No title text anywhere in zone 4 (in or around the container).
+        self.assertLess(lit(viz), 50)
+
+
 if __name__ == "__main__":
     unittest.main()

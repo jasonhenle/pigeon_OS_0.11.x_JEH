@@ -4454,8 +4454,10 @@ class ViewCirclesWidget:
             if not youtube:
                 zones = auto_zones
         # One visualizer at a time: beside the zone-6 visualizer, zone 4 keeps
-        # its cast info (the Pi has no headroom for both).
-        if zones[3] == "cast_info" and self._zone4_eq_on() and not self._zone6_viz_on(zones):
+        # its cast info (the Pi has no headroom for both). The YouTube layout
+        # leaves zone 4 blank for the video title; the visualizer takes it too.
+        zone4_info = zones[3] == "cast_info" or (youtube and zones[3] == "")
+        if zone4_info and self._zone4_eq_on() and not self._zone6_viz_on(zones):
             zones = (zones[0], zones[1], zones[2], ZONE4_VISUALIZER_WIDGET, zones[4])
         if self.volume_takeover_active() and self._state.chrome_visible:
             return (zones[0], zones[1], "volume", zones[3], zones[4])
@@ -6351,7 +6353,9 @@ class ViewCirclesWidget:
         self._draw_seconds_bar_zones(out, now)
         self._draw_pigeonclock_zones(out)
         self._draw_zone4_overlay_text(out)
-        if self.content_mode == _CONTENT_MODE_MUSIC or self._state.is_youtube:
+        if (
+            self.content_mode == _CONTENT_MODE_MUSIC or self._state.is_youtube
+        ) and self._assignments()[3] != ZONE4_VISUALIZER_WIDGET:
             self._draw_track_titles(out)
         # Status bar is stamped by _overlay_ticking; the static sig ignores its
         # timecodes, so baking it here would leave stale digits under the live ones.
