@@ -335,8 +335,9 @@ _CLOCK_INTERIOR_ACCENT_R = 105.54
 _TICK_DIM_FILL = "#800000"
 _TICK_ACTIVE_FILL = "red"
 _CLOCK_MINUTE_TICK_OPACITY = 0.7  # 30% transparent
-# Page-white punch uses 252; analog "off" ticks must stay below that.
-_CLOCK_TICK_OFF_HEX = "#E6E6E6"
+# Analog "off" seconds ticks: dark gray (the volume ring track), not white (page-white punch uses 252;
+# this must stay below that).
+_CLOCK_TICK_OFF_HEX = "#4D4D4D"
 
 _POSTER_MUSIC_X, _POSTER_MUSIC_Y, _POSTER_MUSIC_W, _POSTER_MUSIC_H, _POSTER_MUSIC_RX = (
     int(round(POSTER_1X1_LOCAL[0])),
@@ -354,21 +355,12 @@ _UI_WASH_MAX_LUMA = 60.0
 _ARTWORK_BG_BLUR_DOWNSCALE = 4
 _ARTWORK_BG_BLUR_SIGMA = 6.0
 
-# Soft white halo behind active clock widgets only (volume has no glow).
-_ZONE_HALO_R = _CLOCK_EXTERIOR_ACCENT_R
-_ZONE_HALO_OPACITY = 0.36  # 10% more transparent than 0.40
-_ZONE_HALO_BLUR_SIGMA = 3.0  # slight soft edge only
 
 # While TMDb is fetching (``searching``), clock ticks + volume race ahead of wall time.
 _CLOCK_SPIN_SEC_RATE = 48.0  # second-ticks per real second (~1.25s / full ring)
 _CLOCK_SPIN_MIN_RATE = 16.0  # minute-ticks per real second
 _CLOCK_SPIN_HOUR_RATE = 6.0  # hour faces per real second
 _CLOCK_SPIN_VOL_RATE = 1.8  # volume-ring revolutions per real second
-_ZONE_CIRCLE_HALO_KEYS: tuple[tuple[str, float, float], ...] = (
-    ("zone1_clock_group", _ZONE1_CX, _ZONE1_CY),
-    ("zone2_clock_group", _ZONE2_CX, _ZONE2_CY),
-    ("zone3_clock_group", _ZONE3_CX, _ZONE3_CY),
-)
 
 _ACCENT_OPACITY = 0.70
 _ACCENT_STROKE_PX = 2
@@ -1664,7 +1656,9 @@ def _apply_exterior_seconds_fill(
     wedge.set("id", fill_name)
     wedge.set("data-name", fill_name)
     wedge.set("d", d)
-    wedge.set("fill", th.accent_hex)
+    # A white accent (the default) reads as dark gray on the clock, not bright white.
+    accent = str(th.accent_hex or "").strip().lower()
+    wedge.set("fill", _CLOCK_TICK_OFF_HEX if accent in ("#fff", "#ffffff", "white") else th.accent_hex)
     wedge.set("fill-rule", "evenodd")
     host = _svg_parent(clock, exterior)
     if host is None:
@@ -3448,68 +3442,6 @@ def _add_round_sector_end(
     keep = rel <= sweep + cap_deg + 1.0
     ys, xs = ys[keep], xs[keep]
     sector[ys, xs] = np.maximum(sector[ys, xs], cap[ys, xs])
-
-
-def _halo_pad(sigma: float) -> int:
-    return int(math.ceil(max(0.5, float(sigma)) * 3.0)) + 4
-
-
-def _ui_halo_from_mask(mask01: np.ndarray, *, sigma: float, opacity: float) -> np.ndarray:
-    """Turn a 0..1 float mask into a blurred white BGRA halo patch."""
-    sig = max(0.5, float(sigma))
-    op = max(0.0, min(1.0, float(opacity)))
-    k = max(3, int(round(sig * 4.0)) | 1)
-    soft = cv2.GaussianBlur(mask01, (k, k), sigmaX=sig, sigmaY=sig)
-    patch = np.zeros((mask01.shape[0], mask01.shape[1], 4), dtype=np.uint8)
-    patch[:, :, 0] = 255
-    patch[:, :, 1] = 255
-    patch[:, :, 2] = 255
-    patch[:, :, 3] = np.clip(soft * (255.0 * op), 0, 255).astype(np.uint8)
-    return patch
-
-
-@lru_cache(maxsize=4)
-def _zone_ring_halo_patch(
-    outer_r: float = _CLOCK_EXTERIOR_ACCENT_R,
-    inner_r: float = _CLOCK_MIDDLE_ACCENT_R,
-    sigma: float = _ZONE_HALO_BLUR_SIGMA,
-    opacity: float = _ZONE_HALO_OPACITY,
-) -> np.ndarray:
-    """White ring behind the outer clock band only (middle stays open)."""
-    outer = max(1, int(round(float(outer_r))))
-    inner = max(0, min(int(round(float(inner_r))), outer - 1))
-    pad = _halo_pad(sigma)
-    size = outer * 2 + pad * 2
-    mask = np.zeros((size, size), dtype=np.float32)
-    c = size // 2
-    cv2.circle(mask, (c, c), outer, 1.0, -1, lineType=cv2.LINE_AA)
-    if inner > 0:
-        cv2.circle(mask, (c, c), inner, 0.0, -1, lineType=cv2.LINE_AA)
-    return _ui_halo_from_mask(mask, sigma=sigma, opacity=opacity)
-
-
-def _draw_zone_halos(
-    bgra: np.ndarray,
-    *,
-    content_mode: str,
-    paused: bool = False,
-    zone_widgets: tuple[str, str, str, str, str] | None = None,
-) -> None:
-    """Gentle white glow behind the clock's outer ring (not the open middle)."""
-    del content_mode, paused
-    assignments = zone_widgets if zone_widgets is not None else _default_zone_widget_assignments()
-    circle = _zone_ring_halo_patch()
-    ch, cw = circle.shape[:2]
-    for z in (1, 2, 3):
-        if z > len(assignments) or assignments[z - 1] != "clock":
-            continue
-        cx, cy = _zone_clock_center(z)
-        _paste_patch_bgra(
-            bgra,
-            circle,
-            int(round(cx - cw / 2.0)),
-            int(round(cy - ch / 2.0)),
-        )
 
 
 def _draw_filled_circle_bgra(
@@ -6476,13 +6408,6 @@ class ViewCirclesWidget:
         elif _NP_NO_POSTER_UI_WASH and self._state.content_active and not has_poster:
             # No TMDb poster to blur: wash the page in the UI color instead.
             _paste_patch_bgra(out, self._ui_color_wash_bgra(theme), 0, 0)
-        # Soft white halos behind active circular widgets (under poster + SVG chrome).
-        _draw_zone_halos(
-            out,
-            content_mode=self.content_mode,
-            paused=bool(self._state.paused),
-            zone_widgets=assignments,
-        )
         # Poster/album under play overlay; SVG chrome sits in sibling zones.
         self._draw_poster(out)
         self._draw_play_overlay(out)

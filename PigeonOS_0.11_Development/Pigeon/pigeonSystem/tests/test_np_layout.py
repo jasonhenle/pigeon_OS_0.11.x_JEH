@@ -638,14 +638,14 @@ class NowPlayingFrameTests(unittest.TestCase):
         self.assertTrue(_find_by_key(root, "seconds_60") is not None)
         self.assertTrue(_tick_fill(root, "seconds_01").endswith("4ea6f7"))
         self.assertTrue(_tick_fill(root, "seconds_15").endswith("4ea6f7"))
-        self.assertTrue(_tick_fill(root, "seconds_16") in ("#e6e6e6", "#ffffff", "white"))
-        self.assertTrue(_tick_fill(root, "seconds_60") in ("#e6e6e6", "#ffffff", "white"))
+        self.assertTrue(_tick_fill(root, "seconds_16") == "#4d4d4d")  # dark gray, not white
+        self.assertTrue(_tick_fill(root, "seconds_60") == "#4d4d4d")  # dark gray, not white
 
         root = _svg_tree_from_path(_now_playing_widget_path(assets, "clock"))
         _apply_standalone_clock_ticks(
             root, datetime(2026, 1, 1, 12, 1, 1), theme=theme
         )
-        self.assertTrue(_tick_fill(root, "seconds_01") in ("#e6e6e6", "#ffffff", "white"))
+        self.assertTrue(_tick_fill(root, "seconds_01") == "#4d4d4d")  # dark gray, not white
         self.assertTrue(_tick_fill(root, "seconds_02").endswith("4ea6f7"))
         self.assertTrue(_tick_fill(root, "seconds_60").endswith("4ea6f7"))
 
