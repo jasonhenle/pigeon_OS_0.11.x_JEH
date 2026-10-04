@@ -347,7 +347,9 @@ _POSTER_MUSIC_X, _POSTER_MUSIC_Y, _POSTER_MUSIC_W, _POSTER_MUSIC_H, _POSTER_MUSI
 )
 
 _ARTWORK_BG_OPACITY = 0.34
-# No-poster UI-color wash: luma ceiling over black (light mode treats darker as wash).
+# No-poster UI-color wash: opacity over black (darker than the poster blur), and a
+# luma ceiling (light mode treats darker as wash).
+_UI_WASH_OPACITY = 0.18
 _UI_WASH_MAX_LUMA = 60.0
 _ARTWORK_BG_BLUR_DOWNSCALE = 4
 _ARTWORK_BG_BLUR_SIGMA = 6.0
@@ -4118,7 +4120,7 @@ class ViewCirclesWidget:
         return True
 
     def _ui_color_wash_bgra(self, theme: _NpTheme) -> np.ndarray:
-        """Full-frame UI color at the artwork blur's opacity (the no-poster background)."""
+        """Full-frame UI color, dimmed (the no-poster background)."""
         key = theme.ui_hex.lower()
         cached = self._ui_wash_cache
         if cached is not None and cached[0] == key:
@@ -4127,7 +4129,7 @@ class ViewCirclesWidget:
         luma = 0.114 * b + 0.587 * g + 0.299 * r
         # Keep the wash under the light-mode wash threshold (compositing
         # ``_BRIGHT_WASH_LUMA``) so a white / yellow UI color isn't snapped to ink.
-        opacity = min(_ARTWORK_BG_OPACITY, _UI_WASH_MAX_LUMA / max(1.0, luma))
+        opacity = min(_UI_WASH_OPACITY, _UI_WASH_MAX_LUMA / max(1.0, luma))
         wash = np.empty((int(DESIGN_H), int(DESIGN_W), 4), dtype=np.uint8)
         wash[:, :, :3] = theme.ui_bgr
         wash[:, :, 3] = int(round(255.0 * opacity))

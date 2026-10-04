@@ -1752,11 +1752,11 @@ class NoPosterUiWashTests(unittest.TestCase):
         return frame, w
 
     def test_no_poster_washes_page_in_ui_color(self) -> None:
-        from pigeon.widgets.view_circles import _ARTWORK_BG_OPACITY
+        from pigeon.widgets.view_circles import _UI_WASH_OPACITY
 
         frame, w = self._frame(poster=False)
         b, g, r = w._effective_np_theme().ui_bgr  # type: ignore[attr-defined]
-        want = tuple(int(round(c * _ARTWORK_BG_OPACITY)) for c in (b, g, r))
+        want = tuple(int(round(c * _UI_WASH_OPACITY)) for c in (b, g, r))
         got = tuple(int(v) for v in frame[790, 640, :3])  # empty strip under zone 5
         for gv, wv in zip(got, want):
             self.assertLessEqual(abs(gv - wv), 2)
