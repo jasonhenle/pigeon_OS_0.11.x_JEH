@@ -436,16 +436,49 @@ def _fetch_version_text(
         return None, _classify_fetch_error(str(e))
 
 
+# Last ``(url, api, branch)`` that produced a version — background polls hit
+# only this one URL instead of scanning every branch × path candidate.
+_last_winning_source: tuple[str, bool, str] | None = None
+
+
+def _quick_remote_version_tuple(
+    *,
+    timeout_s: float,
+) -> tuple[tuple[int, int, int], str, str] | None:
+    src = _last_winning_source
+    if src is None:
+        return None
+    url, api, branch = src
+    fetch_url = url
+    if not api:
+        import time as _time
+
+        fetch_url = f"{url}{'&' if '?' in url else '?'}pigeon_nocache={int(_time.time())}"
+    body, _err = _fetch_version_text(fetch_url, timeout_s=timeout_s, api=api, force=True)
+    remote = parse_version_py(body) if body is not None else None
+    if remote is None:
+        return None
+    return remote, url, branch
+
+
 def fetch_remote_version_tuple(
     *,
     timeout_s: float = 12.0,
     force: bool = False,
+    quick: bool = False,
 ) -> tuple[tuple[int, int, int] | None, str | None, str | None, str | None]:
     """Return ``(remote_tuple, error_message, winning_raw_url, github_branch)``.
 
     When ``force`` is True (settings Update button), skip HTTP caches so a
-    just-pushed main version is visible immediately.
+    just-pushed main version is visible immediately. ``quick`` (background
+    polls) re-fetches only the last winning URL — one request — and falls back
+    to the full scan when that is unknown or fails.
     """
+    global _last_winning_source
+    if quick and not force:
+        hit = _quick_remote_version_tuple(timeout_s=timeout_s)
+        if hit is not None:
+            return hit[0], None, hit[1], hit[2]
     token = github_token()
     saw_404 = False
     saw_auth_fail = False
@@ -489,6 +522,7 @@ def fetch_remote_version_tuple(
                     best = remote
                     best_url = url
                     best_branch = branch
+                    _last_winning_source = (url, api, branch)
     if best is not None:
         return best, None, best_url, best_branch
     if not token and saw_404 and not _github_repo_is_public():
@@ -530,11 +564,17 @@ def format_version_tuple(t: tuple[int, int, int]) -> str:
     return f"{t[0]}.{t[1]}.{t[2]}"
 
 
-def check_for_update(*, timeout_s: float = 12.0, force: bool = False) -> UpdateCheckResult:
+def check_for_update(
+    *,
+    timeout_s: float = 12.0,
+    force: bool = False,
+    quick: bool = False,
+) -> UpdateCheckResult:
     """Compare local version to GitHub.
 
     ``force=True`` (settings_pigeon Update button) bypasses HTTP caches so a
-    newly merged main release is detected immediately.
+    newly merged main release is detected immediately. ``quick=True`` is the
+    cheap background poll (see :func:`fetch_remote_version_tuple`).
     """
     prepare_github_update_environment()
     local = version_string()
@@ -542,6 +582,7 @@ def check_for_update(*, timeout_s: float = 12.0, force: bool = False) -> UpdateC
     remote_t, err, url, branch = fetch_remote_version_tuple(
         timeout_s=timeout_s,
         force=force,
+        quick=quick,
     )
     if remote_t is None:
         return UpdateCheckResult(

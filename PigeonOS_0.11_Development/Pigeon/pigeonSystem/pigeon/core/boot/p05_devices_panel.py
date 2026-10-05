@@ -157,7 +157,9 @@ def run(ctx) -> None:
         "error": None,
         "applying": False,
     }
-    _UPDATE_CHECK_INTERVAL_S = 30 * 60
+    # Background polls are one cache-busted raw GET (quick mode) — cheap
+    # enough to run every couple of minutes on the Pi.
+    _UPDATE_CHECK_INTERVAL_S = 2 * 60
 
     _match_neighbor_button_style = _core_settings_ui._match_neighbor_button_style
 

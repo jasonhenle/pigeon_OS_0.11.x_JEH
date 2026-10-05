@@ -1,4 +1,4 @@
-"""Update popup: no OK button while a GitHub check is in flight."""
+"""settings_pigeon update screen: focus ring, activation, layer visibility."""
 
 from __future__ import annotations
 
@@ -16,11 +16,13 @@ from pigeon.widgets.main_settings import (  # noqa: E402
     _find_by_logical_id,
 )
 from pigeon.widgets.update_popup import (  # noqa: E402
-    ID_NOW_GROUP,
-    ID_NOW_TEXT,
+    ID_ARROW,
+    ID_CURRENT_CONTAINER,
+    ID_UPDATE_CONTAINER_TYPO,
     apply_update_popup_svg_state,
     default_update_popup_svg_path,
     update_popup_focus_ring,
+    update_status_cells,
 )
 
 
@@ -28,46 +30,74 @@ def _hidden(el: ET.Element | None) -> bool:
     return el is not None and el.get("display") == "none"
 
 
-class UpdatePopupCheckingTests(unittest.TestCase):
-    def test_focus_ring_empty_while_checking(self) -> None:
+def _state(*, available: bool, focus: str = "update") -> MainSettingsState:
+    st = MainSettingsState()
+    st.show_pigeon_settings = True
+    st.show_update_popup = True
+    st.update_local_version = "0.11.67"
+    st.update_available = available
+    st.update_remote_version = "0.11.68" if available else "0.11.67"
+    st.set_update_popup_focus(focus)
+    return st
+
+
+def _tree(st: MainSettingsState) -> ET.Element:
+    path = default_update_popup_svg_path()
+    root = ET.parse(path).getroot()
+    apply_update_popup_svg_state(root, st)
+    return root
+
+
+class UpdatePopupFocusTests(unittest.TestCase):
+    def test_svg_ships(self) -> None:
+        self.assertTrue(default_update_popup_svg_path().is_file())
+
+    def test_current_skipped_without_update(self) -> None:
+        self.assertEqual(update_popup_focus_ring(update_available=False), ("back", "update"))
         self.assertEqual(
-            update_popup_focus_ring(update_available=False, checking=True),
-            (),
-        )
-        self.assertEqual(
-            update_popup_focus_ring(update_available=True, checking=True),
-            (),
-        )
-        self.assertEqual(
-            update_popup_focus_ring(update_available=False),
-            ("now",),
+            update_popup_focus_ring(update_available=True), ("back", "current", "update")
         )
 
-    def test_checking_hides_ok_button(self) -> None:
-        path = default_update_popup_svg_path()
-        self.assertTrue(path.is_file(), msg=str(path))
-        root = ET.parse(path).getroot()
-        st = MainSettingsState()
-        st.update_checking = True
-        st.update_local_version = "0.11.17"
-        st.update_changelog = "Checking GitHub for updates…"
-        apply_update_popup_svg_state(root, st)
-        self.assertTrue(_hidden(_find_by_logical_id(root, ID_NOW_GROUP)))
+    def test_back_reachable_while_checking(self) -> None:
+        self.assertIn("back", update_popup_focus_ring(update_available=False, checking=True))
 
-    def test_up_to_date_keeps_ok(self) -> None:
-        path = default_update_popup_svg_path()
-        root = ET.parse(path).getroot()
+    def test_no_focus_while_applying(self) -> None:
+        self.assertEqual(update_popup_focus_ring(update_available=True, applying=True), ())
+
+    def test_open_lands_on_update(self) -> None:
         st = MainSettingsState()
-        st.update_checking = False
-        st.update_available = False
-        st.update_local_version = "0.11.17"
-        apply_update_popup_svg_state(root, st)
-        now = _find_by_logical_id(root, ID_NOW_GROUP)
-        self.assertFalse(_hidden(now))
-        text = _find_by_logical_id(root, ID_NOW_TEXT)
-        self.assertIsNotNone(text)
-        body = "".join(text.itertext()) if text is not None else ""
-        self.assertIn("OK", body)
+        st.open_update_popup()
+        self.assertTrue(st.update_checking)
+        self.assertEqual(st.update_popup_focused_choice, "update")
+
+
+class UpdatePopupLayerTests(unittest.TestCase):
+    def test_update_container_follows_focus(self) -> None:
+        root = _tree(_state(available=True, focus="update"))
+        self.assertFalse(_hidden(_find_by_logical_id(root, ID_UPDATE_CONTAINER_TYPO)))
+        self.assertTrue(_hidden(_find_by_logical_id(root, ID_CURRENT_CONTAINER)))
+
+    def test_current_container_follows_focus(self) -> None:
+        root = _tree(_state(available=True, focus="current"))
+        self.assertTrue(_hidden(_find_by_logical_id(root, ID_UPDATE_CONTAINER_TYPO)))
+        self.assertFalse(_hidden(_find_by_logical_id(root, ID_CURRENT_CONTAINER)))
+
+    def test_badge_and_arrow_only_with_update(self) -> None:
+        root = _tree(_state(available=True))
+        self.assertIsNotNone(_find_by_logical_id(root, "version_update_badge"))
+        self.assertFalse(_hidden(_find_by_logical_id(root, ID_ARROW)))
+        root = _tree(_state(available=False))
+        self.assertIsNone(_find_by_logical_id(root, "version_update_badge"))
+        self.assertTrue(_hidden(_find_by_logical_id(root, ID_ARROW)))
+
+    def test_status_cells(self) -> None:
+        st = _state(available=True)
+        st.update_applying = True
+        st.update_progress = 0.5
+        self.assertEqual(update_status_cells(st), (30, "ui"))
+        st = _state(available=False)
+        st.update_error = "offline"
+        self.assertEqual(update_status_cells(st), (60, "error"))
 
 
 if __name__ == "__main__":

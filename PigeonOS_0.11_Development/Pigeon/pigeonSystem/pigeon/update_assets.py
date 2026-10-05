@@ -33,7 +33,7 @@ REQUIRED_ASSET_PATHS: tuple[str, ...] = (
     "pigeonAssets/settings/main/widget_sm_02-03-04_container.svg",
     "pigeonAssets/settings/pigeon/settings_pigeon.svg",
     "pigeonAssets/settings_0.8/pigeon_settings_preferences.svg",
-    "pigeonAssets/settings_0.8/settings_update_popup.svg",
+    "pigeonAssets/settings/pigeon/settings_pigeon_update.svg",
     "pigeonAssets/settings/keyboard/keyboard_bottom_row.svg",
     "pigeonAssets/settings/keyboard/keyboard_lower.svg",
     "pigeonAssets/settings/keyboard/keyboard_upper.svg",

@@ -582,6 +582,8 @@ class MainSettingsState:
     update_changelog: str = ""
     update_error: str | None = None
     update_github_branch: str | None = None
+    # time.monotonic() when the current GitHub check began (status bar sweep).
+    update_check_started_mono: float = 0.0
     spinner_glyph_capture: bool = False
     # Focus ring rebuilt when panel visibility changes.
     focus_ring: tuple[str, ...] = field(default_factory=tuple)
@@ -1310,42 +1312,52 @@ class MainSettingsState:
         return f"preferences_widget:{focused}"
 
     def open_update_popup(self) -> None:
-        """Show the GitHub update popup and always start a fresh check.
+        """Show the update screen and start a fresh GitHub check.
 
-        Prior poll results are cleared so the Update button never reuses a
-        cached available / up-to-date decision.
+        The last known result (background poll / settings entry prefetch) stays
+        up while the check runs, so a found update shows its build number and
+        red badge immediately. The check result replaces it.
         """
-        from pigeon.widgets.update_popup import update_popup_focus_ring
-
         self.show_update_popup = True
         self.update_applying = False
         self.update_progress = 0.0
-        self.update_error = None
         self.update_local_version = self.version_string
-        # Drop cache — settings_pigeon Update always re-queries GitHub.
-        self.update_available = False
-        self.update_remote_version = None
-        self.update_github_branch = None
+        self.begin_update_check()
+        self.set_update_popup_focus("update")
+
+    def begin_update_check(self) -> None:
         self.update_checking = True
+        self.update_error = None
+        self.update_check_started_mono = time.monotonic()
         self.update_changelog = "Checking GitHub for updates…"
-        ring = update_popup_focus_ring(update_available=False, checking=True)
-        self.update_popup_focus_index = ring.index("now") if "now" in ring else 0
 
     def close_update_popup(self) -> None:
+        # Keep update_available / remote version: they seed the next open.
         self.show_update_popup = False
         self.update_checking = False
         self.update_applying = False
         self.update_progress = 0.0
         self.update_popup_focus_index = 0
 
-    def navigate_update_popup(self, *, forward: bool = True) -> None:
+    def _update_popup_ring(self) -> tuple[str, ...]:
         from pigeon.widgets.update_popup import update_popup_focus_ring
 
-        ring = update_popup_focus_ring(
+        return update_popup_focus_ring(
             update_available=bool(self.update_available),
             checking=bool(self.update_checking),
             applying=bool(self.update_applying),
         )
+
+    def set_update_popup_focus(self, choice: str) -> None:
+        """Land on ``choice`` (back / current / update) in the current ring."""
+        ring = self._update_popup_ring()
+        if choice in ring:
+            self.update_popup_focus_index = ring.index(choice)
+        elif ring:
+            self.update_popup_focus_index = len(ring) - 1
+
+    def navigate_update_popup(self, *, forward: bool = True) -> None:
+        ring = self._update_popup_ring()
         if not ring:
             return
         step = 1 if forward else -1
@@ -1353,15 +1365,9 @@ class MainSettingsState:
 
     @property
     def update_popup_focused_choice(self) -> str:
-        from pigeon.widgets.update_popup import update_popup_focus_ring
-
-        ring = update_popup_focus_ring(
-            update_available=bool(self.update_available),
-            checking=bool(self.update_checking),
-            applying=bool(self.update_applying),
-        )
+        ring = self._update_popup_ring()
         if not ring:
-            return "now"
+            return "update"
         return ring[int(self.update_popup_focus_index) % len(ring)]
 
     def navigate_pigeon(self, *, forward: bool = True) -> None:
@@ -8081,19 +8087,27 @@ class MainSettingsWidget:
                 self._want_prewarm_after_paint = True
                 return action
             if st.show_update_popup:
-                if st.update_applying or st.update_checking:
+                if st.update_applying:
                     return "update_popup:busy"
                 choice = st.update_popup_focused_choice
-                if choice == "later":
+                if choice == "back":
                     st.close_update_popup()
                     self.invalidate()
-                    return "update_popup:later"
-                if st.update_available and not st.update_error:
+                    return "update_popup:back"
+                if choice == "current":
+                    # "Stay on this version" — same as cancel.
+                    st.close_update_popup()
+                    self.invalidate()
+                    return "update_popup:stay"
+                if st.update_checking:
+                    return "update_popup:busy"
+                if st.update_available:
+                    # Also retries after a failed install.
                     return "update_popup:now"
-                # Up-to-date (or check error): NOW acknowledges and closes.
-                st.close_update_popup()
+                # No update known: CHECK queries GitHub again.
+                st.begin_update_check()
                 self.invalidate()
-                return "update_popup:dismiss"
+                return "update_popup:check"
             from pigeon.widgets.pigeon_settings import color_key_for_focus, option_for_focus
 
             focused = st.pigeon_focused_id
@@ -8279,7 +8293,11 @@ class MainSettingsWidget:
         if hit is not None and hit[0] == key and hit[1] is base:
             return hit[2]
         frame = base
-        if not st.show_update_popup:
+        if st.show_update_popup:
+            from pigeon.widgets.update_popup import draw_update_status_bar_bgra
+
+            frame = draw_update_status_bar_bgra(frame, st)
+        else:
             frame = draw_pigeon_settings_clock(frame)
         if st.keyboard is not None and kb_sig is not None:
             from pigeon.widgets.settings_keyboard import render_keyboard_bgra
