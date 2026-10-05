@@ -60,17 +60,25 @@ FOCUS_UPDATE = "update"
 
 CHECK_LABEL = "CHECK"
 UPDATE_MESSAGE = "update"
+LATEST_MESSAGE = "latest version"
 PIGEONOS_LABEL = "pigeonOS"
 
 # Kept for callers that still set a status line (no text layer on this screen).
 DEFAULT_CHANGELOG = "bug fixes and optimizations."
 UP_TO_DATE_CHANGELOG = "You're on the current version of PigeonOS"
 
-# Card size in SVG units == design px; centered on the canvas.
+# Card size in SVG units; drawn at POPUP_SCALE and centered on the canvas.
 POPUP_W = 843.44
 POPUP_H = 670.65
-POPUP_X = int(round((DESIGN_W - POPUP_W) / 2.0))
-POPUP_Y = int(round((DESIGN_H - POPUP_H) / 2.0))
+# Version digits (100 SVG units) land at the settings_pigeon BACK pill's
+# Digital-7 size (exit_text font-size 46.4 design px).
+_BACK_TEXT_PX = 46.4
+_VERSION_FONT_PX = 100
+POPUP_SCALE = _BACK_TEXT_PX / _VERSION_FONT_PX
+POPUP_DRAW_W = int(round(POPUP_W * POPUP_SCALE))
+POPUP_DRAW_H = int(round(POPUP_H * POPUP_SCALE))
+POPUP_X = int(round((DESIGN_W - POPUP_DRAW_W) / 2.0))
+POPUP_Y = int(round((DESIGN_H - POPUP_DRAW_H) / 2.0))
 
 # Geometry from the 2026-10 Illustrator export (SVG units).
 _UPDATE_BOX = (494.43, 266.26, 291.23, 126.14)
@@ -81,7 +89,6 @@ _UPDATE_TEXT_BASELINE = 361.36
 _CURRENT_TEXT_BASELINE = 363.9
 _MESSAGE_BASELINE = 450.12
 _PIGEONOS_XY = (79.94, 187.04)
-_VERSION_FONT_PX = 100
 _MESSAGE_FONT_PX = 60
 _PIGEONOS_FONT_PX = 146
 _VERSION_TEXT_INSET = 22.0
@@ -129,16 +136,21 @@ def update_popup_focus_ring(
     update_available: bool,
     checking: bool = False,
     applying: bool = False,
+    latest: bool = False,
 ) -> tuple[str, ...]:
     """Choices the encoder can land on, left to right.
 
     ``version_current`` is skipped until an update exists. Nothing is
     selectable while an update is installing. A check in flight keeps BACK
-    reachable so the user can always leave.
+    reachable so the user can always leave. Once a check confirms this is the
+    latest version (``latest``), ``version_update`` is pulled too until the
+    screen is opened again.
     """
     del checking
     if applying:
         return ()
+    if latest and not update_available:
+        return (FOCUS_BACK,)
     if update_available:
         return (FOCUS_BACK, FOCUS_CURRENT, FOCUS_UPDATE)
     return (FOCUS_BACK, FOCUS_UPDATE)
@@ -171,6 +183,7 @@ def _focused_choice(state: MainSettingsState) -> str:
         update_available=bool(state.update_available),
         checking=bool(state.update_checking),
         applying=bool(state.update_applying),
+        latest=bool(state.update_latest_confirmed),
     )
     if not ring:
         return FOCUS_UPDATE
@@ -321,10 +334,15 @@ def _draw_labels_bgra(bgra: np.ndarray, state: MainSettingsState) -> None:
 
     ux, _uy, uw, _uh = _UPDATE_BOX
     ucx = ux + uw / 2.0
+    message = (
+        LATEST_MESSAGE if (state.update_latest_confirmed and not available) else UPDATE_MESSAGE
+    )
+    # Centered under the update box; "latest version" shrinks to stay on the card.
+    message_max_w = 2.0 * (POPUP_W - ucx - _VERSION_TEXT_INSET * 2)
     draw.text(
         (ucx, _MESSAGE_BASELINE),
-        UPDATE_MESSAGE,
-        font=_font("medium_italic", _MESSAGE_FONT_PX),
+        message,
+        font=_fit_font(draw, message, "medium_italic", _MESSAGE_FONT_PX, message_max_w),
         fill=white,
         anchor="ms",
     )
@@ -364,6 +382,7 @@ def _popup_static_key(state: MainSettingsState, path: Path) -> tuple[object, ...
         str(state.theme.ui or ""),
         bool(state.update_available),
         bool(state.update_applying),
+        bool(state.update_latest_confirmed),
         _focused_choice(state),
         _format_version(state.update_local_version or state.version_string),
         _format_version(state.update_remote_version),
@@ -375,7 +394,11 @@ def render_update_popup_card_bgra(
     *,
     path: Path,
 ) -> np.ndarray:
-    """The card alone at its authored size (``POPUP_W``×``POPUP_H`` px)."""
+    """The card at ``POPUP_DRAW_W``×``POPUP_DRAW_H`` px.
+
+    Rendered at the authored size, then area-downsampled so the small text
+    stays crisp.
+    """
     key = _popup_static_key(state, path)
     hit = _STATIC_CACHE.get(key)
     if hit is not None:
@@ -391,6 +414,7 @@ def render_update_popup_card_bgra(
     root.set("height", str(h))
     card = rasterize_settings_svg_bgra(root, width=w, height=h, view_box=(0.0, 0.0, POPUP_W, POPUP_H))
     _draw_labels_bgra(card, state)
+    card = cv2.resize(card, (POPUP_DRAW_W, POPUP_DRAW_H), interpolation=cv2.INTER_AREA)
     if len(_STATIC_CACHE) >= _STATIC_CACHE_MAX:
         _STATIC_CACHE.clear()
     _STATIC_CACHE[key] = card
@@ -473,19 +497,22 @@ def draw_update_status_bar_bgra(
     from pigeon.widgets.view_circles import _draw_rounded_bar_bgra
 
     out = frame.copy()
+    k = POPUP_SCALE
     sx, sy, sw, sh = _STATUS_BAR
     track = (
-        POPUP_X + sx + _STATUS_PAD_X,
-        POPUP_Y + sy + _STATUS_PAD_Y,
-        sw - 2 * _STATUS_PAD_X,
-        sh - 2 * _STATUS_PAD_Y,
+        POPUP_X + (sx + _STATUS_PAD_X) * k,
+        POPUP_Y + (sy + _STATUS_PAD_Y) * k,
+        (sw - 2 * _STATUS_PAD_X) * k,
+        (sh - 2 * _STATUS_PAD_Y) * k,
     )
-    rects = clock_saver_seconds_segment_rects(track, count=_STATUS_COUNT, gap=_STATUS_GAP)
+    rects = clock_saver_seconds_segment_rects(
+        track, count=_STATUS_COUNT, gap=_STATUS_GAP * k
+    )
     if not rects:
         return out
     lit, mode = update_status_cells(state, now_mono=now_mono)
     color = _STATUS_ERROR_BGR if mode == "error" else _ui_bgr(state)
-    radius = max(1, min(min(r[2] for r in rects) // 2, 3))
+    radius = max(1, min(min(r[2] for r in rects) // 2, 2))
     for i, (x, y, w, h) in enumerate(rects):
         _draw_rounded_bar_bgra(
             out,
@@ -506,6 +533,7 @@ __all__ = [
     "FOCUS_BACK",
     "FOCUS_CURRENT",
     "FOCUS_UPDATE",
+    "LATEST_MESSAGE",
     "UP_TO_DATE_CHANGELOG",
     "apply_update_popup_svg_state",
     "composite_update_popup_over_bgra",

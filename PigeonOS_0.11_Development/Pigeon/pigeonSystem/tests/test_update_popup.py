@@ -64,6 +64,21 @@ class UpdatePopupFocusTests(unittest.TestCase):
     def test_no_focus_while_applying(self) -> None:
         self.assertEqual(update_popup_focus_ring(update_available=True, applying=True), ())
 
+    def test_latest_pulls_update_until_reopen(self) -> None:
+        self.assertEqual(
+            update_popup_focus_ring(update_available=False, latest=True), ("back",)
+        )
+        st = _state(available=False)
+        st.update_latest_confirmed = True
+        st.set_update_popup_focus("update")
+        self.assertEqual(st.update_popup_focused_choice, "back")
+        root = _tree(st)
+        self.assertTrue(_hidden(_find_by_logical_id(root, ID_UPDATE_CONTAINER_TYPO)))
+        st.close_update_popup()
+        st.open_update_popup()
+        self.assertFalse(st.update_latest_confirmed)
+        self.assertEqual(st.update_popup_focused_choice, "update")
+
     def test_open_lands_on_update(self) -> None:
         st = MainSettingsState()
         st.open_update_popup()

@@ -1248,6 +1248,8 @@ def _handle_main_settings_action(action: str, *, _apply_persisted_location_to_ru
                 st.update_error = getattr(result, "error", None)
                 available = bool(getattr(result, "update_available", False))
                 st.update_available = available and not st.update_error
+                # Confirmed current: pull version_update until the next visit.
+                st.update_latest_confirmed = not st.update_available and not st.update_error
                 st.update_changelog = (
                     DEFAULT_CHANGELOG if st.update_available else UP_TO_DATE_CHANGELOG
                 )
