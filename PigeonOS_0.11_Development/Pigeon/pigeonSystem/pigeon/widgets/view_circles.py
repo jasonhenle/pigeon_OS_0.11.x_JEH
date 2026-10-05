@@ -5311,14 +5311,9 @@ class ViewCirclesWidget:
         if _zone_clock_hides_header(self._assignments()):
             return
         if self._header_slot_ticks():
-            # Digital-7 clock centered on the wide TT when the TRT sits over
-            # the volume disc; otherwise over zone 3.
-            assignments = self._assignments()
-            if self._header_trt_volume_zone() is not None:
-                cx = header_clock_center_x(assignments)
-            else:
-                z3 = NOW_PLAYING_ZONES[3]
-                cx = float(z3.x) + float(z3.w) * 0.5
+            # Digital-7 clock over zone 3; zone 6's header slot holds the TRT.
+            z3 = NOW_PLAYING_ZONES[3]
+            cx = float(z3.x) + float(z3.w) * 0.5
             self._paste_header_digital7(
                 out,
                 now_playing_header_clock_text(now),
@@ -6130,32 +6125,10 @@ class ViewCirclesWidget:
         _paste_patch_bgra(out, patch, px, py)
         return (px, py, int(pw), int(ph))
 
-    def _header_trt_volume_zone(self) -> int | None:
-        """Portrait slot beside the wide TT when it holds the volume disc.
-
-        The wide TT covers zone 6 (slots 1+2) or 7 (slots 2+3); the TRT sits
-        over the remaining slot when that slot is the volume widget.
-        """
-        assignments = self._assignments()
-        wide = tt_countdown_16x9_zone(assignments)
-        if wide is None:
-            return None
-        slot = 3 if int(wide) == 6 else 1
-        if str(assignments[slot - 1] or "").strip() in ("volume", "clock_saver_volume"):
-            return slot
-        return None
-
     def _draw_header_trt(self, out: np.ndarray, wide_zone: int, label: str) -> None:
-        """Header TRT. Over the volume disc: Digital-7 in the UI color, as large
-        as fits above the ring. Otherwise white, in the wide TT's header slot."""
-        vol_zone = self._header_trt_volume_zone()
-        if vol_zone is None:
-            z = _zone_spec(int(wide_zone))
-            rect = self._paste_header_digital7(out, label, float(z.x) + float(z.w) * 0.5)
-            if rect is not None:
-                self._tt_time_paint_rects.append(rect)
-            return
-        cx, top, max_w, max_h = header_trt_ink_box(vol_zone)
+        """Header TRT: Digital-7 in the UI color, centered at the top of the
+        wide TT's zone, sized to the band above the volume ring."""
+        cx, top, max_w, max_h = header_trt_ink_box(int(wide_zone))
         template = re.sub(r"\d", "8", label)
         size = _header_trt_size_px(template, int(max_w), int(max_h))
         fill_rgb = tuple(reversed(self._effective_np_theme().ui_bgr))
@@ -6332,8 +6305,11 @@ class ViewCirclesWidget:
             portrait_wide = tt_countdown_16x9_tt_is_portrait(sw, sh)
 
         if portrait_wide:
-            # Centered, shrunk symmetrically so its top clears the header TRT.
-            header_clear_d = float(header_clock_baseline_y()) + 8.0 - float(z.y)
+            # Centered, shrunk symmetrically so its top clears the header TRT band.
+            _tcx, trt_top, _tw, trt_h = header_trt_ink_box(int(zone))
+            header_clear_d = max(
+                float(header_clock_baseline_y()), float(trt_top) + float(trt_h)
+            ) + 8.0 - float(z.y)
             pad = max(
                 float(TT_COUNTDOWN_BG_PAD),
                 header_clear_d * view_h / max(float(z.h), 1.0),
