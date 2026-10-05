@@ -77,8 +77,24 @@ _VERSION_FONT_PX = 100
 POPUP_SCALE = _BACK_TEXT_PX / _VERSION_FONT_PX
 POPUP_DRAW_W = int(round(POPUP_W * POPUP_SCALE))
 POPUP_DRAW_H = int(round(POPUP_H * POPUP_SCALE))
-POPUP_X = int(round((DESIGN_W - POPUP_DRAW_W) / 2.0))
-POPUP_Y = int(round((DESIGN_H - POPUP_DRAW_H) / 2.0))
+
+# The blue window is sized in design px to cover settings_pigeon's two tile
+# rows (x 66–1216, y 271–592, RESET / UPDATE labels to ~640) with margin.
+WINDOW_RECT = (46, 248, 1188, 416)
+_WINDOW_RADIUS = 40
+# Scaled card content (title / versions / message), centered in the window
+# with its title cap height 60 px below the window top.
+_CONTENT_TOP_UNITS = 77.0
+_CONTENT_TOP_PAD = 60
+POPUP_X = int(round(WINDOW_RECT[0] + (WINDOW_RECT[2] - POPUP_DRAW_W) / 2.0))
+POPUP_Y = int(round(WINDOW_RECT[1] + _CONTENT_TOP_PAD - _CONTENT_TOP_UNITS * POPUP_SCALE))
+# Black status well spanning the window, 40 px side / 60 px bottom margins.
+STATUS_WELL_RECT = (
+    WINDOW_RECT[0] + 40,
+    WINDOW_RECT[1] + WINDOW_RECT[3] - 60 - 56,
+    WINDOW_RECT[2] - 80,
+    56,
+)
 
 # Geometry from the 2026-10 Illustrator export (SVG units).
 _UPDATE_BOX = (494.43, 266.26, 291.23, 126.14)
@@ -92,9 +108,8 @@ _PIGEONOS_XY = (79.94, 187.04)
 _MESSAGE_FONT_PX = 60
 _PIGEONOS_FONT_PX = 146
 _VERSION_TEXT_INSET = 22.0
-_STATUS_BAR = (43.44, 526.98, 756.56, 81.61)
 
-# Red "update found" badge peeking out from behind the update container.
+# Red "update found" badge on the update container's top-right corner.
 _BADGE_R = 24.0
 _BADGE_INSET = 14.0
 _BADGE_FILL = "#FF0000"
@@ -104,13 +119,14 @@ _TEXT_SELECTED = "#000000"
 # label would vanish; white matches the export.
 _TEXT_UNSELECTED = "#FFFFFF"
 _CONTAINER_FILL = "#FFFFFF"
-_STATUS_FILL = "#000000"
 
 # Status bar cells.
 _STATUS_COUNT = 60
-_STATUS_PAD_X = 16
-_STATUS_PAD_Y = 16
-_STATUS_GAP = 3.0
+# Status well padding / cell gap (design px). 60 cells across the full-width
+# well come out ~14 px wide, close to the clocksaver seconds cells.
+_STATUS_PAD_X = 12
+_STATUS_PAD_Y = 12
+_STATUS_GAP = 4.0
 _STATUS_DIM_OPACITY = 0.18
 _STATUS_ERROR_BGR = (0, 0, 255)
 _CHECK_CELLS_PER_S = 6
@@ -199,29 +215,21 @@ def _rect_el(x: float, y: float, w: float, h: float, *, rx: float, fill: str, el
     return el
 
 
-def _insert_before(parent: ET.Element | None, new: ET.Element, ref: ET.Element | None) -> None:
-    if parent is None:
-        return
-    children = list(parent)
-    idx = children.index(ref) if ref is not None and ref in children else 0
-    parent.insert(idx, new)
-
-
 def apply_update_popup_svg_state(root: ET.Element, state: MainSettingsState) -> None:
     """Shape layers only — labels are painted by :func:`_draw_labels_bgra`."""
     ui = state.theme.ui or COLOR_UI_DEFAULT
     available = bool(state.update_available)
     focused = _focused_choice(state)
 
+    # The card sits inside the larger drawn window: square, UI-filled corners
+    # so it blends in, and its status well is redrawn full width instead.
     window = _find_by_logical_id(root, ID_POPUP_WINDOW)
     for node in ([window] + list(window.iter())) if window is not None else []:
         if node.tag.endswith("rect") or node.tag.endswith("path"):
             _set_paint(node, fill=ui, stroke=ui)
-
-    status = _find_by_logical_id(root, ID_STATUS)
-    for node in (list(status.iter()) if status is not None else []):
-        if node.tag.endswith("rect") or node.tag.endswith("path"):
-            _set_paint(node, fill=_STATUS_FILL, stroke="none")
+            node.set("rx", "0")
+            node.set("ry", "0")
+    _set_visible(_find_by_logical_id(root, ID_STATUS), False)
 
     update_group = _find_by_logical_id(root, ID_UPDATE_GROUP)
     update_box = _find_by_logical_id(root, ID_UPDATE_CONTAINER)
@@ -238,8 +246,9 @@ def apply_update_popup_svg_state(root: ET.Element, state: MainSettingsState) -> 
         badge.set("cy", f"{by + _BADGE_INSET:.2f}")
         badge.set("r", f"{_BADGE_R:.2f}")
         badge.set("fill", _BADGE_FILL)
-        # Behind the container: first child of the group.
-        _insert_before(update_group, badge, update_box)
+        # On top of the container: last shape in the group.
+        if update_group is not None:
+            update_group.append(badge)
 
     arrow = _find_by_logical_id(root, ID_ARROW)
     if arrow is not None:
@@ -415,6 +424,15 @@ def render_update_popup_card_bgra(
     card = rasterize_settings_svg_bgra(root, width=w, height=h, view_box=(0.0, 0.0, POPUP_W, POPUP_H))
     _draw_labels_bgra(card, state)
     card = cv2.resize(card, (POPUP_DRAW_W, POPUP_DRAW_H), interpolation=cv2.INTER_AREA)
+    # Flatten onto the window's UI fill: anti-aliased card edges would
+    # otherwise leave a see-through seam inside the window. PyMuPDF edge
+    # pixels are premultiplied, so only the backdrop is scaled.
+    alpha = card[:, :, 3:4].astype(np.float32) / 255.0
+    ui = np.array(_ui_bgr(state), dtype=np.float32)
+    card[:, :, :3] = np.clip(
+        card[:, :, :3].astype(np.float32) + ui * (1.0 - alpha), 0, 255
+    ).astype(np.uint8)
+    card[:, :, 3] = 255
     if len(_STATIC_CACHE) >= _STATIC_CACHE_MAX:
         _STATIC_CACHE.clear()
     _STATIC_CACHE[key] = card
@@ -427,17 +445,25 @@ def render_update_popup_bgra(
     svg_path: Path | str | None = None,
     assets_dir: Path | str | None = None,
 ) -> np.ndarray:
-    """Full-canvas BGRA (transparent outside the card)."""
+    """Full-canvas BGRA (transparent outside the window)."""
+    from pigeon.widgets.view_circles import _draw_rounded_bar_bgra
+
     path = Path(svg_path) if svg_path is not None else default_update_popup_svg_path(assets_dir)
     if not path.is_file():
         raise FileNotFoundError(f"update popup SVG not found: {path}")
     st = state if state is not None else MainSettingsState()
     card = render_update_popup_card_bgra(st, path=path)
     frame = np.zeros((DESIGN_H, DESIGN_W, 4), dtype=np.uint8)
+    wx, wy, ww, wh = WINDOW_RECT
+    _draw_rounded_bar_bgra(
+        frame, x=wx, y=wy, w=ww, h=wh, fill_bgr=_ui_bgr(st), radius=_WINDOW_RADIUS
+    )
     ch, cw = card.shape[:2]
     y1 = min(DESIGN_H, POPUP_Y + ch)
     x1 = min(DESIGN_W, POPUP_X + cw)
     frame[POPUP_Y:y1, POPUP_X:x1] = card[: y1 - POPUP_Y, : x1 - POPUP_X]
+    sx, sy, sw, sh = STATUS_WELL_RECT
+    frame[sy : sy + sh, sx : sx + sw] = (0, 0, 0, 255)
     return frame
 
 
@@ -497,22 +523,19 @@ def draw_update_status_bar_bgra(
     from pigeon.widgets.view_circles import _draw_rounded_bar_bgra
 
     out = frame.copy()
-    k = POPUP_SCALE
-    sx, sy, sw, sh = _STATUS_BAR
+    sx, sy, sw, sh = STATUS_WELL_RECT
     track = (
-        POPUP_X + (sx + _STATUS_PAD_X) * k,
-        POPUP_Y + (sy + _STATUS_PAD_Y) * k,
-        (sw - 2 * _STATUS_PAD_X) * k,
-        (sh - 2 * _STATUS_PAD_Y) * k,
+        sx + _STATUS_PAD_X,
+        sy + _STATUS_PAD_Y,
+        sw - 2 * _STATUS_PAD_X,
+        sh - 2 * _STATUS_PAD_Y,
     )
-    rects = clock_saver_seconds_segment_rects(
-        track, count=_STATUS_COUNT, gap=_STATUS_GAP * k
-    )
+    rects = clock_saver_seconds_segment_rects(track, count=_STATUS_COUNT, gap=_STATUS_GAP)
     if not rects:
         return out
     lit, mode = update_status_cells(state, now_mono=now_mono)
     color = _STATUS_ERROR_BGR if mode == "error" else _ui_bgr(state)
-    radius = max(1, min(min(r[2] for r in rects) // 2, 2))
+    radius = max(1, min(min(r[2] for r in rects) // 2, 3))
     for i, (x, y, w, h) in enumerate(rects):
         _draw_rounded_bar_bgra(
             out,
