@@ -46,6 +46,18 @@ def _splash_photo_from_rgb(rgb: np.ndarray) -> ImageTk.PhotoImage:
     return ImageTk.PhotoImage(image=Image.fromarray(rgb, "RGB"))
 
 
+def _splash_update_photo(rgb: np.ndarray, *, splash_photo) -> ImageTk.PhotoImage:
+    """Update the persistent Tk image instead of allocating one per frame."""
+    image = Image.fromarray(rgb, "RGB")
+    photo = splash_photo[0]
+    if photo is None:
+        photo = ImageTk.PhotoImage(image=image)
+        splash_photo[0] = photo
+    else:
+        photo.paste(image)
+    return photo
+
+
 def _splash_prebuild_photos(*, limit: int, _splash_frame_keeps_live_clock, _splash_photo_cache, _splash_photo_from_rgb, _splash_rgb_cache, splash_total_frames) -> int:
     """Turn already-decoded RGB frames into Tk images on the UI thread."""
     built = 0
@@ -247,7 +259,7 @@ def _splash_composite_bgra_to_photo(bgra_hit: np.ndarray | None, fade_mul: float
         rgb = flatten_bgra_over_bg_to_rgb(bgra_out, _splash_bg_bgr)
     else:
         rgb = _splash_bgra_over_bgr_to_rgb(bgra_out, under)
-    splash_photo[0] = ImageTk.PhotoImage(image=Image.fromarray(rgb, "RGB"))
+    _splash_update_photo(rgb, splash_photo=splash_photo)
 
 
 def splash_tick(*, SPLASH_HOLD_LOGO_FRAME, SPLASH_MAX_DURATION_S, WINDOW_H, WINDOW_W, _app_startup_mono, _reveal_clock_under_splash, _splash_bg_bgr, _splash_bgra_cache, _splash_composite_bgra_to_photo, _splash_fade_frames, _splash_fallback_frame_sync, _splash_frame_keeps_live_clock, _splash_hold_released_now, _splash_hold_since, _splash_photo_cache, _splash_photo_from_rgb, _splash_prebake_done, _splash_prebake_reveal_bgra, _splash_prebuild_photos, _splash_reveal_clock, _splash_reveal_i, _splash_rgb_cache, _splash_start_lead, _splash_wait_deadline, _try_remove_splash_overlay, content_host, flatten_bgra_over_bg_to_rgb, frame_dt, frame_ms, root, splash_anim_done, splash_bootstrap_go, splash_end_fade_factor, splash_idx, splash_label, splash_photo, splash_t0, splash_tick, splash_total_frames, startup_ph) -> None:
@@ -281,8 +293,7 @@ def splash_tick(*, SPLASH_HOLD_LOGO_FRAME, SPLASH_MAX_DURATION_S, WINDOW_H, WIND
                 rgb0 = _splash_rgb_cache.get(0)
                 if rgb0 is not None:
                     try:
-                        ph0 = _splash_photo_from_rgb(rgb0)
-                        _splash_photo_cache[0] = ph0
+                        ph0 = _splash_update_photo(rgb0, splash_photo=splash_photo)
                     except Exception:
                         ph0 = None
             if ph0 is not None:
@@ -291,7 +302,6 @@ def splash_tick(*, SPLASH_HOLD_LOGO_FRAME, SPLASH_MAX_DURATION_S, WINDOW_H, WIND
                     splash_label.configure(image=ph0)
                 except Exception:
                     pass
-        _splash_prebuild_photos(limit=6)
         if (
             lead < lead_need
             and not _splash_prebake_done[0]
@@ -405,12 +415,8 @@ def splash_tick(*, SPLASH_HOLD_LOGO_FRAME, SPLASH_MAX_DURATION_S, WINDOW_H, WIND
     splash_idx[0] = i + 1
 
     try:
-        ph = None if live_clock_underlay else _splash_photo_cache.get(i)
-        if ph is None and rgb_hit is not None and not live_clock_underlay:
-            ph = _splash_photo_from_rgb(rgb_hit)
-            _splash_photo_cache[i] = ph
-        if ph is not None:
-            splash_photo[0] = ph
+        if rgb_hit is not None and not live_clock_underlay:
+            _splash_update_photo(rgb_hit, splash_photo=splash_photo)
         else:
             fade_mul = (
                 splash_end_fade_factor(i, ntot, min(_splash_fade_frames, ntot))
@@ -425,16 +431,16 @@ def splash_tick(*, SPLASH_HOLD_LOGO_FRAME, SPLASH_MAX_DURATION_S, WINDOW_H, WIND
                 bgra_hit if bgra_hit is not None else np.zeros((WINDOW_H, WINDOW_W, 4), np.uint8),
                 _splash_bg_bgr,
             )
-            splash_photo[0] = ImageTk.PhotoImage(image=Image.fromarray(fb, "RGB"))
+            _splash_update_photo(fb, splash_photo=splash_photo)
         except Exception:
             pass
-    splash_label.configure(image=splash_photo[0])
+    # The label remains bound to the same PhotoImage; paste() updates its pixels.
+    # Configure only if this was the first frame and the image was just created.
+    if splash_label.cget("image") != str(splash_photo[0]):
+        splash_label.configure(image=splash_photo[0])
     # Played frames are never shown again; free them (~3–4 MB each at 1280×800).
     for _cache in (_splash_rgb_cache, _splash_bgra_cache, _splash_photo_cache):
         _cache.pop(i - 1, None)
-    # Warm one upcoming frame only — extra encodes on this tick cause hitching.
-    _splash_prebuild_photos(limit=1)
-
     # Hold a late frame rather than jumping; catch up on the next tick.
     now2 = time.monotonic()
     next_i = int(splash_idx[0])
