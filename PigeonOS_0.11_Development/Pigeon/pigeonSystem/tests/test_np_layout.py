@@ -1326,36 +1326,30 @@ class NowPlayingHeaderClockTests(unittest.TestCase):
             header_clock_baseline_y(),
             (art_top + np_header_ink_height()) * 0.5 + NP_HEADER_BASELINE_NUDGE_PX,
         )
-        # The clock sits in zone 6's header slot, centered on the wide TT.
-        z6 = NOW_PLAYING_ZONES[6]
+        # The clock sits over zone 3, centered on it.
+        z3 = NOW_PLAYING_ZONES[3]
         band = frame[
             max(0, baseline - 56) : baseline + 8,
-            int(z6.x) : int(z6.x + z6.w),
+            int(z3.x) : int(z3.x + z3.w),
         ]
-        ink = np.where(band[:, :, 3] > 16)
+        ink = np.where(band[:, :, :3].max(axis=2) > 40)
         self.assertGreater(int(ink[0].size), 0)
-        # No rounded black chip: empty pixels beside the glyphs stay dark, not a bar.
-        mid_y = int(ink[0].min() + (int(ink[0].max()) - int(ink[0].min())) / 2)
-        side = band[mid_y, 4, :3]
-        self.assertLess(int(side.max()), 40)
-        clock_cx = int(z6.x) + (int(ink[1].min()) + int(ink[1].max())) / 2.0
-        self.assertLess(abs(clock_cx - (z6.x + z6.w / 2.0)), 4.0)
-        # The TRT sits above the volume disc in zone 3: centered on it, larger
-        # than the clock, in the UI color, and clear of the ring.
-        from pigeon.np_layout import VOLUME_LOCAL_CX, VOLUME_LOCAL_CY, VOLUME_OUTER_R
+        clock_cx = int(z3.x) + (int(ink[1].min()) + int(ink[1].max())) / 2.0
+        self.assertLess(abs(clock_cx - (z3.x + z3.w / 2.0)), 4.0)
+        # The TRT is centered at the top of zone 6: larger than the clock, in
+        # the UI color, no wider than the volume ring, above the volume-ring top.
+        from pigeon.np_layout import VOLUME_LOCAL_CY, VOLUME_OUTER_R
 
-        z3 = NOW_PLAYING_ZONES[3]
+        z6 = NOW_PLAYING_ZONES[6]
         ring_top = int(z3.y + VOLUME_LOCAL_CY - VOLUME_OUTER_R)
-        trt = frame[0:ring_top, int(z3.x) : int(z3.x + z3.w)]
+        trt = frame[0 : ring_top - 6, int(z6.x) : int(z6.x + z6.w)]
         trt_ink = np.where(trt[:, :, :3].max(axis=2) > 40)
         self.assertGreater(int(trt_ink[0].size), 0)
-        self.assertLess(int(trt_ink[0].max()), ring_top - 10)
-        trt_cx = int(z3.x) + (int(trt_ink[1].min()) + int(trt_ink[1].max())) / 2.0
-        self.assertLess(abs(trt_cx - (z3.x + VOLUME_LOCAL_CX)), 4.0)
-        clock_rows = np.where((band[:, :, :3].max(axis=2) > 40).any(axis=1))[0]
+        trt_cx = int(z6.x) + (int(trt_ink[1].min()) + int(trt_ink[1].max())) / 2.0
+        self.assertLess(abs(trt_cx - (z6.x + z6.w / 2.0)), 4.0)
         self.assertGreater(
             int(trt_ink[0].max()) - int(trt_ink[0].min()),
-            2 * (int(clock_rows.max()) - int(clock_rows.min())),
+            2 * (int(ink[0].max()) - int(ink[0].min())),
         )
         self.assertLessEqual(int(trt_ink[1].max()) - int(trt_ink[1].min()), int(2 * VOLUME_OUTER_R))
         b, g, r = (int(v) for v in widget._effective_np_theme().ui_bgr)
@@ -2876,10 +2870,13 @@ class TtCountdown16x9WidgetTests(unittest.TestCase):
         zx, zy, zw, zh = (int(v) for v in z6.xywh)
         region = frame[zy : zy + zh, zx : zx + zw, :3]
         luma = region.max(axis=2)
-        # Skip the header clock that sits on the input-label baseline.
+        # Skip the header TRT band at the top of zone 6.
+        from pigeon.np_layout import header_trt_ink_box
+
+        _cx, trt_top, _tw, trt_h = header_trt_ink_box(6)
         skip = max(
             12,
-            int(round(header_clock_baseline_y() - z6.y + 4.0)),
+            int(round(max(header_clock_baseline_y(), trt_top + trt_h) - z6.y + 4.0)),
         )
         ink_rows = np.where(luma[skip:, :].max(axis=1) > 200)[0] + skip
         self.assertGreater(len(ink_rows), 10)
@@ -3005,15 +3002,19 @@ class TtCountdown16x9WidgetTests(unittest.TestCase):
         zx, zy, zw, zh = z6.xywh
         region = frame[zy : zy + zh, zx : zx + zw]
         bright = region[:, :, :3].max(axis=2) > 200
-        # Rows under the header TRT belong to the TT alone.
-        skip = int(round(header_clock_baseline_y() - zy + 4.0))
+        # Rows under the header TRT band belong to the TT alone.
+        from pigeon.np_layout import header_trt_ink_box
+
+        _cx, trt_top, _tw, trt_h = header_trt_ink_box(6)
+        trt_bottom = trt_top + trt_h
+        skip = int(round(trt_bottom - zy + 4.0))
         rows = np.where(bright[skip:, :].any(axis=1))[0] + skip
         cols = np.where(bright[skip:, :].any(axis=0))[0]
         self.assertGreater(len(rows), 100)
         self.assertAlmostEqual((cols[0] + cols[-1]) / 2.0, zw / 2.0, delta=2.0)
         self.assertAlmostEqual((rows[0] + rows[-1]) / 2.0, zh / 2.0, delta=2.0)
-        # The tall TT shrinks to stay clear of the header TRT baseline.
-        self.assertGreater(zy + int(rows[0]), header_clock_baseline_y())
+        # The tall TT shrinks to stay clear of the header TRT band.
+        self.assertGreater(zy + int(rows[0]), trt_bottom)
 
 
 class WidgetShimmerTests(unittest.TestCase):

@@ -942,14 +942,16 @@ def np_label_baseline_y() -> float:
 def header_trt_ink_box(zone: int) -> tuple[float, float, float, float]:
     """Design ``(center_x, top, max_w, max_h)`` for the header TRT ink.
 
-    The TRT sits centered above the volume disc in portrait ``zone``: as wide
-    as the ring, filling the band from the screen top down to the ring top.
+    Centered at the top of ``zone`` (the wide TT's zone 6 or 7). Sized like
+    the band above a volume disc: as wide as the ring, from the screen top
+    down to the ring top.
     """
     z = NOW_PLAYING_ZONES[int(zone)]
-    cx, cy = design_xy_from_local(z, VOLUME_LOCAL_CX, VOLUME_LOCAL_CY)
-    ring_top = float(cy) - float(VOLUME_OUTER_R)
+    _vx, vcy = design_xy_from_local(NOW_PLAYING_ZONES[3], VOLUME_LOCAL_CX, VOLUME_LOCAL_CY)
+    ring_top = float(vcy) - float(VOLUME_OUTER_R)
     margin = float(NP_HEADER_TRT_MARGIN_PX)
-    return (float(cx), margin, 2.0 * float(VOLUME_OUTER_R), max(12.0, ring_top - 2.0 * margin))
+    cx = float(z.x) + float(z.w) * 0.5
+    return (cx, margin, 2.0 * float(VOLUME_OUTER_R), max(12.0, ring_top - 2.0 * margin))
 
 
 def header_clock_baseline_y() -> float:
