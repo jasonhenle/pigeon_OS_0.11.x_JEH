@@ -13,6 +13,7 @@ from pigeon.core import startup as _core_startup
 from pigeon.core.binding import bind_deps as _bind_deps
 from pigeon.core.binding import bind_method_deps as _bind_method_deps
 from pigeon.core.binding import late as _late
+from pigeon.splash_mpv import SplashMpv, splash_mpv_enabled, splash_mpv_video_path
 from pigeon.splash_sequence import (
     SPLASH_HOLD_LOGO_FRAME,
     SPLASH_PREBAKE_AHEAD_FRAMES,
@@ -347,6 +348,41 @@ def run(ctx) -> None:
             splash_video_path=splash_video_path,
         )
 
+        # mpv plays the opaque frames (0..reveal) inside the overlay; Tk only plays the
+        # see-through outro. Must start before the prebake thread, which then skips to
+        # the reveal frame. Any failure leaves the full Tk splash in place.
+        _splash_mpv_player: SplashMpv | None = None
+        _splash_mpv_host: tk.Frame | None = None
+        _splash_mpv_video = (
+            splash_mpv_video_path(ctx._PROJECT_DIR)
+            if splash_png_paths and splash_total_frames > _splash_reveal_i and splash_mpv_enabled()
+            else None
+        )
+        if _splash_mpv_video is not None:
+            _splash_mpv_host = tk.Frame(splash_overlay, bg="#000", highlightthickness=0, bd=0, cursor="none")
+            _splash_mpv_host.place(relx=0, rely=0, relwidth=1, relheight=1)
+            try:
+                root.update_idletasks()
+                _splash_mpv_player = SplashMpv(
+                    _splash_mpv_video,
+                    wid=_splash_mpv_host.winfo_id(),
+                    fps=_splash_fps_effective,
+                    hold_frame=int(SPLASH_HOLD_LOGO_FRAME),
+                    last_frame=_splash_reveal_i,
+                    bootstrap_done=bootstrap_done,
+                )
+                if not _splash_mpv_player.start():
+                    _splash_mpv_player = None
+            except Exception as e:
+                sys.stderr.write(f"pigeon: splash mpv error: {e}\n")
+                _splash_mpv_player = None
+            if _splash_mpv_player is None:
+                _splash_mpv_host.destroy()
+                _splash_mpv_host = None
+            else:
+                splash_idx[0] = _splash_reveal_i
+                splash_bootstrap_go[0] = True
+
         # Kick off the prebake thread immediately so frames are warm before ``splash_tick``
         # starts pulling from the cache post-``after_idle``.
         try:
@@ -421,6 +457,23 @@ def run(ctx) -> None:
             startup_ph=startup_ph,
         )
 
+        # Entry point scheduled by main(): mpv first when it is playing, else Tk directly.
+        _splash_entry_tick = splash_tick
+        if _splash_mpv_player is not None:
+            _splash_entry_tick = _bind_deps(
+                _core_splash.splash_mpv_tick,
+                _app_startup_mono=_app_startup_mono,
+                _splash_reveal_i=_splash_reveal_i,
+                frame_dt=frame_dt,
+                mpv_host=_splash_mpv_host,
+                player=_splash_mpv_player,
+                root=root,
+                splash_idx=splash_idx,
+                splash_mpv_tick=_late(lambda: _splash_entry_tick, "_splash_entry_tick"),
+                splash_t0=splash_t0,
+                splash_tick=splash_tick,
+            )
+
     else:
         loading = tk.Label(
             content_host,
@@ -464,6 +517,6 @@ def run(ctx) -> None:
     ctx._try_remove_splash_overlay = _try_remove_splash_overlay
     ctx.paused_interval_ms = paused_interval_ms
     try:
-        ctx.splash_tick = splash_tick
+        ctx.splash_tick = _splash_entry_tick
     except NameError:
         pass
