@@ -375,8 +375,16 @@ def apply_pigeon_settings_svg_state(root: ET.Element, state: MainSettingsState) 
     kb_open = getattr(state, "keyboard", None) is not None
     focused = "" if kb_open else normalize_pigeon_focus_id(state.pigeon_focused_id)
     kb_zip = kb_open and str(getattr(state.keyboard, "target", "") or "") == "zipcode"
+    # Update screen: EXIT becomes the system BACK button and is the only page
+    # control that can carry focus.
+    update_screen = bool(getattr(state, "show_update_popup", False))
+    if update_screen:
+        focused = "exit" if state.update_popup_focused_choice == "back" else ""
 
     _sync_pill(root, button_id="exit_button", text_id="exit_text", selected=focused == "exit")
+    _set_text_content(_by_id(root, "exit_text"), "BACK" if update_screen else "EXIT")
+    if update_screen:
+        _fit_text_in_pill(root, text_id="exit_text", button_id="exit_button")
     _sync_pill(
         root,
         button_id="zipcode_button",

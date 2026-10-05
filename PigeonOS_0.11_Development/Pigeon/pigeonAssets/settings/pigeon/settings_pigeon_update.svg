@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 843.44 670.65">
+  <g id="popup_window">
+    <rect x=".5" y=".5" width="842.44" height="669.65" rx="57.87" ry="57.87" fill="#4b9eec" stroke="#4b9eec" stroke-miterlimit="10"/>
+  </g>
+  <g id="status_placeholder">
+    <rect x="43.44" y="526.98" width="756.56" height="81.61" fill="#231f20"/>
+  </g>
+  <g id="version_update_group">
+    <rect id="version_update_containter" x="494.43" y="266.26" width="291.23" height="126.14" rx="40.2" ry="40.2" fill="#fff"/>
+    <text id="version_update_text" transform="translate(527.32 361.36)" font-family="Digital-7, Digital-7" font-size="100"><tspan x="0" y="0">CHECK</tspan></text>
+    <text id="version_update_message_text" transform="translate(529.92 450.12)" fill="#fff" font-family="SharpSans-MediumItalic, &apos;Sharp Sans&apos;" font-size="60" font-style="italic" font-weight="500"><tspan x="0" y="0" letter-spacing="0em">u</tspan><tspan x="36.96" y="0">p</tspan><tspan x="77.76" y="0" letter-spacing="0em">d</tspan><tspan x="118.5" y="0" letter-spacing="0em">a</tspan><tspan x="159.54" y="0" letter-spacing="-.02em">t</tspan><tspan x="181.26" y="0">e</tspan></text>
+    <polygon id="version_update_arrow_icon" points="450.06 312.57 421.89 296.09 421.99 313.18 364.89 313.18 364.89 344.27 421.99 344.27 421.89 361.35 450.06 344.88 478.41 328.72 450.06 312.57" fill="#fff"/>
+  </g>
+  <g id="version_current_group">
+    <text id="version_current_text" transform="translate(99.39 363.9)" fill="#fff" font-family="Digital-7, Digital-7" font-size="100"><tspan x="0" y="0">0.11.68</tspan></text>
+  </g>
+  <g id="pigeonOS_text_group">
+    <text id="pigeonOS_text" transform="translate(79.94 187.04)" fill="#fff" font-family="SharpSans-ExtraboldItalic, &apos;Sharp Sans&apos;" font-size="145.94" font-style="italic" font-weight="700"><tspan x="0" y="0" letter-spacing="0em">pi</tspan><tspan x="131.78" y="0" letter-spacing="0em">g</tspan><tspan x="225.62" y="0">eon</tspan><tspan x="496.48" y="0" letter-spacing="0em">O</tspan><tspan x="616.44" y="0">S</tspan></text>
+  </g>
+</svg>

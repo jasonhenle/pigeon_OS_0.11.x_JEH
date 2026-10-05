@@ -1030,7 +1030,8 @@ def _check_for_updates(*, force: bool = False, _UPDATE_CHECK_INTERVAL_S, _finish
         try:
             from pigeon.update_check import check_for_update
 
-            result = check_for_update()
+            # Periodic polls: one request against the last winning URL.
+            result = check_for_update(quick=not force)
         except Exception as e:
             from pigeon.update_check import UpdateCheckResult
 
@@ -1196,15 +1197,21 @@ def _handle_main_settings_action(action: str, *, _apply_persisted_location_to_ru
         skip_cache[0] = None
         return
 
-    if action == "update_popup:open":
-        # Always re-check GitHub (ignore any prior in-memory poll).
+    if action in ("update_popup:open", "update_popup:check"):
+        if action == "update_popup:open":
+            # Seed with the last background poll so a known update shows its
+            # build + red badge at once; the fresh check below replaces it.
+            try:
+                if float(update_check_state.get("last_check_mono") or 0.0) > 0.0 and not (
+                    update_check_state.get("error")
+                ):
+                    st.update_available = bool(update_check_state.get("update_available"))
+                    st.update_remote_version = update_check_state.get("remote_version")
+                    st.update_github_branch = update_check_state.get("github_branch")
+                    st.set_update_popup_focus("update")
+            except Exception:
+                pass
         st.update_local_version = version_string()
-        st.update_checking = True
-        st.update_error = None
-        st.update_available = False
-        st.update_remote_version = None
-        st.update_github_branch = None
-        st.update_changelog = "Checking GitHub for updates…"
         main_settings_widget.invalidate()
         skip_cache[0] = None
 
@@ -1229,6 +1236,9 @@ def _handle_main_settings_action(action: str, *, _apply_persisted_location_to_ru
                     UP_TO_DATE_CHANGELOG,
                 )
 
+                if st.update_applying:
+                    return
+                focus_before = st.update_popup_focused_choice
                 st.update_checking = False
                 st.update_local_version = str(
                     getattr(result, "local_version", None) or version_string()
@@ -1238,20 +1248,11 @@ def _handle_main_settings_action(action: str, *, _apply_persisted_location_to_ru
                 st.update_error = getattr(result, "error", None)
                 available = bool(getattr(result, "update_available", False))
                 st.update_available = available and not st.update_error
-                if st.update_available:
-                    st.update_changelog = DEFAULT_CHANGELOG
-                    try:
-                        from pigeon.widgets.update_popup import update_popup_focus_ring
-
-                        ring = update_popup_focus_ring(update_available=True)
-                        st.update_popup_focus_index = (
-                            ring.index("now") if "now" in ring else 0
-                        )
-                    except Exception:
-                        st.update_popup_focus_index = 1
-                else:
-                    st.update_changelog = UP_TO_DATE_CHANGELOG
-                    st.update_popup_focus_index = 0
+                st.update_changelog = (
+                    DEFAULT_CHANGELOG if st.update_available else UP_TO_DATE_CHANGELOG
+                )
+                # Ring grows/shrinks with version_current — keep the same choice.
+                st.set_update_popup_focus(focus_before)
                 # Keep legacy Tk Updates button in sync when present.
                 try:
                     update_check_state["update_available"] = bool(st.update_available)
@@ -1270,7 +1271,7 @@ def _handle_main_settings_action(action: str, *, _apply_persisted_location_to_ru
         threading.Thread(target=worker_ms_update_check, daemon=True).start()
         return
 
-    if action in ("update_popup:later", "update_popup:dismiss", "update_popup:busy"):
+    if action in ("update_popup:back", "update_popup:stay", "update_popup:busy"):
         main_settings_widget.invalidate()
         skip_cache[0] = None
         return
