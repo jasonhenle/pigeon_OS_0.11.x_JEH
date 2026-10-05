@@ -453,8 +453,49 @@ def splash_tick(*, SPLASH_HOLD_LOGO_FRAME, SPLASH_MAX_DURATION_S, WINDOW_H, WIND
     root.after(delay_ms, splash_tick)
 
 
+def splash_mpv_tick(*, _app_startup_mono, _splash_reveal_i, frame_dt, mpv_host, player, root, splash_idx, splash_mpv_tick, splash_t0, splash_tick) -> None:
+    """Wait for mpv to land on the reveal frame, then hand playback to ``splash_tick``.
+
+    mpv plays frames ``0.._splash_reveal_i`` in ``mpv_host``; ``splash_idx`` already
+    points at the reveal frame so the prebake worker only decodes the outro.
+    """
+    if not player.done:
+        root.after(16, splash_mpv_tick)
+        return
+    try:
+        sys.stderr.write(
+            f"pigeon: splash mpv handoff frame={_splash_reveal_i} "
+            f"{'ok' if player.ended else 'early (mpv failed)'} "
+            f"+{time.monotonic() - _app_startup_mono:.3f}s\n"
+        )
+        sys.stderr.flush()
+    except Exception:
+        pass
+    # Timeline as if Tk had played every frame up to the reveal frame.
+    splash_t0[0] = time.monotonic() - float(_splash_reveal_i) * frame_dt
+    splash_tick()
+
+    def _drop_mpv() -> None:
+        # Keep mpv on top until Tk has the reveal frame painted underneath it.
+        if int(splash_idx[0]) <= int(_splash_reveal_i):
+            root.after(4, _drop_mpv)
+            return
+        try:
+            root.update_idletasks()
+            mpv_host.destroy()
+        except tk.TclError:
+            pass
+        player.stop()
+
+    _drop_mpv()
+
+
 def _bootstrap_after_splash(*, _app_startup_mono, _bootstrap_after_splash, bootstrap, root, splash_anim_done, splash_bootstrap_go) -> None:
-    """Run bootstrap once the splash parks on its logo hold (or ends, for short splashes)."""
+    """Run bootstrap once the splash parks on its logo hold (or ends, for short splashes).
+
+    With the mpv splash, ``splash_bootstrap_go`` is set up front: mpv plays on its own
+    threads, so bootstrap runs from the first frame.
+    """
     if not (splash_anim_done[0] or splash_bootstrap_go[0]):
         root.after(16, _bootstrap_after_splash)
         return

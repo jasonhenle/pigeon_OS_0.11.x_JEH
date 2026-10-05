@@ -102,6 +102,7 @@ pigeon_apt_install() {
         avahi-daemon \
         libnss-mdns \
         zenity \
+        mpv \
         rsync; then
         return 0
       fi
