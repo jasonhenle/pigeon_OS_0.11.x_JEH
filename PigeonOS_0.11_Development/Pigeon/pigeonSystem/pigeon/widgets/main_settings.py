@@ -584,6 +584,9 @@ class MainSettingsState:
     update_github_branch: str | None = None
     # time.monotonic() when the current GitHub check began (status bar sweep).
     update_check_started_mono: float = 0.0
+    # A check this visit found no newer build: version_update is pulled from
+    # the ring and reads "latest version" until the screen is reopened.
+    update_latest_confirmed: bool = False
     spinner_glyph_capture: bool = False
     # Focus ring rebuilt when panel visibility changes.
     focus_ring: tuple[str, ...] = field(default_factory=tuple)
@@ -1322,6 +1325,7 @@ class MainSettingsState:
         self.update_applying = False
         self.update_progress = 0.0
         self.update_local_version = self.version_string
+        self.update_latest_confirmed = False
         self.begin_update_check()
         self.set_update_popup_focus("update")
 
@@ -1346,6 +1350,7 @@ class MainSettingsState:
             update_available=bool(self.update_available),
             checking=bool(self.update_checking),
             applying=bool(self.update_applying),
+            latest=bool(self.update_latest_confirmed),
         )
 
     def set_update_popup_focus(self, choice: str) -> None:
@@ -6335,6 +6340,7 @@ class MainSettingsWidget:
             bool(st.update_available),
             bool(st.update_checking),
             bool(st.update_applying),
+            bool(st.update_latest_confirmed),
             round(float(st.update_progress), 3),
             str(st.update_local_version or ""),
             str(st.update_remote_version or ""),
@@ -6562,6 +6568,7 @@ class MainSettingsWidget:
             bool(st.update_available),
             bool(st.update_checking),
             bool(st.update_applying),
+            bool(st.update_latest_confirmed),
             round(float(st.update_progress), 3),
             str(st.update_local_version or ""),
             str(st.update_remote_version or ""),
