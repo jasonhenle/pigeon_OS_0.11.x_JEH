@@ -8,6 +8,9 @@ takes the app state it used to close over as keyword-only arguments;
 from __future__ import annotations
 
 import time
+from pigeon.receiver.base import Relocatable
+from pigeon.receiver.control import apply_rotary_action
+from pigeon.receiver_link import get_receiver_link
 from pigeon.app_state import read_last_receiver
 from pigeon.app_state import read_saved_av_receiver
 from pigeon.app_state import write_last_apple_tv
@@ -129,49 +132,30 @@ def _schedule_hdmi_frame_check_from_poll(*, _on_hdmi_frame_checked, apple_tv_aut
         apple_tv_auto_state["hdmi_check_in_flight"] = False
 
 
-def _queue_receiver_volume_action(action: str, *, _receiver_volume_controller, avr_slot_holder, receiver_power_on_pending) -> bool:
-    """Fold one knob action into the controller's pending intent (no I/O)."""
+def _queue_receiver_volume_action(action: str, *, avr_slot_holder, receiver_power_on_pending) -> bool:
+    """Fold one knob action into the receiver's pending intent (no I/O)."""
     row = avr_slot_holder[0]
     if not row:
         return False
     host = str(row.get("address") or row.get("identifier") or "").strip()
     if not host:
         return False
-    return _receiver_volume_controller.submit(
-        host, action, wake=bool(receiver_power_on_pending[0])
-    )
+    rx = get_receiver_link().bind(host)
+    if rx is None:
+        return False
+    return apply_rotary_action(rx, action, wake=bool(receiver_power_on_pending[0]))
 
 
 def _receiver_readout_superseded(line: str) -> bool:
     """True while the knob is driving to a level ``line`` has not reached."""
     try:
-        from pigeon.receiver_volume import receiver_volume_readout_superseded
-
-        return receiver_volume_readout_superseded(line)
+        return get_receiver_link().readout_superseded(line)
     except Exception:
         return False
 
 
-def _note_volume_source_lines(*, telnet_line: str = "", http_line: str = "", denon_vol_cache) -> None:
-    """Remember the last observed telnet / AppCommand readouts and when they moved."""
-    from pigeon.receiver_denon import _volume_readout_same
-
-    tn = str(telnet_line or "").strip()
-    http = str(http_line or "").strip()
-    now = time.monotonic()
-    if tn:
-        prev = str(denon_vol_cache.get("last_telnet") or "")
-        denon_vol_cache["last_telnet"] = tn
-        if not prev or not _volume_readout_same(tn, prev):
-            denon_vol_cache["last_telnet_mono"] = now
-    if http:
-        prev_h = str(denon_vol_cache.get("last_appcommand") or "")
-        denon_vol_cache["last_appcommand"] = http
-        if not prev_h or not _volume_readout_same(http, prev_h):
-            denon_vol_cache["last_appcommand_mono"] = now
-
-
-def _bind_receiver_volume_hub(host: str, *, _on_denon_telnet_volume) -> None:
+def _bind_receiver_volume_hub(host: str) -> None:
+    """Make sure the receiver link is bound to ``host`` (or the saved AV receiver)."""
     h = str(host or "").strip()
     if not h:
         try:
@@ -182,31 +166,21 @@ def _bind_receiver_volume_hub(host: str, *, _on_denon_telnet_volume) -> None:
     if not h:
         return
     try:
-        from pigeon.receiver_denon_telnet import start_denon_telnet_hub
-
-        start_denon_telnet_hub(h, on_change=_on_denon_telnet_volume)
+        get_receiver_link().bind(h)
     except Exception:
         pass
 
 
-def _denon_telnet_audio_fallback(*, receiver_telnet_debug_holder) -> tuple[str, str]:
-    """Telnet snapshot when HTTP/XML left incoming/config empty."""
-    dbg = receiver_telnet_debug_holder[0]
-    if not isinstance(dbg, dict) or not dbg:
+def _receiver_audio_fallback() -> tuple[str, str]:
+    """Incoming format / sound mode straight from the receiver when the overlay has none."""
+    st = get_receiver_link().state()
+    if not st.connected or st.powered_on is False:
         return "", ""
-    inc = str(
-        dbg.get("SYSDA") or dbg.get("SSINFAISFOR") or dbg.get("DC") or ""
-    ).strip()
-    cfg = str(dbg.get("MS") or "").strip()
-    if inc:
-        inc = inc.lower()
-    if cfg:
-        cfg = cfg.lower()
-    return inc, cfg
+    return st.audio_format, st.sound_mode
 
 
-def _resolve_receiver_lines_for_now_playing(*, _clock_saver_volume_raw, _denon_telnet_audio_fallback, apple_tv_auto_state, compose_playback_volume_widget_line, denon_vol_cache, receiver_overlay_state, receiver_standby_holder, streaming_slot_holder) -> tuple[str, str, str]:
-    """Incoming/config/volume for View 1, with Denon telnet fallback."""
+def _resolve_receiver_lines_for_now_playing(*, _clock_saver_volume_raw, _receiver_audio_fallback, apple_tv_auto_state, compose_playback_volume_widget_line, denon_vol_cache, receiver_overlay_state, receiver_standby_holder, streaming_slot_holder) -> tuple[str, str, str]:
+    """Incoming/config/volume for View 1, with the receiver's own state as fallback."""
     standby = bool(receiver_standby_holder[0])
     inc = ""
     cfg = ""
@@ -214,7 +188,7 @@ def _resolve_receiver_lines_for_now_playing(*, _clock_saver_volume_raw, _denon_t
         inc = str(receiver_overlay_state.get("incoming") or "").strip()
         cfg = str(receiver_overlay_state.get("config") or "").strip()
         if not inc and not cfg:
-            fb_inc, fb_cfg = _denon_telnet_audio_fallback()
+            fb_inc, fb_cfg = _receiver_audio_fallback()
             inc, cfg = fb_inc, fb_cfg
     vol = _clock_saver_volume_raw()
     if not vol and compose_playback_volume_widget_line is not None:
@@ -251,22 +225,15 @@ def _resolve_receiver_lines_for_now_playing(*, _clock_saver_volume_raw, _denon_t
     return inc, cfg, vol
 
 
-def _resolve_receiver_input_label(*, receiver_overlay_state, receiver_standby_holder, receiver_telnet_debug_holder) -> str:
+def _resolve_receiver_input_label(*, receiver_overlay_state, receiver_standby_holder) -> str:
     """Current AVR input label for the volume-widget caption."""
     if receiver_standby_holder[0]:
         return ""
     lab = str(receiver_overlay_state.get("input") or "").strip()
     if lab:
         return lab
-    dbg = receiver_telnet_debug_holder[0]
-    if isinstance(dbg, dict) and dbg:
-        try:
-            from pigeon.receiver_denon import pick_receiver_input_label
-
-            return pick_receiver_input_label(dbg)
-        except Exception:
-            return ""
-    return ""
+    st = get_receiver_link().state()
+    return st.input_label if st.connected and st.powered_on is not False else ""
 
 
 def _on_hdmi_frame_checked(changed, *, _apply_hdmi_frame_check, apple_tv_auto_state, root) -> None:
@@ -527,16 +494,12 @@ def _commit_receiver_volume(vol: str, *, _clock_saver_volume, _note_volume_graph
     return prev != line
 
 
-def _on_denon_telnet_volume(fields: dict[str, object], *, _clock_saver_for_compose, _commit_receiver_volume, _idle_audio_meter_active, _note_volume_source_lines, _sync_now_playing_screen_state, _view_one_uses_now_playing_screen, _volume_lines, clock_saver_force_on, render_once, root, skip_cache) -> None:
-    """Unsolicited telnet ``MV`` (IR / knob / HEOS) — paint immediately."""
-    from pigeon.receiver_denon import _volume_fields_line
-
-    line = _volume_fields_line({str(k): str(v) for k, v in fields.items()})
+def _on_receiver_volume_changed(line: str, *, _clock_saver_for_compose, _commit_receiver_volume, _idle_audio_meter_active, _sync_now_playing_screen_state, _view_one_uses_now_playing_screen, _volume_lines, clock_saver_force_on, render_once, root, skip_cache) -> None:
+    """The receiver reported a new level (remote, knob, app) — paint immediately."""
     if not line:
         return
 
     def apply() -> None:
-        _note_volume_source_lines(telnet_line=line)
         changed = _commit_receiver_volume(line)
         if not changed and not _volume_lines.fading():
             return
@@ -562,86 +525,28 @@ def _on_denon_telnet_volume(fields: dict[str, object], *, _clock_saver_for_compo
         pass
 
 
-def _quick_receiver_volume_poll(*, _clock_saver_for_compose, _commit_receiver_volume, _idle_audio_meter_active, _note_volume_source_lines, _sync_now_playing_screen_state, _view_one_uses_now_playing_screen, _volume_lines, _volume_quick_busy, clock_saver_force_on, denon_vol_cache, receiver_http_host, render_once, root, skip_cache) -> None:
-    """Telnet hub + AppCommand — a moving source updates the disc."""
-    if _volume_quick_busy[0]:
+def _quick_receiver_volume_poll(*, _clock_saver_for_compose, _commit_receiver_volume, _idle_audio_meter_active, _sync_now_playing_screen_state, _view_one_uses_now_playing_screen, _volume_lines, clock_saver_force_on, render_once, skip_cache) -> None:
+    """Paint the receiver's current level. Reads the cached state; the adapter does the I/O."""
+    vol = get_receiver_link().state().volume_line
+    if not vol:
         return
-    host = str(receiver_http_host.get("host") or "").strip()
-    if not host:
-        try:
-            row = read_saved_av_receiver()
-            host = str((row or {}).get("address") or "").strip()
-        except Exception:
-            host = ""
-    if not host:
+    changed = _commit_receiver_volume(vol)
+    if not changed and not _volume_lines.fading():
         return
-    _volume_quick_busy[0] = True
-
-    def work() -> None:
-        vol = ""
-        src = ""
-        try:
-            from pigeon.receiver_denon import (
-                coalesce_receiver_volume_read,
-                observe_receiver_volume,
-            )
-
-            tn_line, ac_line = observe_receiver_volume(
-                host,
-                timeout=1.0,
-                telnet_blocking=True,
-                allow_appcommand=True,
-            )
-            vol, src = coalesce_receiver_volume_read(
-                telnet_line=tn_line,
-                http_line=ac_line,
-                last_http=str(denon_vol_cache.get("last_appcommand") or ""),
-                last_telnet=str(denon_vol_cache.get("last_telnet") or ""),
-                held=str(
-                    denon_vol_cache.get("effective")
-                    or denon_vol_cache.get("np_hold")
-                    or ""
-                ),
-                last_http_mono=float(
-                    denon_vol_cache.get("last_appcommand_mono") or 0.0
-                ),
-                last_telnet_mono=float(
-                    denon_vol_cache.get("last_telnet_mono") or 0.0
-                ),
-            )
-            _note_volume_source_lines(telnet_line=tn_line, http_line=ac_line)
-        except Exception:
-            vol, src = "", ""
-
-        def apply() -> None:
-            _volume_quick_busy[0] = False
-            if not vol:
-                return
-            changed = _commit_receiver_volume(vol)
-            if not changed and not _volume_lines.fading():
-                return
-            if _idle_audio_meter_active():
-                return
-            skip_cache[0] = None
-            try:
-                if _view_one_uses_now_playing_screen() and not (
-                    _clock_saver_for_compose(time.monotonic())
-                    or clock_saver_force_on[0]
-                ):
-                    _sync_now_playing_screen_state()
-            except Exception:
-                pass
-            try:
-                render_once()
-            except Exception:
-                pass
-
-        try:
-            root.after(0, apply)
-        except Exception:
-            _volume_quick_busy[0] = False
-
-    threading.Thread(target=work, daemon=True).start()
+    if _idle_audio_meter_active():
+        return
+    skip_cache[0] = None
+    try:
+        if _view_one_uses_now_playing_screen() and not (
+            _clock_saver_for_compose(time.monotonic()) or clock_saver_force_on[0]
+        ):
+            _sync_now_playing_screen_state()
+    except Exception:
+        pass
+    try:
+        render_once()
+    except Exception:
+        pass
 
 
 def _apple_tv_auto_poll_tick(*, APPLE_TV_FAIL_POLL_MAX_MS, APPLE_TV_IDLE_POLL_MS, APPLE_TV_POLL_MS, RECEIVER_POLL_MS, _PIGEON_EXT, _apple_tv_auto_poll_tick, _apple_tv_scan_timeout_s, _atv_metadata_is_content_idle, _bump_clock_saver_significant_device, _bump_clock_saver_significant_device_from_metadata, _clear_displayed_tmdb_art_for_content_change, _content_key_from_metadata, _idle_audio_meter_active, _pyatv_install_hint, _refresh_content_indicator, _refresh_observed_pairing_led_rows, _return_to_landing_if_atv_idle, _schedule_hdmi_frame_check_from_poll, _seed_current_apple_tv_from_streaming_slot, _store_music_artwork_from_metadata, _sync_status_bar_visibility_for_playback, _sync_streaming_badge_from_playback_sources, _tmdb_pref_from_metadata, _tmdb_spawn_identity_changed, _update_atv_interaction_from_poll_metadata, _update_status_bar_from_metadata, _warm_playback_overlay_blits, active_tmdb_title_key, apple_tv_auto_state, apple_tv_busy, apple_tv_dashboard_track, current_apple_tv, denon_vol_cache, playback_overlay_widget, receiver_overlay_state, receiver_standby_holder, render_once, resolve_metadata_tmdb_query, root, skip_cache, spawn_tmdb_poster_fetch, streaming_slot_holder) -> None:
@@ -1144,13 +1049,10 @@ def _apple_tv_auto_poll_tick(*, APPLE_TV_FAIL_POLL_MAX_MS, APPLE_TV_IDLE_POLL_MS
     threading.Thread(target=worker, daemon=True).start()
 
 
-def _receiver_volume_worker(*, _clock_saver_volume, _note_volume_graphics, _receiver_volume_controller, _volume_rotary_fail_log_count, _volume_rotary_ok_log_count, denon_vol_cache, receiver_overlay_state, receiver_power_on_pending, receiver_standby_holder, receiver_volume_cmd_busy, render_once, root) -> None:
-    """Run the receiver volume controller; paint confirmed AVR levels on Tk."""
+def _register_receiver_callbacks(*, _clock_saver_volume, _note_volume_graphics, _volume_rotary_fail_log_count, _volume_rotary_ok_log_count, denon_vol_cache, receiver_overlay_state, receiver_power_on_pending, receiver_standby_holder, render_once, root) -> None:
+    """Paint confirmed AVR levels and note command results; fed by the receiver link."""
 
-    def on_busy(busy: bool) -> None:
-        receiver_volume_cmd_busy[0] = bool(busy)
-
-    def on_confirmed(_host: str, v: str) -> None:
+    def on_confirmed(v: str) -> None:
         def _apply_confirmed_volume() -> None:
             try:
                 denon_vol_cache["effective"] = v
@@ -1176,7 +1078,7 @@ def _receiver_volume_worker(*, _clock_saver_volume, _note_volume_graphics, _rece
         except Exception:
             pass
 
-    def on_result(_host: str, ok: bool, msg: str) -> None:
+    def on_result(ok: bool, msg: str) -> None:
         if ok:
             receiver_standby_holder[0] = False
             receiver_power_on_pending[0] = False
@@ -1196,10 +1098,9 @@ def _receiver_volume_worker(*, _clock_saver_volume, _note_volume_graphics, _rece
             sys.stderr.flush()
             _volume_rotary_fail_log_count[0] += 1
 
-    _receiver_volume_controller.on_busy = on_busy
-    _receiver_volume_controller.on_confirmed = on_confirmed
-    _receiver_volume_controller.on_result = on_result
-    _receiver_volume_controller.run_forever()
+    link = get_receiver_link()
+    link.on_volume_confirmed(on_confirmed)
+    link.on_command_result(on_result)
 
 
 def _receiver_volume_poll_tick(*, RECEIVER_VOLUME_POLL_MS, _PIGEON_EXT, _bind_receiver_volume_hub, _quick_receiver_volume_poll, _receiver_volume_poll_tick, receiver_http_host, root) -> None:
@@ -1415,7 +1316,18 @@ def _apply_persisted_location_to_runtime(*, _atv_ix_extrap_playing, _atv_ix_pos,
     _schedule_refresh_pairing_leds()
 
 
-def _receiver_poll_tick(*, RECEIVER_POLL_MS, _PIGEON_EXT, _bind_receiver_volume_hub, _bump_clock_saver_significant_device, _clock_saver_for_compose, _clock_saver_receiver_off, _clock_saver_volume, _denon_telnet_audio_fallback, _idle_audio_meter_active, _note_volume_graphics, _note_volume_source_lines, _paint_boolean_led, _quick_receiver_volume_poll, _receiver_poll_tick, _refresh_observed_pairing_led_rows, _remember_clock_saver_volume, _sync_now_playing_screen_state, _sync_streaming_badge_from_playback_sources, _view_one_uses_now_playing_screen, _warm_playback_overlay_blits, apple_tv_auto_state, avr_slot_holder, clock_saver_force_on, denon_vol_cache, receiver_http_host, receiver_overlay_state, receiver_panel_led_holder, receiver_poll_busy, receiver_power_on_pending, receiver_power_on_until, receiver_standby_holder, receiver_telnet_debug_holder, receiver_volume_cmd_busy, render_once, root, skip_cache, streaming_slot_holder) -> None:
+def _receiver_debug_fields(st) -> dict[str, str]:
+    """Receiver state as strings for the View 4 developer dump."""
+    return {
+        "power": "" if st.powered_on is None else ("on" if st.powered_on else "standby"),
+        "volume": st.volume_line,
+        "input": st.input_label,
+        "audio format": st.audio_format,
+        "sound mode": st.sound_mode,
+    }
+
+
+def _receiver_poll_tick(*, RECEIVER_POLL_MS, _PIGEON_EXT, _bind_receiver_volume_hub, _bump_clock_saver_significant_device, _clock_saver_for_compose, _clock_saver_receiver_off, _clock_saver_volume, _idle_audio_meter_active, _note_volume_graphics, _paint_boolean_led, _quick_receiver_volume_poll, _receiver_poll_tick, _refresh_observed_pairing_led_rows, _remember_clock_saver_volume, _sync_now_playing_screen_state, _sync_streaming_badge_from_playback_sources, _view_one_uses_now_playing_screen, _warm_playback_overlay_blits, apple_tv_auto_state, avr_slot_holder, clock_saver_force_on, denon_vol_cache, receiver_http_host, receiver_overlay_state, receiver_panel_led_holder, receiver_poll_busy, receiver_power_on_pending, receiver_power_on_until, receiver_standby_holder, receiver_debug_holder, render_once, root, skip_cache, streaming_slot_holder) -> None:
     root.after(RECEIVER_POLL_MS, _receiver_poll_tick)
     if not _PIGEON_EXT:
         return
@@ -1444,12 +1356,6 @@ def _receiver_poll_tick(*, RECEIVER_POLL_MS, _PIGEON_EXT, _bind_receiver_volume_
                 receiver_overlay_state["volume"] = ""
             receiver_http_host["host"] = _slot_adr
             denon_vol_cache["bound_host"] = _slot_adr
-            try:
-                from pigeon.receiver_volume import reset_receiver_volume
-
-                reset_receiver_volume(_slot_adr)
-            except Exception:
-                pass
     host = str(receiver_http_host.get("host") or "").strip()
     if not host:
         return
@@ -1530,30 +1436,13 @@ def _receiver_poll_tick(*, RECEIVER_POLL_MS, _PIGEON_EXT, _bind_receiver_volume_
             compose_playback_volume_widget_line,
         )
 
-        r = None
+        link = get_receiver_link()
         healed_host = ""
         if host:
             try:
-                from pigeon.receiver_denon import poll_denon_like_receiver
-
-                skip_tn = bool(
-                    receiver_power_on_pending[0]
-                    or receiver_volume_cmd_busy[0]
-                )
-                # Fat telnet holds the one-client socket for ~2s and
-                # starves MVUP plus the live volume poll. Metadata
-                # telnet is occasional; volume uses a short MV? query.
-                now_tn = time.monotonic()
-                due_meta = now_tn - float(
-                    denon_vol_cache.get("telnet_meta_mono") or 0.0
-                ) >= 8.0
-                use_tn = (not skip_tn) and due_meta
-                r = poll_denon_like_receiver(
-                    host, timeout=5.0, include_telnet=use_tn
-                )
-                if use_tn:
-                    denon_vol_cache["telnet_meta_mono"] = now_tn
-                if r is None or not r.ok:
+                rx = link.bind(host)
+                if not link.state().connected and link.seconds_since_bind() > 8.0:
+                    # Still unreachable well after binding: the address may have moved.
                     now_h = time.monotonic()
                     quick_due = now_h - float(
                         denon_vol_cache.get("heal_quick_mono") or 0.0
@@ -1561,31 +1450,20 @@ def _receiver_poll_tick(*, RECEIVER_POLL_MS, _PIGEON_EXT, _bind_receiver_volume_
                     sweep_due = now_h - float(
                         denon_vol_cache.get("heal_sweep_mono") or 0.0
                     ) >= 90.0
-                    if quick_due or sweep_due:
+                    if (quick_due or sweep_due) and isinstance(rx, Relocatable):
                         if quick_due:
                             denon_vol_cache["heal_quick_mono"] = now_h
                         if sweep_due:
                             denon_vol_cache["heal_sweep_mono"] = now_h
-                        from pigeon.receiver_denon import (
-                            resolve_paired_receiver_host,
-                        )
-
                         found = str(
-                            resolve_paired_receiver_host(
-                                avr_slot_holder[0],
-                                extra_hosts=[host],
-                                subnet_sweep=sweep_due,
-                            )
-                            or ""
+                            rx.relocate(avr_slot_holder[0], sweep=sweep_due) or ""
                         ).strip()
                         if found and found != host:
                             healed_host = found
                             host = found
-                            r = poll_denon_like_receiver(
-                                host, timeout=5.0, include_telnet=use_tn
-                            )
+                            link.bind(host)
             except Exception:
-                r = None
+                pass
 
         roku_line = ""
         roku_vol_pct = ""
@@ -1620,37 +1498,8 @@ def _receiver_poll_tick(*, RECEIVER_POLL_MS, _PIGEON_EXT, _bind_receiver_volume_
             roku_vol_pct = ""
             roku_app_name = ""
 
-        denon_vol_raw = ""
-        if r is not None and r.ok:
-            denon_vol_raw = str(r.volume or "").strip()
-        from pigeon.receiver_denon import (
-            _volume_fields_line,
-            coalesce_receiver_volume_read,
-        )
-
-        tn_line = ""
-        if r is not None:
-            tn_line = _volume_fields_line(
-                getattr(r, "telnet_debug", None) or {}
-            )
-        denon_vol_picked, denon_vol_src = coalesce_receiver_volume_read(
-            telnet_line=tn_line,
-            http_line=denon_vol_raw,
-            last_http=str(denon_vol_cache.get("last_appcommand") or ""),
-            last_telnet=str(denon_vol_cache.get("last_telnet") or ""),
-            held=str(
-                denon_vol_cache.get("effective")
-                or denon_vol_cache.get("np_hold")
-                or ""
-            ),
-            last_http_mono=float(
-                denon_vol_cache.get("last_appcommand_mono") or 0.0
-            ),
-            last_telnet_mono=float(
-                denon_vol_cache.get("last_telnet_mono") or 0.0
-            ),
-        )
-        _note_volume_source_lines(telnet_line=tn_line, http_line=denon_vol_raw)
+        st = link.state()  # read after the slow Roku I/O so the level is current
+        denon_vol_picked = st.volume_line if st.connected else ""
         denon_vol_effective = (
             denon_vol_picked
             if _receiver_volume_display_line(denon_vol_picked)
@@ -1687,10 +1536,10 @@ def _receiver_poll_tick(*, RECEIVER_POLL_MS, _PIGEON_EXT, _bind_receiver_volume_
                         avr_slot_holder[0] = read_saved_av_receiver()
                 except Exception:
                     pass
-            denon_ok = r is not None and r.ok
+            denon_ok = st.connected
             if denon_ok and host:
                 denon_vol_cache["bound_host"] = host
-            raw_standby = bool(r is not None and getattr(r, "standby", False))
+            raw_standby = bool(denon_ok and st.powered_on is False)
             if (
                 receiver_power_on_pending[0]
                 and time.monotonic() > float(receiver_power_on_until[0] or 0.0)
@@ -1708,11 +1557,7 @@ def _receiver_poll_tick(*, RECEIVER_POLL_MS, _PIGEON_EXT, _bind_receiver_volume_
                 )
             except Exception:
                 accept_vol = True
-            tn_dbg = getattr(r, "telnet_debug", None) or {}
-            live_mv = bool(
-                tn_dbg.get("MV") or tn_dbg.get("MV_DB") or tn_dbg.get("MU")
-            )
-            if accept_vol and denon_vol_effective and (live_mv or denon_ok):
+            if accept_vol and denon_vol_effective and denon_ok:
                 if denon_standby:
                     denon_vol_cache["effective"] = denon_vol_effective
                     denon_vol_cache["np_hold"] = denon_vol_effective
@@ -1752,14 +1597,10 @@ def _receiver_poll_tick(*, RECEIVER_POLL_MS, _PIGEON_EXT, _bind_receiver_volume_
                     denon_reachable=denon_ok and not denon_standby,
                     denon_volume_usable=bool(denon_vol_effective),
                     denon_has_incoming=bool(
-                        r is not None
-                        and not denon_standby
-                        and str(r.incoming or "").strip()
+                        denon_ok and not denon_standby and st.audio_format
                     ),
                     denon_has_config=bool(
-                        r is not None
-                        and not denon_standby
-                        and str(r.config or "").strip()
+                        denon_ok and not denon_standby and st.sound_mode
                     ),
                 )
             except Exception:
@@ -1775,9 +1616,7 @@ def _receiver_poll_tick(*, RECEIVER_POLL_MS, _PIGEON_EXT, _bind_receiver_volume_
             if overlay_vol:
                 _note_volume_graphics(overlay_vol)
             if denon_standby:
-                receiver_telnet_debug_holder[0] = dict(
-                    getattr(r, "telnet_debug", {}) or {}
-                ) if r is not None else {}
+                receiver_debug_holder[0] = _receiver_debug_fields(st)
                 apply_overlay(
                     "",
                     "",
@@ -1786,24 +1625,11 @@ def _receiver_poll_tick(*, RECEIVER_POLL_MS, _PIGEON_EXT, _bind_receiver_volume_
                 )
                 if rpl is not None:
                     _paint_boolean_led(rpl, False)
-            elif r is not None and r.ok:
-                receiver_telnet_debug_holder[0] = dict(
-                    getattr(r, "telnet_debug", {}) or {}
-                )
-                poll_inc = str(r.incoming or "").strip()
-                poll_cfg = str(r.config or "").strip()
-                if not poll_inc and not poll_cfg:
-                    poll_inc, poll_cfg = _denon_telnet_audio_fallback()
-                poll_input = str(getattr(r, "input_label", "") or "").strip()
-                if not poll_input:
-                    try:
-                        from pigeon.receiver_denon import pick_receiver_input_label
-
-                        poll_input = pick_receiver_input_label(
-                            receiver_telnet_debug_holder[0]
-                        )
-                    except Exception:
-                        poll_input = ""
+            elif denon_ok:
+                receiver_debug_holder[0] = _receiver_debug_fields(st)
+                poll_inc = str(st.audio_format or "").strip()
+                poll_cfg = str(st.sound_mode or "").strip()
+                poll_input = str(st.input_label or "").strip()
                 apply_overlay(
                     poll_inc,
                     poll_cfg,
@@ -1813,12 +1639,12 @@ def _receiver_poll_tick(*, RECEIVER_POLL_MS, _PIGEON_EXT, _bind_receiver_volume_
                 if rpl is not None:
                     _paint_boolean_led(rpl, True)
             elif overlay_vol:
-                receiver_telnet_debug_holder[0] = {}
+                receiver_debug_holder[0] = {}
                 apply_overlay("", "", overlay_vol)
                 if rpl is not None:
                     _paint_boolean_led(rpl, False)
             else:
-                receiver_telnet_debug_holder[0] = {}
+                receiver_debug_holder[0] = {}
                 keep_vol = str(
                     receiver_overlay_state.get("volume")
                     or denon_vol_cache.get("np_hold")

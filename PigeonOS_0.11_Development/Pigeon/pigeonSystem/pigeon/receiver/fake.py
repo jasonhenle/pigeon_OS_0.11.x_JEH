@@ -62,6 +62,8 @@ class FakeReceiver:
         self._pending: list[tuple[float, Callable[[], None], str]] = []
         self._listeners: list[StateListener] = []
         self._sink: EventSink | None = None
+        self._volume_confirmed: list = []
+        self._command_results: list = []
         self._pump_thread: threading.Thread | None = None
         self._pump_stop = threading.Event()
 
@@ -120,6 +122,15 @@ class FakeReceiver:
 
     def add_state_listener(self, cb: StateListener) -> None:
         self._listeners.append(cb)
+
+    def add_volume_confirmed_listener(self, cb) -> None:
+        self._volume_confirmed.append(cb)
+
+    def add_command_result_listener(self, cb) -> None:
+        self._command_results.append(cb)
+
+    def volume_readout_superseded(self, line: str) -> bool:
+        return False
 
     def set_event_sink(self, sink: EventSink | None) -> None:
         self._sink = sink
@@ -205,8 +216,15 @@ class FakeReceiver:
 
         def run() -> None:
             with self._lock:
+                before = self._truth
                 self._truth = apply(self._truth)
+                after = self._truth
             self._emit(EVT_RESPONSE, f"{desc} applied")
+            for cb in list(self._command_results):
+                cb(True, f"{desc} applied")
+            if after.volume_db != before.volume_db:
+                for cb in list(self._volume_confirmed):
+                    cb(after.with_(muted=False).volume_line)
 
         if self.latency_s <= 0:
             run()

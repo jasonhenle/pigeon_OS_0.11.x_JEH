@@ -37,7 +37,7 @@ def _view_four_display_metadata(*, apple_tv_auto_state) -> dict[str, object] | N
     return dict(md)
 
 
-def _collect_view_four_raw_title_lines(*, _tmdb_info_current_and_available, _view_four_display_metadata, _view_four_has_value, _view_four_text_is_placeholder, apple_tv_auto_state, apple_tv_playback_clock, receiver_telnet_debug_holder, streaming_badge_state) -> list[tuple[str, bool]]:
+def _collect_view_four_raw_title_lines(*, _tmdb_info_current_and_available, _view_four_display_metadata, _view_four_has_value, _view_four_text_is_placeholder, apple_tv_auto_state, apple_tv_playback_clock, receiver_debug_holder, streaming_badge_state) -> list[tuple[str, bool]]:
     """View 4: streaming label, rawTitle fields that have a value, last TMDb fetch."""
     rows: list[tuple[str, bool]] = []
 
@@ -149,16 +149,13 @@ def _collect_view_four_raw_title_lines(*, _tmdb_info_current_and_available, _vie
         _ln(f"tmdbFetch.refined_query={str(_tr)!r}")
     if _tp is not None and str(_tp).strip():
         _ln(f"tmdbFetch.prefer={str(_tp)!r}")
-    rx_dbg = receiver_telnet_debug_holder[0] if receiver_telnet_debug_holder else {}
+    rx_dbg = receiver_debug_holder[0] if receiver_debug_holder else {}
     if isinstance(rx_dbg, dict) and rx_dbg:
-        _ln("denonTelnet (debug):")
-        for key in ("SI", "MS", "DC", "PS_MULTEQ", "PS_DYNEQ", "PS_DYNVOL", "PS_REFLEV"):
+        _ln("receiver (debug):")
+        for key in ("power", "volume", "input", "audio format", "sound mode"):
             val = str(rx_dbg.get(key) or "").strip()
             if val:
                 _ln(f"  {key}={val!r}")
-        raw_blob = str(rx_dbg.get("_raw") or "").strip()
-        if raw_blob:
-            _ln("  _raw=(see receiver_denon_telnet dump)")
     return rows
 
 

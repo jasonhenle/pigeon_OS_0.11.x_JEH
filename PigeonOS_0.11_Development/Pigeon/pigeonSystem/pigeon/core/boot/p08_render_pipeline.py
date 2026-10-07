@@ -112,7 +112,7 @@ def run(ctx) -> None:
     playback_overlay_flags = ctx.playback_overlay_flags
     playback_overlay_widget = ctx.playback_overlay_widget
     receiver_overlay_state = ctx.receiver_overlay_state
-    receiver_telnet_debug_holder = ctx.receiver_telnet_debug_holder
+    receiver_debug_holder = ctx.receiver_debug_holder
     rect_for_span_at_cell = ctx.rect_for_span_at_cell
     rect_for_span_top_right_at_cell = ctx.rect_for_span_top_right_at_cell
     render_ui_music_text_patch_bgra = ctx.render_ui_music_text_patch_bgra
@@ -755,7 +755,7 @@ def run(ctx) -> None:
         _view_four_text_is_placeholder=_view_four_text_is_placeholder,
         apple_tv_auto_state=apple_tv_auto_state,
         apple_tv_playback_clock=apple_tv_playback_clock,
-        receiver_telnet_debug_holder=receiver_telnet_debug_holder,
+        receiver_debug_holder=receiver_debug_holder,
         streaming_badge_state=streaming_badge_state,
     )
 

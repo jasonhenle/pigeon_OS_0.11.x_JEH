@@ -52,7 +52,6 @@ def run(ctx) -> None:
     _clock_startup_intro_opacity = ctx._clock_startup_intro_opacity
     _compose_idle_strength_holder = ctx._compose_idle_strength_holder
     _compose_shown_frame = ctx._compose_shown_frame
-    _denon_telnet_audio_fallback = ctx._denon_telnet_audio_fallback
     _effective_display_view = ctx._effective_display_view
     _idle_audio_listen = ctx._idle_audio_listen
     _idle_audio_meter_active = ctx._idle_audio_meter_active
@@ -127,8 +126,7 @@ def run(ctx) -> None:
     receiver_power_on_pending = ctx.receiver_power_on_pending
     receiver_power_on_until = ctx.receiver_power_on_until
     receiver_standby_holder = ctx.receiver_standby_holder
-    receiver_telnet_debug_holder = ctx.receiver_telnet_debug_holder
-    receiver_volume_cmd_busy = ctx.receiver_volume_cmd_busy
+    receiver_debug_holder = ctx.receiver_debug_holder
     root = ctx.root
     saved_backdrop_master_bgr = ctx.saved_backdrop_master_bgr
     scaled_display = ctx.scaled_display
@@ -150,36 +148,27 @@ def run(ctx) -> None:
 
     _volume_rotary_fail_log_count = [0]
     _volume_rotary_ok_log_count = [0]
-    # One replaceable volume intent per receiver — not a queue of commands.
-    from pigeon.receiver_volume import get_receiver_volume_controller
+    # The adapter keeps one replaceable volume intent per receiver; Pigeon only
+    # registers callbacks on the receiver link.
+    from pigeon.receiver_link import get_receiver_link
 
-    _receiver_volume_controller = get_receiver_volume_controller()
-
-    _receiver_volume_worker = _bind_deps(
-        _core_device_control._receiver_volume_worker,
+    _register_receiver_callbacks = _bind_deps(
+        _core_device_control._register_receiver_callbacks,
         _clock_saver_volume=_clock_saver_volume,
         _note_volume_graphics=_note_volume_graphics,
-        _receiver_volume_controller=_receiver_volume_controller,
         _volume_rotary_fail_log_count=_volume_rotary_fail_log_count,
         _volume_rotary_ok_log_count=_volume_rotary_ok_log_count,
         denon_vol_cache=denon_vol_cache,
         receiver_overlay_state=receiver_overlay_state,
         receiver_power_on_pending=receiver_power_on_pending,
         receiver_standby_holder=receiver_standby_holder,
-        receiver_volume_cmd_busy=receiver_volume_cmd_busy,
         render_once=_late(lambda: render_once, "render_once"),
         root=root,
     )
-
-    threading.Thread(
-        target=_receiver_volume_worker,
-        name="pigeon-receiver-volume",
-        daemon=True,
-    ).start()
+    _register_receiver_callbacks()
 
     _queue_receiver_volume_action = _bind_deps(
         _core_device_control._queue_receiver_volume_action,
-        _receiver_volume_controller=_receiver_volume_controller,
         avr_slot_holder=avr_slot_holder,
         receiver_power_on_pending=receiver_power_on_pending,
     )
@@ -394,13 +383,6 @@ def run(ctx) -> None:
         root=root,
     )
 
-    _volume_quick_busy = [False]
-
-    _note_volume_source_lines = _bind_deps(
-        _core_device_control._note_volume_source_lines,
-        denon_vol_cache=denon_vol_cache,
-    )
-
     _commit_receiver_volume = _bind_deps(
         _core_device_control._commit_receiver_volume,
         _clock_saver_volume=_clock_saver_volume,
@@ -410,12 +392,11 @@ def run(ctx) -> None:
         receiver_overlay_state=receiver_overlay_state,
     )
 
-    _on_denon_telnet_volume = _bind_deps(
-        _core_device_control._on_denon_telnet_volume,
+    _on_receiver_volume_changed = _bind_deps(
+        _core_device_control._on_receiver_volume_changed,
         _clock_saver_for_compose=_clock_saver_for_compose,
         _commit_receiver_volume=_commit_receiver_volume,
         _idle_audio_meter_active=_idle_audio_meter_active,
-        _note_volume_source_lines=_note_volume_source_lines,
         _sync_now_playing_screen_state=_sync_now_playing_screen_state,
         _view_one_uses_now_playing_screen=_view_one_uses_now_playing_screen,
         _volume_lines=_volume_lines,
@@ -425,26 +406,25 @@ def run(ctx) -> None:
         skip_cache=skip_cache,
     )
 
-    _bind_receiver_volume_hub = _bind_deps(
-        _core_device_control._bind_receiver_volume_hub,
-        _on_denon_telnet_volume=_on_denon_telnet_volume,
-    )
+    def _on_receiver_state(old, new) -> None:
+        """Receiver level moved (remote, knob, app): paint it right away."""
+        if new.volume_line and new.volume_line != old.volume_line:
+            root.after(0, lambda line=new.volume_line: _on_receiver_volume_changed(line))
+
+    get_receiver_link().on_state(_on_receiver_state)
+
+    _bind_receiver_volume_hub = _core_device_control._bind_receiver_volume_hub
 
     _quick_receiver_volume_poll = _bind_deps(
         _core_device_control._quick_receiver_volume_poll,
         _clock_saver_for_compose=_clock_saver_for_compose,
         _commit_receiver_volume=_commit_receiver_volume,
         _idle_audio_meter_active=_idle_audio_meter_active,
-        _note_volume_source_lines=_note_volume_source_lines,
         _sync_now_playing_screen_state=_sync_now_playing_screen_state,
         _view_one_uses_now_playing_screen=_view_one_uses_now_playing_screen,
         _volume_lines=_volume_lines,
-        _volume_quick_busy=_volume_quick_busy,
         clock_saver_force_on=clock_saver_force_on,
-        denon_vol_cache=denon_vol_cache,
-        receiver_http_host=receiver_http_host,
         render_once=render_once,
-        root=root,
         skip_cache=skip_cache,
     )
 
@@ -468,10 +448,8 @@ def run(ctx) -> None:
         _clock_saver_for_compose=_clock_saver_for_compose,
         _clock_saver_receiver_off=_clock_saver_receiver_off,
         _clock_saver_volume=_clock_saver_volume,
-        _denon_telnet_audio_fallback=_denon_telnet_audio_fallback,
         _idle_audio_meter_active=_idle_audio_meter_active,
         _note_volume_graphics=_note_volume_graphics,
-        _note_volume_source_lines=_note_volume_source_lines,
         _paint_boolean_led=_paint_boolean_led,
         _quick_receiver_volume_poll=_quick_receiver_volume_poll,
         _receiver_poll_tick=_late(lambda: _receiver_poll_tick, "_receiver_poll_tick"),
@@ -492,8 +470,7 @@ def run(ctx) -> None:
         receiver_power_on_pending=receiver_power_on_pending,
         receiver_power_on_until=receiver_power_on_until,
         receiver_standby_holder=receiver_standby_holder,
-        receiver_telnet_debug_holder=receiver_telnet_debug_holder,
-        receiver_volume_cmd_busy=receiver_volume_cmd_busy,
+        receiver_debug_holder=receiver_debug_holder,
         render_once=render_once,
         root=root,
         skip_cache=skip_cache,

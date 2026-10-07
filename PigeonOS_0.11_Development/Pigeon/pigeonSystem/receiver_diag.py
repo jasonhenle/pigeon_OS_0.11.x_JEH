@@ -19,7 +19,7 @@ from tkinter import filedialog, messagebox, ttk
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from pigeon.receiver import ADAPTERS  # noqa: E402
+from pigeon.receiver import ADAPTERS, discover_receivers  # noqa: E402
 from pigeon.receiver.diag import DiagSession  # noqa: E402
 
 TAG_COLORS = {
@@ -43,11 +43,12 @@ class App:
         ttk.Label(top, text="IP").grid(row=0, column=2)
         self.host = tk.StringVar(value=host)
         ttk.Entry(top, textvariable=self.host, width=18).grid(row=0, column=3, padx=4)
-        ttk.Button(top, text="Connect", command=self.connect).grid(row=0, column=4, padx=2)
-        ttk.Button(top, text="Disconnect", command=self.disconnect).grid(row=0, column=5, padx=2)
-        ttk.Button(top, text="Refresh", command=lambda: self.run(lambda s: s.refresh())).grid(row=0, column=6, padx=2)
+        ttk.Button(top, text="Search…", command=self.search).grid(row=0, column=4, padx=2)
+        ttk.Button(top, text="Connect", command=self.connect).grid(row=0, column=5, padx=2)
+        ttk.Button(top, text="Disconnect", command=self.disconnect).grid(row=0, column=6, padx=2)
+        ttk.Button(top, text="Refresh", command=lambda: self.run(lambda s: s.refresh())).grid(row=0, column=7, padx=2)
         self.status = ttk.Label(top, text="not connected", font=("Helvetica", 12, "bold"))
-        self.status.grid(row=0, column=7, padx=10)
+        self.status.grid(row=0, column=8, padx=10)
 
         st = ttk.LabelFrame(root, text="Live state", padding=8)
         st.pack(fill="x", padx=8)
@@ -104,6 +105,65 @@ class App:
             return
         import threading
         threading.Thread(target=lambda: fn(s), daemon=True).start()
+
+    def search(self) -> None:
+        """Scan the LAN (SSDP + subnet sweep) for receivers; pick one to fill Adapter and IP."""
+        import threading
+
+        win = tk.Toplevel(self.root)
+        win.title("Search for receivers")
+        win.geometry("460x280")
+        msg = ttk.Label(win, text="Searching the network… (can take up to a minute)", padding=8)
+        msg.pack(fill="x")
+        box = tk.Listbox(win, font=("Menlo", 12), activestyle="dotbox")
+        box.pack(fill="both", expand=True, padx=8)
+        found: list = []
+
+        def choose(_evt=None) -> None:
+            sel = box.curselection()
+            if not sel:
+                return
+            r = found[sel[0]]
+            self.brand.set(r.brand)
+            self.host.set(r.host)
+            win.destroy()
+
+        btns = ttk.Frame(win, padding=8)
+        btns.pack(fill="x")
+        use = ttk.Button(btns, text="Use selected", command=choose, state="disabled")
+        use.pack(side="left")
+        ttk.Button(btns, text="Close", command=win.destroy).pack(side="right")
+        box.bind("<Double-Button-1>", choose)
+        results: queue.Queue = queue.Queue()
+
+        def work() -> None:
+            try:
+                results.put(("ok", discover_receivers()))
+            except Exception as exc:  # keep the dialog usable
+                results.put(("err", str(exc)))
+
+        def poll() -> None:
+            if not win.winfo_exists():
+                return
+            try:
+                kind, val = results.get_nowait()
+            except queue.Empty:
+                win.after(150, poll)
+                return
+            if kind == "err":
+                msg.config(text=f"Search failed: {val}")
+                return
+            found.extend(val)
+            for r in val:
+                box.insert("end", r.label)
+            msg.config(text=f"Found {len(val)} receiver(s)." if val else
+                       "None found. Enable network control on the receiver or enter its IP.")
+            if val:
+                box.selection_set(0)
+                use.config(state="normal")
+
+        threading.Thread(target=work, daemon=True).start()
+        poll()
 
     def connect(self) -> None:
         import threading

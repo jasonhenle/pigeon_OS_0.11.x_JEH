@@ -195,18 +195,15 @@ def run(ctx) -> None:
         else None
     )
 
-    receiver_telnet_debug_holder: list[dict[str, str]] = [{}]
+    receiver_debug_holder: list[dict[str, str]] = [{}]
 
-    _denon_telnet_audio_fallback = _bind_deps(
-        _core_device_control._denon_telnet_audio_fallback,
-        receiver_telnet_debug_holder=receiver_telnet_debug_holder,
-    )
+    _receiver_audio_fallback = _core_device_control._receiver_audio_fallback
 
 
     _resolve_receiver_lines_for_now_playing = _bind_deps(
         _core_device_control._resolve_receiver_lines_for_now_playing,
         _clock_saver_volume_raw=_clock_saver_volume_raw,
-        _denon_telnet_audio_fallback=_denon_telnet_audio_fallback,
+        _receiver_audio_fallback=_receiver_audio_fallback,
         apple_tv_auto_state=apple_tv_auto_state,
         compose_playback_volume_widget_line=compose_playback_volume_widget_line,
         denon_vol_cache=denon_vol_cache,
@@ -253,7 +250,6 @@ def run(ctx) -> None:
         _core_device_control._resolve_receiver_input_label,
         receiver_overlay_state=receiver_overlay_state,
         receiver_standby_holder=receiver_standby_holder,
-        receiver_telnet_debug_holder=receiver_telnet_debug_holder,
     )
 
     _np_widgets_content_active = _bind_deps(
@@ -272,7 +268,6 @@ def run(ctx) -> None:
     # briefly reports STANDBY again before the AVR finishes waking.
     receiver_power_on_pending: list[bool] = [False]
     receiver_power_on_until: list[float] = [0.0]
-    receiver_volume_cmd_busy: list[bool] = [False]
     playback_overlay_flags: dict[str, bool] = {
         "show_paused_row": False,
         "clock_saver_volume_only": False,
@@ -506,7 +501,6 @@ def run(ctx) -> None:
     ctx._backdrop_master_from_streaming_app_logo = _backdrop_master_from_streaming_app_logo
     ctx._clear_now_playing_view_caches = _clear_now_playing_view_caches
     ctx._composite_settings_on_canvas = _composite_settings_on_canvas
-    ctx._denon_telnet_audio_fallback = _denon_telnet_audio_fallback
     ctx._enable_now_playing_screen = _enable_now_playing_screen
     ctx._log_view_one_startup_phase = _log_view_one_startup_phase
     ctx._np_drawing_live_audio = _np_drawing_live_audio
@@ -524,8 +518,7 @@ def run(ctx) -> None:
     ctx.playback_overlay_widget = playback_overlay_widget
     ctx.receiver_power_on_pending = receiver_power_on_pending
     ctx.receiver_power_on_until = receiver_power_on_until
-    ctx.receiver_telnet_debug_holder = receiver_telnet_debug_holder
-    ctx.receiver_volume_cmd_busy = receiver_volume_cmd_busy
+    ctx.receiver_debug_holder = receiver_debug_holder
     ctx.status_bar_widget = status_bar_widget
     ctx.tmdb_logo_app_fallback_active = tmdb_logo_app_fallback_active
     ctx.tmdb_logo_widget = tmdb_logo_widget

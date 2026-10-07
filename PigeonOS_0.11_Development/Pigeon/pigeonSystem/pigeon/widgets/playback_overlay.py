@@ -16,7 +16,7 @@ from pigeon.design import get_grid_geometry, rect_for_span_at_cell, rect_for_spa
 from pigeon.font_paths import resolve_ui_font_bold, resolve_ui_font_extrabold
 from pigeon.image_ui_protocol import load_image_bgra
 from pigeon.layout_paths import pick_pigeon_logo_png
-from pigeon.receiver_denon import looks_like_hdmi_input_selector
+from pigeon.receiver.labels import looks_like_input_selector
 from pigeon.widgets.status_bar import DesignPatch
 
 # Service badge + audio lines (audioConfig): 10% smaller, centered in grid cells.
@@ -88,7 +88,7 @@ def _receiver_audio_display_line(raw: object) -> str:
     low = s.lower()
     if low in _IDLE_AUDIO_PLACEHOLDERS:
         return ""
-    if looks_like_hdmi_input_selector(s):
+    if looks_like_input_selector(s):
         return ""
     if all(c in _VOLUME_PLACEHOLDER_CHARS or c.isspace() for c in s):
         return ""

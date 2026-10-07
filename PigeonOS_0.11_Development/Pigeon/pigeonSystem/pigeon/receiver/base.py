@@ -54,6 +54,20 @@ class ReceiverState:
 
 
 @dataclass(frozen=True)
+class DiscoveredReceiver:
+    """One network receiver found by a brand's discoverer."""
+
+    brand: str
+    host: str
+    name: str = ""
+    id: str = ""
+
+    @property
+    def label(self) -> str:
+        return f"{self.name or 'Receiver'} — {self.host}  [{self.brand}]"
+
+
+@dataclass(frozen=True)
 class ReceiverEvent:
     kind: str
     text: str
@@ -62,6 +76,8 @@ class ReceiverEvent:
 
 StateListener = Callable[[ReceiverState, ReceiverState], None]  # (old, new)
 EventSink = Callable[[ReceiverEvent], None]
+VolumeListener = Callable[[str], None]  # settled volume display line, e.g. "-32.5 dB"
+ResultListener = Callable[[bool, str], None]  # (ok, message) for each command attempt
 
 
 @runtime_checkable
@@ -95,6 +111,19 @@ class Receiver(Protocol):
         """``cb(old, new)`` when state changes for any reason, including external."""
         ...
 
+    def add_volume_confirmed_listener(self, cb: VolumeListener) -> None:
+        """``cb(line)`` when a knob/step command has settled at a confirmed level."""
+        ...
+
+    def add_command_result_listener(self, cb: ResultListener) -> None:
+        """``cb(ok, message)`` after each volume/mute command attempt."""
+        ...
+
+    def volume_readout_superseded(self, line: str) -> bool:
+        """True while commands are driving to a level ``line`` has not reached, so
+        pollers must not paint ``line`` (it would drag the readout backwards mid-turn)."""
+        ...
+
     def set_event_sink(self, sink: EventSink | None) -> None:
         """Optional diagnostic stream of commands/responses/errors."""
         ...
@@ -106,3 +135,12 @@ class InputSelectable(Protocol):
 
     def available_inputs(self) -> list[str]: ...
     def set_input(self, label: str) -> bool: ...
+
+
+@runtime_checkable
+class Relocatable(Protocol):
+    """Optional capability: find the same physical receiver again after its address changed."""
+
+    def relocate(self, identity: dict | None, *, sweep: bool = False) -> str:
+        """New control address for the paired receiver ``identity``, or ``""`` if not found."""
+        ...
