@@ -10,6 +10,7 @@ import os
 import sys
 import threading
 import unittest
+from unittest import mock
 
 _SYS_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _SYS_ROOT not in sys.path:
@@ -295,10 +296,18 @@ class DenonAdapterTests(unittest.TestCase):
         rx._active = True  # skip threads: exercise mapping directly
         return rx, tr, ctrl
 
-    def test_conforms_and_has_no_input_capability(self) -> None:
+    def test_conforms_and_has_input_capability(self) -> None:
         rx, *_ = self.make()
         self.assertIsInstance(rx, Receiver)
-        self.assertNotIsInstance(rx, InputSelectable)
+        self.assertIsInstance(rx, InputSelectable)
+
+    def test_set_input_sends_si_code(self) -> None:
+        rx, tr, _ = self.make()
+        with mock.patch("pigeon.receiver_denon.fetch_denon_source_renames", return_value={"mplay": "Apple TV"}):
+            self.assertIn("Apple TV", rx.available_inputs())
+            self.assertTrue(rx.set_input("apple tv"))
+            self.assertFalse(rx.set_input("Nope"))
+        self.assertEqual(tr.sent, ["SIMPLAY"])
 
     def test_poll_maps_to_state(self) -> None:
         rx, *_ = self.make()

@@ -28,6 +28,14 @@ from pigeon.receiver.base import (
 _OWN_COMMAND_WINDOW_S = 2.0  # changes this soon after we sent something are "response"
 _MAX_STEPS_PER_CALL = 24  # same bound apply_receiver_volume_once uses
 
+# Telnet ``SI`` codes, each with a factory label; the receiver's own renames win.
+_INPUT_CODES = (
+    ("PHONO", "PHONO"), ("CD", "CD"), ("DVD", "DVD"), ("BD", "BLU-RAY"),
+    ("GAME", "GAME"), ("MPLAY", "MEDIA PLAYER"), ("SAT/CBL", "CBL/SAT"),
+    ("TV", "TV AUDIO"), ("AUX1", "AUX 1"), ("AUX2", "AUX 2"),
+    ("TUNER", "TUNER"), ("NET", "NETWORK"), ("BT", "BLUETOOTH"),
+)
+
 
 class DenonReceiver:
     brand = "denon"
@@ -175,6 +183,41 @@ class DenonReceiver:
             return False
         self._note_command("mute toggle")
         return self._controller.submit(self.host, "mute_toggle", wake=wake)
+
+    # ---- InputSelectable (optional; diagnostic tool only) ----------------
+
+    def _input_choices(self) -> list[tuple[str, str]]:
+        from pigeon.receiver_denon import _input_norm, fetch_denon_source_renames
+
+        try:
+            renames = fetch_denon_source_renames(self.host)
+        except Exception:
+            renames = {}
+        return [(renames.get(_input_norm(code)) or label, code) for code, label in _INPUT_CODES]
+
+    def available_inputs(self) -> list[str]:
+        return [label for label, _ in self._input_choices()]
+
+    def set_input(self, label: str) -> bool:
+        want = str(label or "").strip().lower()
+        for name, code in self._input_choices():
+            if want in (name.lower(), code.lower()):
+                ok = self._send(f"SI{code}")
+                if ok:
+                    threading.Thread(target=self._confirm_input, daemon=True).start()
+                return ok
+        self._emit(EVT_ERROR, f"unknown input {label!r}")
+        return False
+
+    def _confirm_input(self) -> None:
+        """Input changes aren't pushed on the hub, so poll soon instead of waiting for the next cycle."""
+        before = self.cached_state().input_label
+        for delay in (0.4, 0.6, 1.0):
+            time.sleep(delay)
+            if not self._active:
+                return
+            if self.get_state().input_label != before:
+                return
 
     def add_state_listener(self, cb: StateListener) -> None:
         self._listeners.append(cb)
