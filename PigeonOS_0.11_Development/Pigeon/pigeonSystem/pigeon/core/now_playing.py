@@ -855,6 +855,37 @@ def _metadata_activity_fingerprint(md: dict[str, object], *, _coarse_device_stat
     )
 
 
+_last_player_class_log: list = [None]
+
+
+def _log_player_metadata_class(cls, md, paused, playing, rem, clk) -> None:
+    """Log each change of the ok/stopped/absent class with the inputs behind it."""
+    md = md if isinstance(md, dict) else {}
+    key = (
+        cls,
+        str(md.get("device_state") or ""),
+        bool(paused),
+        bool(playing),
+        bool(md.get("playback_concluded")),
+    )
+    if _last_player_class_log[0] == key:
+        return
+    _last_player_class_log[0] = key
+    import sys
+
+    sys.stderr.write(
+        f"pigeon: player_class={cls} device_state={md.get('device_state')!r} "
+        f"paused_overlay={bool(paused)} playing={bool(playing)} "
+        f"concluded_flag={bool(md.get('playback_concluded'))} "
+        f"remaining={rem if rem is None else round(float(rem), 1)} "
+        f"title={str(md.get('title') or md.get('query') or '')[:40]!r} "
+        f"identity_source={md.get('identity_source')!r} "
+        f"held={bool(md.get('identity_held_across_idle'))} "
+        f"clock_sync={bool(clk.get('has_sync'))} clock_playing={bool(clk.get('playing'))} "
+        f"total={clk.get('latched_total') or clk.get('last_reported_total')}\n"
+    )
+
+
 def _player_metadata_class(*, _playback_extrapolated_pair, _show_paused_row_overlay, _something_playing_now, apple_tv_auto_state, apple_tv_playback_clock) -> str:
     """Same ok/stopped/absent class auto widgets use for the live layout."""
     lm = apple_tv_auto_state.get("last_metadata")
@@ -878,12 +909,16 @@ def _player_metadata_class(*, _playback_extrapolated_pair, _show_paused_row_over
             )
             if pair is not None and has_total:
                 rem = float(pair[1])
-        return classify_player_metadata(
+        paused_now = _show_paused_row_overlay()
+        playing_now = _something_playing_now()
+        cls = classify_player_metadata(
             md,
-            paused=_show_paused_row_overlay(),
-            playing=_something_playing_now(),
+            paused=paused_now,
+            playing=playing_now,
             remaining_s=rem,
         )
+        _log_player_metadata_class(cls, md, paused_now, playing_now, rem, apple_tv_playback_clock)
+        return cls
     except Exception:
         from pigeon.auto_widgets import METADATA_ABSENT, METADATA_OK, METADATA_STOPPED
 
