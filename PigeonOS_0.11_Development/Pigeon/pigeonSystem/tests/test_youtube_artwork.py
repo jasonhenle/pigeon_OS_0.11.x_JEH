@@ -33,6 +33,40 @@ class YoutubeVideoIdTests(unittest.TestCase):
         )
         self.assertIsNone(youtube_video_id_from_metadata(None))
 
+    def test_other_apps_bare_ids_are_not_youtube(self) -> None:
+        from pigeon.apple_tv_now_playing import youtube_video_id_from_metadata
+
+        # Apple TV app content ids are 11 chars and match the video-id pattern.
+        self.assertIsNone(
+            youtube_video_id_from_metadata(
+                {
+                    "content_identifier": "A0005902003",
+                    "app_name": "TV",
+                    "app_id": "com.apple.TVWatchList",
+                }
+            )
+        )
+        self.assertEqual(
+            youtube_video_id_from_metadata(
+                {
+                    "content_identifier": "dQw4w9WgXcQ",
+                    "app_name": "YouTube",
+                    "app_id": "com.google.ios.youtube",
+                }
+            ),
+            "dQw4w9WgXcQ",
+        )
+        # A real watch URL still wins in any app.
+        self.assertEqual(
+            youtube_video_id_from_metadata(
+                {
+                    "query": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+                    "app_name": "TV",
+                }
+            ),
+            "dQw4w9WgXcQ",
+        )
+
     def test_search_payload_extracts_first_video_id(self) -> None:
         from pigeon.apple_tv_now_playing import (
             youtube_title_from_metadata,
