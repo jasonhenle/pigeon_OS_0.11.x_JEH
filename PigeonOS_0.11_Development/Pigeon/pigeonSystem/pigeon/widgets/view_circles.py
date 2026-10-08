@@ -1273,12 +1273,23 @@ def _volume_readout_patch(
     return best
 
 
-@lru_cache(maxsize=4)
-def _disc_clock_ink_h(size_px: int) -> int:
-    """Ink height of the digital header clock at ``size_px`` (digits are constant height)."""
-    patch = _matching_hhmm_patch("0:00PM", size_px=size_px, fill_rgb=(255, 255, 255))
+def _disc_clock_patch(label: str, fill_rgb: tuple[int, int, int]) -> np.ndarray:
+    """Disc clock text in the volume input label's font and size, ink-cropped."""
+    patch, _w, _h = _text_patch_font(
+        label,
+        font=_load_sharp_extrabold(int(VOLUME_FORMAT_SIZE_PX)),
+        fill_rgb=fill_rgb,
+    )
     rows = np.where(patch[:, :, 3] > 8)[0]
-    return int(rows.max() - rows.min() + 1) if rows.size else 0
+    if rows.size == 0:
+        return patch[:0]
+    return patch[int(rows.min()) : int(rows.max()) + 1]
+
+
+@lru_cache(maxsize=1)
+def _disc_clock_ink_h() -> int:
+    """Ink height of the disc clock (same font and size as the input label)."""
+    return int(_disc_clock_patch("0:00PM", (255, 255, 255)).shape[0])
 
 
 def _volume_input_patch(
@@ -4799,8 +4810,8 @@ class ViewCirclesWidget:
             disc = self._disc_clock_geometry()
             if disc is not None:
                 dcx, dbottom, _nh = disc
-                ch = _disc_clock_ink_h(_header_digital7_size_px())
-                half_w = int(round(float(VOLUME_INNER_R) * 0.6))
+                ch = _disc_clock_ink_h()
+                half_w = int(round(float(VOLUME_INNER_R) * 0.8))
                 rects.append(
                     (
                         int(round(dcx)) - half_w,
@@ -5345,13 +5356,17 @@ class ViewCirclesWidget:
             if disc is not None:
                 # Volume readout showing in zone 3: the clock sits in the disc above it.
                 cx, bottom, _nh = disc
-                self._paste_header_digital7(
-                    out,
-                    now_playing_header_clock_text(now),
-                    cx,
-                    fill_rgb=_look_chrome_rgb(),
-                    baseline_y=bottom,
+                patch = _disc_clock_patch(
+                    now_playing_header_clock_text(now), _look_chrome_rgb()
                 )
+                if patch.size:
+                    ph, pw = patch.shape[:2]
+                    _paste_patch_bgra(
+                        out,
+                        patch,
+                        int(round(cx - pw / 2.0)),
+                        int(round(bottom - ph)),
+                    )
                 return
             self._paste_header_digital7(
                 out,
@@ -5710,7 +5725,7 @@ class ViewCirclesWidget:
         """Offset of the volume number below the disc center so the clock/number
         pair (clock, gap, number) is centered together in the disc."""
         del number_h  # the pair is centered, so the number height cancels out
-        clock_h = _disc_clock_ink_h(_header_digital7_size_px())
+        clock_h = _disc_clock_ink_h()
         return (float(clock_h) + float(_DISC_CLOCK_GAP_PX)) * 0.5
 
     def _disc_clock_geometry(self) -> tuple[float, float, int] | None:
@@ -6194,10 +6209,9 @@ class ViewCirclesWidget:
         cx: float,
         *,
         fill_rgb: tuple[int, int, int] = (255, 255, 255),
-        baseline_y: float | None = None,
     ) -> tuple[int, int, int, int] | None:
         """Digital-7 header text (clock / TRT) centered on ``cx``, ink bottom on
-        the header baseline (or ``baseline_y``). Returns the painted ``(x, y, w, h)``."""
+        the header baseline. Returns the painted ``(x, y, w, h)``."""
         patch = _matching_hhmm_patch(
             label, size_px=_header_digital7_size_px(), fill_rgb=fill_rgb
         )
@@ -6207,8 +6221,7 @@ class ViewCirclesWidget:
         patch = patch[int(rows.min()) : int(rows.max()) + 1]
         ph, pw = patch.shape[:2]
         px = int(round(cx - pw / 2.0))
-        base = header_clock_baseline_y() if baseline_y is None else float(baseline_y)
-        py = int(round(base - ph))
+        py = int(round(header_clock_baseline_y() - ph))
         _paste_patch_bgra(out, patch, px, py)
         return (px, py, int(pw), int(ph))
 
