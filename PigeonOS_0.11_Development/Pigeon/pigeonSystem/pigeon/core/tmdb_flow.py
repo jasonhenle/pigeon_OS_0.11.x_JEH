@@ -1069,6 +1069,10 @@ def spawn_tmdb_poster_fetch(
     del force  # kept for call-site compat; queueing replaces concurrent force
 
     if _vv_is_music() or _vv_is_youtube():
+        sys.stderr.write(
+            f"pigeon: tmdb spawn exit: {'youtube' if _vv_is_youtube() else 'music'} "
+            f"query={query!r}\n"
+        )
         _report_live_state(
             "youtube" if _vv_is_youtube() else "music",
             apple_tv_auto_state=apple_tv_auto_state,
@@ -1087,8 +1091,10 @@ def spawn_tmdb_poster_fetch(
     q_in = (query or "").strip()
     q = refine_tmdb_search_query(q_in) or ""
     if not q:
+        sys.stderr.write(f"pigeon: tmdb spawn exit: empty refined query for {q_in!r}\n")
         return
     if is_degenerate_tmdb_query(q):
+        sys.stderr.write(f"pigeon: tmdb spawn exit: degenerate query {q!r}\n")
         return
     try:
         from pigeon.tmdb_poster import tmdb_is_configured
@@ -1112,7 +1118,12 @@ def spawn_tmdb_poster_fetch(
                 pass
         return
     prefer_n = str(prefer or "auto").strip() or "auto"
+    sys.stderr.write(f"pigeon: tmdb spawn enter: {q_in!r} prefer={prefer_n!r}\n")
     if not _tmdb_spawn_identity_changed(q_in, prefer_n):
+        sys.stderr.write(
+            f"pigeon: tmdb spawn exit: identity unchanged {q_in!r} prefer={prefer_n!r} "
+            f"tmdb_key={apple_tv_auto_state.get('tmdb_key')!r}\n"
+        )
         return
     if apple_tv_auto_state.get("tmdb_fetch_in_flight"):
         # Keep spinner up; run this title as soon as the worker ends.
