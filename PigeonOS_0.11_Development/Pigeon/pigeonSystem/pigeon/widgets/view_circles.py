@@ -347,10 +347,10 @@ _POSTER_MUSIC_X, _POSTER_MUSIC_Y, _POSTER_MUSIC_W, _POSTER_MUSIC_H, _POSTER_MUSI
     int(round(POSTER_1X1_LOCAL[4])),
 )
 
-_ARTWORK_BG_OPACITY = 0.24
+_ARTWORK_BG_OPACITY = 0.17
 # No-poster UI-color wash: opacity over black (darker than the poster blur), and a
 # luma ceiling (light mode treats darker as wash).
-_UI_WASH_OPACITY = 0.12
+_UI_WASH_OPACITY = 0.08
 _UI_WASH_MAX_LUMA = 60.0
 _ARTWORK_BG_BLUR_DOWNSCALE = 4
 _ARTWORK_BG_BLUR_SIGMA = 6.0
