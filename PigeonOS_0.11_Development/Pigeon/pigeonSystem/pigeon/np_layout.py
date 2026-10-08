@@ -901,6 +901,7 @@ NP_HEADER_BASELINE_NUDGE_PX = 15.0
 MUSIC_TITLE_BAND_INSET_PX = 8.0
 # Header TRT over the volume disc: gap above its ink and between it and the ring.
 NP_HEADER_TRT_MARGIN_PX = 14.0
+NP_HEADER_TRT_SCALE = 0.9  # TRT box vs. the full band above the volume ring
 
 
 def zone6_1x1_album_art_rect() -> tuple[float, float, float, float]:
@@ -945,8 +946,8 @@ def header_trt_ink_box(zone: int, *, over_volume: bool = True) -> tuple[float, f
     Centered above the zone-3 volume disc, whichever wide zone (6 or 7) holds
     the TT. ``over_volume=False`` centers it at the top of the wide zone
     instead (used when the header clock occupies the slot over zone 3).
-    Sized like the band above the disc: as wide as the ring, from the screen
-    top down to the ring top.
+    Sized at ``NP_HEADER_TRT_SCALE`` of the band above the disc (ring width, screen
+    top down to the ring top) and bottom-aligned in it.
     """
     vcx, vcy = design_xy_from_local(NOW_PLAYING_ZONES[3], VOLUME_LOCAL_CX, VOLUME_LOCAL_CY)
     ring_top = float(vcy) - float(VOLUME_OUTER_R)
@@ -956,7 +957,11 @@ def header_trt_ink_box(zone: int, *, over_volume: bool = True) -> tuple[float, f
     else:
         z = NOW_PLAYING_ZONES[int(zone)]
         cx = float(z.x) + float(z.w) * 0.5
-    return (cx, margin, 2.0 * float(VOLUME_OUTER_R), max(12.0, ring_top - 2.0 * margin))
+    band_h = max(12.0, ring_top - 2.0 * margin)
+    box_h = band_h * NP_HEADER_TRT_SCALE
+    # Bottom-aligned in the band, so the shrink becomes headroom above the TRT.
+    top = margin + (band_h - box_h)
+    return (cx, top, 2.0 * float(VOLUME_OUTER_R) * NP_HEADER_TRT_SCALE, box_h)
 
 
 def header_clock_baseline_y() -> float:
