@@ -86,9 +86,10 @@ class DenonHubTransport:
     def ensure(self, host: str) -> None:
         from pigeon.receiver_denon_telnet import denon_hub_host, start_denon_telnet_hub
 
-        # Only start the hub when nothing owns it; the receiver poll decides
-        # which host it follows, and flipping it here would drop the session.
-        if not denon_hub_host():
+        # The adapter owns the hub and keeps it on its host: an address change
+        # re-binds it, but a hub already on this host is left alone (re-binding
+        # would drop a live session).
+        if denon_hub_host() != str(host or "").strip():
             start_denon_telnet_hub(host)
 
     def state(self, host: str) -> dict[str, object]:

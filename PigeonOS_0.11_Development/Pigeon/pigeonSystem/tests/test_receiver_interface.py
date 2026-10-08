@@ -26,6 +26,23 @@ from pigeon.receiver.diag import DiagSession  # noqa: E402
 from pigeon.receiver.fake import FakeReceiver  # noqa: E402
 
 
+class DiscoveryTests(unittest.TestCase):
+    def test_denon_discoverer_maps_scan_rows(self) -> None:
+        from pigeon.receiver import DiscoveredReceiver, discover_receivers
+
+        rows = [{"host": "10.0.4.64:8080", "name": "AVR-S670H", "id": "x"}, {"host": "", "name": "bad"}]
+        with mock.patch("pigeon.receiver_denon.scan_denon_like_receivers_on_lan", return_value=(True, "", rows)):
+            self.assertEqual(discover_receivers(["denon"]), [DiscoveredReceiver("denon", "10.0.4.64", "AVR-S670H", "x")])
+
+    def test_broken_discoverer_is_skipped_and_unknown_brand_raises(self) -> None:
+        from pigeon.receiver import discover_receivers
+
+        with mock.patch("pigeon.receiver_denon.scan_denon_like_receivers_on_lan", side_effect=OSError):
+            self.assertEqual([r.brand for r in discover_receivers()], ["fake"])
+        with self.assertRaises(ValueError):
+            discover_receivers(["nope"])
+
+
 class Clock:
     def __init__(self) -> None:
         self.t = 100.0

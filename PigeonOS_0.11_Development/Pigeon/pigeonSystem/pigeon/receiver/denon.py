@@ -22,9 +22,13 @@ from pigeon.receiver.base import (
     EventSink,
     ReceiverEvent,
     ReceiverState,
+    ResultListener,
     StateListener,
+    VolumeListener,
 )
 
+_TELNET_META_EVERY_S = 8.0  # full telnet metadata is occasional: it holds the one-client socket ~2s
+_WAKE_HOLD_S = 12.0  # after a wake-and-act command, treat the receiver as powering up
 _OWN_COMMAND_WINDOW_S = 2.0  # changes this soon after we sent something are "response"
 _MAX_STEPS_PER_CALL = 24  # same bound apply_receiver_volume_once uses
 
@@ -35,6 +39,15 @@ _INPUT_CODES = (
     ("TV", "TV AUDIO"), ("AUX1", "AUX 1"), ("AUX2", "AUX 2"),
     ("TUNER", "TUNER"), ("NET", "NETWORK"), ("BT", "BLUETOOTH"),
 )
+
+
+def _telnet_audio_fallback(dbg: dict[str, str]) -> tuple[str, str]:
+    """Incoming format / sound mode from a telnet snapshot when HTTP/XML left them empty."""
+    if not dbg:
+        return "", ""
+    inc = str(dbg.get("SYSDA") or dbg.get("SSINFAISFOR") or dbg.get("DC") or "").strip().lower()
+    cfg = str(dbg.get("MS") or "").strip().lower()
+    return inc, cfg
 
 
 class DenonReceiver:
@@ -64,6 +77,12 @@ class DenonReceiver:
         self._reachable = False
         self._listeners: list[StateListener] = []
         self._sink: EventSink | None = None
+        self._volume_listeners: list[VolumeListener] = []
+        self._result_listeners: list[ResultListener] = []
+        self._cmd_busy = False
+        self._wake_until = 0.0
+        self._telnet_meta_mono = 0.0
+        self._meta_dbg: dict[str, str] = {}  # last telnet snapshot that carried audio metadata
         self._last_cmd_mono = 0.0
         self._wake = threading.Event()
         self._monitor: threading.Thread | None = None
@@ -99,6 +118,7 @@ class DenonReceiver:
         if self._worker is None:
             self._controller.on_confirmed = self._on_confirmed
             self._controller.on_result = self._on_result
+            self._controller.on_busy = self._on_busy
             self._worker = threading.Thread(
                 target=self._controller.run_forever, name="denon-receiver-volume", daemon=True
             )
@@ -125,9 +145,7 @@ class DenonReceiver:
     def get_state(self) -> ReceiverState:
         if not self._active:
             return self.cached_state()
-        poll = self._poll_fn
-        if poll is None:
-            from pigeon.receiver_denon import poll_denon_like_receiver as poll
+        poll = self._poll_fn or self._default_poll
         try:
             r = poll(self.host, self._poll_timeout_s)
         except Exception as exc:
@@ -149,17 +167,42 @@ class DenonReceiver:
         vol = _volume_db_value(r.volume)
         if vol is None:
             vol = cur.volume_db  # muted/blank readout: keep last level
+        dbg = getattr(r, "telnet_debug", None) or {}
+        incoming, config, label = r.incoming, r.config, r.input_label
+        if r.ok and r.standby:
+            self._meta_dbg = {}
+        elif r.ok:
+            if dbg.get("MS") or dbg.get("SYSDA") or dbg.get("SSINFAISFOR") or dbg.get("DC"):
+                self._meta_dbg = dict(dbg)
+            if not incoming and not config:
+                incoming, config = _telnet_audio_fallback(self._meta_dbg)
+            if not label and self._meta_dbg:
+                from pigeon.receiver_denon import pick_receiver_input_label
+
+                label = pick_receiver_input_label(self._meta_dbg)
         new = ReceiverState(
             connected=True,
             powered_on=(not r.standby) if r.ok else cur.powered_on,
             volume_db=vol,
             muted=muted,
-            input_label=r.input_label if r.ok else cur.input_label,
-            audio_format=r.incoming if r.ok else cur.audio_format,
-            sound_mode=r.config if r.ok else cur.sound_mode,
+            input_label=label if r.ok else cur.input_label,
+            audio_format=incoming if r.ok else cur.audio_format,
+            sound_mode=config if r.ok else cur.sound_mode,
         )
         self._merge(new, source="poll")
         return self.cached_state()
+
+    def _default_poll(self, host: str, timeout: float):
+        """The Denon poll, with full telnet metadata only when it won't starve a volume command."""
+        from pigeon.receiver_denon import poll_denon_like_receiver
+
+        now = time.monotonic()
+        quiet = not self._cmd_busy and now >= self._wake_until
+        use_tn = quiet and now - self._telnet_meta_mono >= _TELNET_META_EVERY_S
+        r = poll_denon_like_receiver(host, timeout=timeout, include_telnet=use_tn)
+        if use_tn:
+            self._telnet_meta_mono = now
+        return r
 
     def cached_state(self) -> ReceiverState:
         with self._lock:
@@ -172,6 +215,8 @@ class DenonReceiver:
         n = max(-_MAX_STEPS_PER_CALL, min(_MAX_STEPS_PER_CALL, int(steps)))
         if not n or not self._active:
             return not n
+        if wake:
+            self._wake_until = time.monotonic() + _WAKE_HOLD_S
         self._note_command(f"volume {n:+d} step(s)")
         ok = True
         for _ in range(abs(n)):
@@ -181,6 +226,8 @@ class DenonReceiver:
     def toggle_mute(self, *, wake: bool = False) -> bool:
         if not self._active:
             return False
+        if wake:
+            self._wake_until = time.monotonic() + _WAKE_HOLD_S
         self._note_command("mute toggle")
         return self._controller.submit(self.host, "mute_toggle", wake=wake)
 
@@ -208,6 +255,28 @@ class DenonReceiver:
                 return ok
         self._emit(EVT_ERROR, f"unknown input {label!r}")
         return False
+
+    def add_volume_confirmed_listener(self, cb: VolumeListener) -> None:
+        self._volume_listeners.append(cb)
+
+    def add_command_result_listener(self, cb: ResultListener) -> None:
+        self._result_listeners.append(cb)
+
+    def volume_readout_superseded(self, line: str) -> bool:
+        try:
+            return bool(self._controller.readout_superseded(line))
+        except Exception:
+            return False
+
+    # ---- Relocatable -------------------------------------------------------
+
+    def relocate(self, identity: dict | None, *, sweep: bool = False) -> str:
+        from pigeon.receiver_denon import resolve_paired_receiver_host
+
+        try:
+            return str(resolve_paired_receiver_host(identity, extra_hosts=[self.host], subnet_sweep=bool(sweep)) or "").strip()
+        except Exception:
+            return ""
 
     def _confirm_input(self) -> None:
         """Input changes aren't pushed on the hub, so poll soon instead of waiting for the next cycle."""
@@ -256,9 +325,22 @@ class DenonReceiver:
     def _on_confirmed(self, _host: str, line: str) -> None:
         self._emit(EVT_RESPONSE, f"volume confirmed {line}")
         self._wake.set()
+        for cb in list(self._volume_listeners):
+            try:
+                cb(line)
+            except Exception:
+                pass
 
     def _on_result(self, _host: str, ok: bool, msg: str) -> None:
         self._emit(EVT_RESPONSE if ok else EVT_ERROR, msg)
+        for cb in list(self._result_listeners):
+            try:
+                cb(ok, msg)
+            except Exception:
+                pass
+
+    def _on_busy(self, busy: bool) -> None:
+        self._cmd_busy = bool(busy)
 
     def _from_hub(self) -> ReceiverState | None:
         try:
