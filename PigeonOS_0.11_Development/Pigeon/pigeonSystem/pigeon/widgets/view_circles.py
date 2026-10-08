@@ -406,6 +406,11 @@ _CLOCK_DATE_SIZE_PX = 32
 _VOLUME_TEXT_INNER_FIT = 0.88
 # Gap between the disc volume number and the HH:MM sitting under it.
 _VOLUME_INPUT_GAP_PX = 6.0
+# Zone-3 volume disc carrying the digital clock above the number: the number is
+# fitted to this fraction of the disc radius, and the clock/number pair is
+# centered together with this gap between them.
+_DISC_CLOCK_NUMBER_FIT = 0.80
+_DISC_CLOCK_GAP_PX = 12.0
 
 # Zone4 cast columns (center x, actor baseline y, character baseline y) — SVG geometry.
 _CAST_COLS_Z4: tuple[tuple[float, float, float], ...] = (
@@ -1266,6 +1271,14 @@ def _volume_readout_patch(
     if best is None:
         return _text_patch_digital7(label, size_px=16, fill_rgb=fill_rgb)
     return best
+
+
+@lru_cache(maxsize=4)
+def _disc_clock_ink_h(size_px: int) -> int:
+    """Ink height of the digital header clock at ``size_px`` (digits are constant height)."""
+    patch = _matching_hhmm_patch("0:00PM", size_px=size_px, fill_rgb=(255, 255, 255))
+    rows = np.where(patch[:, :, 3] > 8)[0]
+    return int(rows.max() - rows.min() + 1) if rows.size else 0
 
 
 def _volume_input_patch(
@@ -4783,9 +4796,23 @@ class ViewCirclesWidget:
         ):
             baseline = float(header_clock_baseline_y())
             size = float(NP_HEADER_CLOCK_SIZE_PX)
-            top = max(0, int(round(baseline - size - 8.0)))
-            header_h = max(1, int(round(size + 16.0)))
-            rects.append((0, top, int(DESIGN_W), header_h))
+            disc = self._disc_clock_geometry()
+            if disc is not None:
+                dcx, dbottom, _nh = disc
+                ch = _disc_clock_ink_h(_header_digital7_size_px())
+                half_w = int(round(float(VOLUME_INNER_R) * 0.6))
+                rects.append(
+                    (
+                        int(round(dcx)) - half_w,
+                        max(0, int(round(dbottom)) - ch - 4),
+                        2 * half_w,
+                        ch + 8,
+                    )
+                )
+            else:
+                top = max(0, int(round(baseline - size - 8.0)))
+                header_h = max(1, int(round(size + 16.0)))
+                rects.append((0, top, int(DESIGN_W), header_h))
         if zone6_span_widget(assignments) == "clock" or self._paused_clock_in_zone6():
             z = NOW_PLAYING_ZONES[6]
             zx, zy, zw, zh = (int(v) for v in z.xywh)
@@ -5314,6 +5341,18 @@ class ViewCirclesWidget:
             # Digital-7 clock over zone 3; zone 6's header slot holds the TRT.
             z3 = NOW_PLAYING_ZONES[3]
             cx = float(z3.x) + float(z3.w) * 0.5
+            disc = self._disc_clock_geometry()
+            if disc is not None:
+                # Volume readout showing in zone 3: the clock sits in the disc above it.
+                cx, bottom, _nh = disc
+                self._paste_header_digital7(
+                    out,
+                    now_playing_header_clock_text(now),
+                    cx,
+                    fill_rgb=_look_chrome_rgb(),
+                    baseline_y=bottom,
+                )
+                return
             self._paste_header_digital7(
                 out,
                 now_playing_header_clock_text(now),
@@ -5654,6 +5693,44 @@ class ViewCirclesWidget:
         """Deprecated separator between in-ring volume/config — no-op."""
         return
 
+    def _clock_in_volume_disc(self, vol_zone: int | None = None) -> bool:
+        """True when the digital header clock sits inside the zone-3 volume disc,
+        above the number (a readout is showing and the header slot is a clock)."""
+        if vol_zone is None:
+            vol_zone = _zone_for_widget(self._assignments(), "volume")
+        if vol_zone is None or int(vol_zone) != 3:
+            return False
+        if not self._header_slot_ticks():
+            return False
+        vol_value = volume_widget_value_text(self._state.volume)
+        muted = vol_value.strip().lower() in ("mute", "muted", "off") or self._state.volume_muted
+        return bool(vol_value) and not muted
+
+    def _disc_number_dy(self, number_h: int) -> float:
+        """Offset of the volume number below the disc center so the clock/number
+        pair (clock, gap, number) is centered together in the disc."""
+        del number_h  # the pair is centered, so the number height cancels out
+        clock_h = _disc_clock_ink_h(_header_digital7_size_px())
+        return (float(clock_h) + float(_DISC_CLOCK_GAP_PX)) * 0.5
+
+    def _disc_clock_geometry(self) -> tuple[float, float, int] | None:
+        """``(cx, ink_bottom_y, number_h)`` of the disc clock, or ``None``."""
+        if not self._clock_in_volume_disc():
+            return None
+        z = _zone_spec(3)
+        cx_v, cy_v = design_xy_from_local(
+            z, VOLUME_LOCAL_CX, VOLUME_LOCAL_CY, view_w=VOLUME_VIEW_W, view_h=VOLUME_VIEW_H
+        )
+        vol_value = volume_widget_value_text(self._state.volume)
+        _p, _w, vh = _volume_readout_patch(
+            vol_value,
+            inner_r=float(VOLUME_INNER_R) * _DISC_CLOCK_NUMBER_FIT,
+            fill_rgb=_look_ink_rgb(),
+        )
+        num_dy = self._disc_number_dy(int(vh))
+        bottom = cy_v + num_dy - float(vh) * 0.5 - float(_DISC_CLOCK_GAP_PX)
+        return float(cx_v), float(bottom), int(vh)
+
     def _draw_audio_group(
         self,
         out: np.ndarray,
@@ -5681,20 +5758,28 @@ class ViewCirclesWidget:
                 view_w=VOLUME_VIEW_W,
                 view_h=VOLUME_VIEW_H,
             )
+            clock_in_disc = self._clock_in_volume_disc(vol_zone)
             vol_p, vw, vh = _volume_readout_patch(
                 vol_value,
-                inner_r=VOLUME_INNER_R,
+                inner_r=(
+                    float(VOLUME_INNER_R) * _DISC_CLOCK_NUMBER_FIT
+                    if clock_in_disc
+                    else VOLUME_INNER_R
+                ),
                 fill_rgb=_look_ink_rgb(),
             )
-            _paste_centered(out, vol_p, cx_v, cy_v)
+            num_dy = 0.0
+            if clock_in_disc:
+                num_dy = self._disc_number_dy(int(vh))
+            _paste_centered(out, vol_p, cx_v, cy_v + num_dy)
             inner_r = float(VOLUME_INNER_R) * float(_VOLUME_TEXT_INNER_FIT)
-            top_dy = float(vh) * 0.5 + float(_VOLUME_INPUT_GAP_PX)
+            top_dy = num_dy + float(vh) * 0.5 + float(_VOLUME_INPUT_GAP_PX)
             label = volume_widget_format_label(
                 st.incoming,
                 st.config,
                 receiver_input=str(st.receiver_input or "").strip(),
             )
-            key = (label, int(vh), self._effective_np_theme().cache_key)
+            key = (label, int(vh), int(top_dy), self._effective_np_theme().cache_key)
             cached = self._input_caption_patch_cache
             if cached is not None and cached[0] == key:
                 in_p, _iw, ih = cached[1]  # type: ignore[misc]
@@ -6109,9 +6194,10 @@ class ViewCirclesWidget:
         cx: float,
         *,
         fill_rgb: tuple[int, int, int] = (255, 255, 255),
+        baseline_y: float | None = None,
     ) -> tuple[int, int, int, int] | None:
         """Digital-7 header text (clock / TRT) centered on ``cx``, ink bottom on
-        the header baseline. Returns the painted ``(x, y, w, h)``."""
+        the header baseline (or ``baseline_y``). Returns the painted ``(x, y, w, h)``."""
         patch = _matching_hhmm_patch(
             label, size_px=_header_digital7_size_px(), fill_rgb=fill_rgb
         )
@@ -6121,7 +6207,8 @@ class ViewCirclesWidget:
         patch = patch[int(rows.min()) : int(rows.max()) + 1]
         ph, pw = patch.shape[:2]
         px = int(round(cx - pw / 2.0))
-        py = int(round(header_clock_baseline_y() - ph))
+        base = header_clock_baseline_y() if baseline_y is None else float(baseline_y)
+        py = int(round(base - ph))
         _paste_patch_bgra(out, patch, px, py)
         return (px, py, int(pw), int(ph))
 

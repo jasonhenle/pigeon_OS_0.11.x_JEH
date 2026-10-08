@@ -1401,6 +1401,65 @@ class NowPlayingHeaderClockTests(unittest.TestCase):
         self.assertLess(int(np.count_nonzero(band.max(axis=2) > 80)), 20)
 
 
+class DiscClockTests(unittest.TestCase):
+    def _widget(self, *, volume_text: str = "-32.5 dB"):
+        from pigeon.widgets import view_circles as vc
+
+        vc._default_zone_widget_assignments = lambda: (  # type: ignore[method-assign]
+            "tt_countdown_16x9", "", "volume", "cast_info", "status_bar"
+        )
+        assets = Path(__file__).resolve().parents[2] / "pigeonAssets"
+        widget = vc.ViewCirclesWidget(assets_dir=assets)
+        widget.update_state(
+            progress=0.2,
+            elapsed_text="0:10",
+            remaining_text="-1:00",
+            volume_text=volume_text,
+            has_now_playing=True,
+            has_position=True,
+            content_active=True,
+            content_mode="video",
+            service_name="",
+        )
+        return widget
+
+    def test_clock_sits_in_zone3_disc_above_the_volume_number(self) -> None:
+        from datetime import datetime
+        from unittest.mock import patch
+
+        from pigeon.widgets import view_circles as vc
+
+        widget = self._widget()
+        self.assertTrue(widget._clock_in_volume_disc())
+        disc = widget._disc_clock_geometry()
+        assert disc is not None
+        cx, bottom, number_h = disc
+        _cx, cy = vc._zone_volume_center(3)
+        # Clock ink bottom is above the number's top edge, both inside the disc.
+        number_dy = widget._disc_number_dy(number_h)
+        self.assertLess(bottom, cy + number_dy - number_h / 2.0)
+        clock_h = vc._disc_clock_ink_h(vc._header_digital7_size_px())
+        self.assertGreater(bottom - clock_h, cy - vc.VOLUME_INNER_R)
+        # The header band over zone 3 no longer carries the clock.
+        when = datetime(2026, 9, 7, 22, 23, 0)
+        with patch.object(widget, "_clock_now_for_display", return_value=when):
+            frame = widget.bgra_frame()
+        assert frame is not None
+        z3_band = frame[0:90, int(cx) - 120 : int(cx) + 120, :3]
+        self.assertLess(int(np.count_nonzero(z3_band.max(axis=2) > 120)), 20)
+
+    def test_clock_stays_in_header_without_a_volume_readout(self) -> None:
+        self.assertFalse(self._widget(volume_text="")._clock_in_volume_disc())
+
+    def test_clock_stays_in_header_when_volume_is_not_in_zone3(self) -> None:
+        from pigeon.widgets import view_circles as vc
+
+        widget = self._widget()
+        widget._assignments = lambda: ("volume", "", "", "cast_info", "status_bar")  # type: ignore[method-assign]
+        self.assertFalse(widget._clock_in_volume_disc())
+        self.assertIsNone(vc.ViewCirclesWidget._disc_clock_geometry(widget))
+
+
 class ZoneWidgetAssetTests(unittest.TestCase):
     def test_cast_capacity_by_zone(self) -> None:
         from pigeon.np_layout import cast_names_for_zone
