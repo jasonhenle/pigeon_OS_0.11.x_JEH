@@ -939,18 +939,23 @@ def np_label_baseline_y() -> float:
     return (float(art_top) + float(ink_h)) * 0.5 + float(NP_HEADER_BASELINE_NUDGE_PX)
 
 
-def header_trt_ink_box(zone: int) -> tuple[float, float, float, float]:
+def header_trt_ink_box(zone: int, *, over_volume: bool = True) -> tuple[float, float, float, float]:
     """Design ``(center_x, top, max_w, max_h)`` for the header TRT ink.
 
-    Centered at the top of ``zone`` (the wide TT's zone 6 or 7). Sized like
-    the band above a volume disc: as wide as the ring, from the screen top
-    down to the ring top.
+    Centered above the zone-3 volume disc, whichever wide zone (6 or 7) holds
+    the TT. ``over_volume=False`` centers it at the top of the wide zone
+    instead (used when the header clock occupies the slot over zone 3).
+    Sized like the band above the disc: as wide as the ring, from the screen
+    top down to the ring top.
     """
-    z = NOW_PLAYING_ZONES[int(zone)]
-    _vx, vcy = design_xy_from_local(NOW_PLAYING_ZONES[3], VOLUME_LOCAL_CX, VOLUME_LOCAL_CY)
+    vcx, vcy = design_xy_from_local(NOW_PLAYING_ZONES[3], VOLUME_LOCAL_CX, VOLUME_LOCAL_CY)
     ring_top = float(vcy) - float(VOLUME_OUTER_R)
     margin = float(NP_HEADER_TRT_MARGIN_PX)
-    cx = float(z.x) + float(z.w) * 0.5
+    if over_volume:
+        cx = float(vcx)
+    else:
+        z = NOW_PLAYING_ZONES[int(zone)]
+        cx = float(z.x) + float(z.w) * 0.5
     return (cx, margin, 2.0 * float(VOLUME_OUTER_R), max(12.0, ring_top - 2.0 * margin))
 
 
