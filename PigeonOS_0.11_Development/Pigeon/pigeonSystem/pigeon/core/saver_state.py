@@ -63,6 +63,10 @@ def _show_paused_row_overlay(*, _apple_tv_is_off, _atv_metadata_is_content_idle,
         or str(lm.get("artist") or "").strip()
     )
     if clk.get("has_sync"):
+        # A reported state like Seeking / Loading / Buffering is not paused;
+        # only fall back to the clock when the player gave no state at all.
+        if ds.strip():
+            return "Paused" in ds or "Pause" in ds or "Stopped" in ds
         return not bool(clk.get("playing"))
     if not has_title:
         return False
