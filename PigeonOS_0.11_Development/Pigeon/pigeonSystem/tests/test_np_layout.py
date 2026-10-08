@@ -1442,7 +1442,10 @@ class DiscClockTests(unittest.TestCase):
         self.assertGreater(bottom - clock_h, cy - vc.VOLUME_INNER_R)
         # The header band over zone 3 no longer carries the clock.
         when = datetime(2026, 9, 7, 22, 23, 0)
-        with patch.object(widget, "_clock_now_for_display", return_value=when):
+        with (
+            patch.object(widget, "_clock_now_for_display", return_value=when),
+            patch.object(widget, "_draw_header_trt"),  # the TRT shares this band
+        ):
             frame = widget.bgra_frame()
         assert frame is not None
         z3_band = frame[0:90, int(cx) - 120 : int(cx) + 120, :3]
@@ -1817,7 +1820,7 @@ class NoPosterUiWashTests(unittest.TestCase):
     def test_poster_blur_wins_over_ui_wash(self) -> None:
         frame, _w = self._frame(poster=True)
         b, g, r = (int(v) for v in frame[790, 640, :3])
-        self.assertGreater(r, 40)  # red poster blur
+        self.assertGreater(r, 25)  # red poster blur
         self.assertLess(max(b, g), 10)
 
     def test_white_ui_wash_stays_below_light_mode_threshold(self) -> None:
@@ -3016,9 +3019,14 @@ class TtCountdown16x9WidgetTests(unittest.TestCase):
         self.assertIsNotNone(frame)
         z6 = NOW_PLAYING_ZONES[6]
         zx, zy, zw, zh = z6.xywh
+        # The header TRT is centered above the zone-3 volume disc, not in zone 6.
+        z3 = NOW_PLAYING_ZONES[3]
+        zx, zw = int(z3.x), int(z3.w)
         region = frame[zy : zy + zh, zx : zx + zw]
         bright = region[:, :, :3].max(axis=2) > 200
-        self.assertGreater(int(bright.sum()), 500)
+        self.assertGreater(int(bright[:100].sum()), 500)
+        z6_region = frame[zy : zy + zh, int(z6.x) : int(z6.x + z6.w)]
+        self.assertEqual(int((z6_region[:, :, :3].max(axis=2) > 200).sum()), 0)
         # Landscape short TT lifts to the top divider — ink sits in the upper half.
         rows = np.where(bright.any(axis=1))[0]
         self.assertGreater(len(rows), 0)

@@ -6226,9 +6226,12 @@ class ViewCirclesWidget:
         return (px, py, int(pw), int(ph))
 
     def _draw_header_trt(self, out: np.ndarray, wide_zone: int, label: str) -> None:
-        """Header TRT: Digital-7 in the UI color, centered at the top of the
-        wide TT's zone, sized to the band above the volume ring."""
-        cx, top, max_w, max_h = header_trt_ink_box(int(wide_zone))
+        """Header TRT: Digital-7 in the UI color, centered above the zone-3
+        volume disc and sized to the band above the ring. If the header clock
+        is drawn over zone 3 (no readout to hold it in the disc), the TRT
+        stays centered at the top of the wide TT's zone instead."""
+        clock_over_zone3 = self._header_slot_ticks() and not self._clock_in_volume_disc()
+        cx, top, max_w, max_h = header_trt_ink_box(int(wide_zone), over_volume=not clock_over_zone3)
         template = re.sub(r"\d", "8", label)
         size = _header_trt_size_px(template, int(max_w), int(max_h))
         fill_rgb = tuple(reversed(self._effective_np_theme().ui_bgr))
