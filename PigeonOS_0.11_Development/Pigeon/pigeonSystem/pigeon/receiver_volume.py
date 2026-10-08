@@ -118,6 +118,17 @@ class DenonHubTransport:
 
         denon_hub_add_observer(cb)
 
+    def remove_observer(self, cb: Callable[[], None]) -> None:
+        from pigeon.receiver_denon_telnet import denon_hub_remove_observer
+
+        denon_hub_remove_observer(cb)
+
+    def release(self, host: str) -> None:
+        """Give the hub back: stops it only while it is still on ``host``."""
+        from pigeon.receiver_denon_telnet import release_denon_telnet_hub
+
+        release_denon_telnet_hub(host)
+
 
 class LatencyDiag:
     """Rate-limited stderr summary of encoder → write → confirm timings."""
@@ -208,6 +219,7 @@ class ReceiverVolumeController:
         self._cond = threading.Condition()
         self._observing = False
         self._busy = False
+        self._run_token = 0
         self._reset_locked("")
         self.last_result: tuple[bool, str, str] = (True, "", "")
 
@@ -256,6 +268,21 @@ class ReceiverVolumeController:
         with self._cond:
             self._reset_locked(str(host or "").strip())
             self._cond.notify_all()
+
+    def stop(self) -> None:
+        """Drop pending work, end the worker thread and detach from the transport."""
+        with self._cond:
+            self._run_token += 1
+            self._reset_locked("")
+            observing, self._observing = self._observing, False
+            self._cond.notify_all()
+        if observing:
+            remove = getattr(self.transport, "remove_observer", None)
+            if remove is not None:
+                try:
+                    remove(self._notify)
+                except Exception:
+                    pass
 
     def submit(self, host: str, action: str, *, wake: bool = False) -> bool:
         """Fold one encoder action into the pending intent. Never blocks on I/O."""
@@ -369,13 +396,18 @@ class ReceiverVolumeController:
             return self._active_locked()
 
     def run_forever(self) -> None:
+        token = self._run_token
         self._observe()
-        while True:
+        while token == self._run_token:
             with self._cond:
                 while not self._active_locked():
                     self._set_busy(False)
+                    if token != self._run_token:
+                        return
                     self._cond.wait(timeout=1.0)
                     self.diag.maybe_emit()
+            if token != self._run_token:
+                break
             self._set_busy(True)
             try:
                 delay = self.step()

@@ -332,20 +332,33 @@ class TrtConfidenceTests(unittest.TestCase):
 
 
 class ZoneAdaptTests(unittest.TestCase):
-    def test_no_position_uses_extra_cast_in_zone5(self) -> None:
-        zones = _effective_zone_widgets(
-            has_position=False,
-            cast_count=6,
-            zone_widgets=("clock", "poster", "volume", "cast_info", "now_playing"),
-        )
-        self.assertEqual(zones[4], "cast_info")
+    def test_no_position_keeps_the_saved_status_bar_in_zone5(self) -> None:
+        # Saved zones stay on screen: a missing position no longer swaps zone 5
+        # for spare cast names or blanks it (see _apply_connection_fallbacks).
+        for cast_count in (0, 3, 6):
+            with self.subTest(cast_count=cast_count):
+                zones = _effective_zone_widgets(
+                    has_position=False,
+                    cast_count=cast_count,
+                    zone_widgets=("clock", "poster", "volume", "cast_info", "now_playing"),
+                )
+                self.assertEqual(zones[4], "status_bar")
+                self.assertEqual(zones[3], "cast_info")
 
-    def test_no_position_hides_zone5_when_cast_would_duplicate(self) -> None:
+    def test_position_makes_no_difference_to_the_layout(self) -> None:
+        saved = ("clock", "poster", "volume", "cast_info", "now_playing")
+        self.assertEqual(
+            _effective_zone_widgets(has_position=False, cast_count=6, zone_widgets=saved),
+            _effective_zone_widgets(has_position=True, cast_count=6, zone_widgets=saved),
+        )
+
+    def test_a_saved_cast_strip_in_zone5_is_not_duplicated(self) -> None:
         zones = _effective_zone_widgets(
             has_position=False,
             cast_count=3,
-            zone_widgets=("clock", "poster", "volume", "cast_info", "now_playing"),
+            zone_widgets=("clock", "poster", "volume", "cast_info", "cast_info"),
         )
+        self.assertEqual(zones.count("cast_info"), 1)
         self.assertEqual(zones[4], "")
 
     def test_duplicate_clock_is_dropped(self) -> None:

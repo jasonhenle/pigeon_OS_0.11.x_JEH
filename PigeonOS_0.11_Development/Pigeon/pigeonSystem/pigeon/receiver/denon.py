@@ -89,6 +89,7 @@ class DenonReceiver:
         self._worker: threading.Thread | None = None
         self._observing = False
         self._generation = 0
+        self._poll_mono = 0.0  # when the newest committed HTTP/XML reading began
 
     # ---- Receiver interface ---------------------------------------------
 
@@ -115,7 +116,7 @@ class DenonReceiver:
                 self.transport.add_observer(self._wake.set)
             except Exception:
                 pass
-        if self._worker is None:
+        if self._worker is None or not self._worker.is_alive():
             self._controller.on_confirmed = self._on_confirmed
             self._controller.on_result = self._on_result
             self._controller.on_busy = self._on_busy
@@ -134,31 +135,62 @@ class DenonReceiver:
             self._active = False
             self._generation += 1
             self._reachable = False
+            observing, self._observing = self._observing, False
+            worker, self._worker = self._worker, None
         self._wake.set()
         try:
             self._controller.reset("")
         except Exception:
             pass
+        if worker is not None:
+            stop = getattr(self._controller, "stop", None)
+            if stop is not None:
+                try:
+                    stop()
+                except Exception:
+                    pass
+        if observing:
+            remove = getattr(self.transport, "remove_observer", None)
+            if remove is not None:
+                try:
+                    remove(self._wake.set)
+                except Exception:
+                    pass
+        # Give the telnet hub back (a no-op if a newer owner already took it).
+        release = getattr(self.transport, "release", None)
+        if release is not None:
+            try:
+                release(self.host)
+            except Exception:
+                pass
         self._emit(EVT_CONNECTION, "disconnected")
         self._merge(ReceiverState(connected=False), source="local")
 
     def get_state(self) -> ReceiverState:
-        if not self._active:
-            return self.cached_state()
+        with self._lock:
+            if not self._active:
+                return self._state
+            gen = self._generation
         poll = self._poll_fn or self._default_poll
+        poll_start = time.monotonic()
         try:
             r = poll(self.host, self._poll_timeout_s)
         except Exception as exc:
-            self._emit(EVT_ERROR, f"poll raised: {exc}")
+            if self._is_current(gen):
+                self._emit(EVT_ERROR, f"poll raised: {exc}")
             return self.cached_state()
         if not r.ok and not self._hub_connected():
-            if self._reachable:
-                self._emit(EVT_TIMEOUT, f"no answer from {self.host}")
             with self._lock:
-                self._reachable = False
-            self._merge(ReceiverState(connected=False), source="poll")
+                if gen != self._generation or not self._active:
+                    return self._state  # disconnected / replaced while polling
+                was_reachable, self._reachable = self._reachable, False
+            if was_reachable:
+                self._emit(EVT_TIMEOUT, f"no answer from {self.host}")
+            self._merge(ReceiverState(connected=False), source="poll", gen=gen)
             return self.cached_state()
         with self._lock:
+            if gen != self._generation or not self._active:
+                return self._state
             self._reachable = True
             cur = self._state
         from pigeon.receiver_denon import _volume_db_value
@@ -189,8 +221,12 @@ class DenonReceiver:
             audio_format=incoming if r.ok else cur.audio_format,
             sound_mode=config if r.ok else cur.sound_mode,
         )
-        self._merge(new, source="poll")
+        self._merge(new, source="poll", gen=gen, poll_mono=poll_start if r.ok else None)
         return self.cached_state()
+
+    def _is_current(self, gen: int) -> bool:
+        with self._lock:
+            return self._active and gen == self._generation
 
     def _default_poll(self, host: str, timeout: float):
         """The Denon poll, with full telnet metadata only when it won't starve a volume command."""
@@ -323,6 +359,8 @@ class DenonReceiver:
         self._emit(EVT_COMMAND, text)
 
     def _on_confirmed(self, _host: str, line: str) -> None:
+        if not self._active:
+            return
         self._emit(EVT_RESPONSE, f"volume confirmed {line}")
         self._wake.set()
         for cb in list(self._volume_listeners):
@@ -332,6 +370,8 @@ class DenonReceiver:
                 pass
 
     def _on_result(self, _host: str, ok: bool, msg: str) -> None:
+        if not self._active:
+            return
         self._emit(EVT_RESPONSE if ok else EVT_ERROR, msg)
         for cb in list(self._result_listeners):
             try:
@@ -347,18 +387,32 @@ class DenonReceiver:
             st = self.transport.state(self.host) or {}
         except Exception:
             return None
-        if not st:
+        # A dropped socket leaves the last session's readings in the snapshot;
+        # they say nothing about the receiver now. HTTP polling carries on.
+        if not st or not st.get("connected"):
             return None
         with self._lock:
             cur = self._state
+            since = self._poll_mono
+
+        def fresh(key: str) -> bool:
+            # Readings older than the newest HTTP/XML poll must not overwrite it;
+            # one that arrived after it (remote, front panel) is newer news.
+            # A transport that stamps nothing is taken as live.
+            mono = st.get(key)
+            return not isinstance(mono, (int, float)) or float(mono) > since
+
         mv = st.get("mv")
         pw = str(st.get("pw") or "")
         mu = st.get("mu")
+        use_mv = isinstance(mv, (int, float)) and fresh("mv_mono")
+        use_mu = isinstance(mu, bool) and fresh("mu_mono")
+        use_pw = pw in ("ON", "STANDBY") and fresh("pw_mono")
         return cur.with_(
             connected=True,
-            volume_db=(float(mv) - 80.0) if isinstance(mv, (int, float)) else cur.volume_db,
-            muted=mu if isinstance(mu, bool) else cur.muted,
-            powered_on=True if pw == "ON" else False if pw == "STANDBY" else cur.powered_on,
+            volume_db=(float(mv) - 80.0) if use_mv else cur.volume_db,
+            muted=mu if use_mu else cur.muted,
+            powered_on=(pw == "ON") if use_pw else cur.powered_on,
         )
 
     def _monitor_loop(self, gen: int) -> None:
@@ -374,10 +428,23 @@ class DenonReceiver:
                 continue
             new = self._from_hub()
             if new is not None and self._reachable:
-                self._merge(new, source="hub")
+                self._merge(new, source="hub", gen=gen)
 
-    def _merge(self, new: ReceiverState, *, source: str) -> None:
+    def _merge(
+        self,
+        new: ReceiverState,
+        *,
+        source: str,
+        gen: int | None = None,
+        poll_mono: float | None = None,
+    ) -> None:
+        """Commit ``new``. With ``gen``, only while that connection is still current,
+        checked under the same lock as the commit so a concurrent disconnect wins."""
         with self._lock:
+            if gen is not None and (gen != self._generation or not self._active):
+                return
+            if poll_mono is not None:
+                self._poll_mono = poll_mono
             old, self._state = self._state, new
             listeners = list(self._listeners)
         if new == old:

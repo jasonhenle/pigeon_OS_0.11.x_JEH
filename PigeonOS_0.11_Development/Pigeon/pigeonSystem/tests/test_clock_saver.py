@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 import unittest
 import xml.etree.ElementTree as ET
 
@@ -131,7 +132,7 @@ class ClockSaverSvgTests(unittest.TestCase):
         self.assertEqual(empty.shape[0], 1)
 
     def test_matching_width_crops_skinny_glyphs(self) -> None:
-        """Full digits use matching width; 1 and : crop to half (25%+25%)."""
+        """Digits use matching width (including a skinny 1); only : crops to half."""
         font_path = cs.resolve_digital7_font() or cs.resolve_ui_font_bold()
         probe = ImageDraw.Draw(Image.new("RGBA", (4, 4)))
         font = cs._fit_digital7_fixed_cells(
@@ -153,9 +154,17 @@ class ClockSaverSvgTests(unittest.TestCase):
             cs._hhmmss_block_width(matching_w, "00:00:00"),
             6 * matching_w + 2 * half,
         )
+        # A skinny "1" keeps a full cell (so the block never resizes as the time
+        # changes); only the colon slots are half width.
+        self.assertEqual(cs._hhmmss_advance(matching_w, "1"), matching_w)
+        self.assertEqual(cs._HHMMSS_SKINNY_CHARS, frozenset({":"}))
         self.assertEqual(
             cs._hhmmss_block_width(matching_w, "11:11:11"),
-            8 * half,
+            6 * matching_w + 2 * half,
+        )
+        self.assertEqual(
+            cs._hhmmss_block_width(matching_w, "11:11:11"),
+            cs._hhmmss_block_width(matching_w, "00:00:00"),
         )
         self.assertGreater(cs._WEATHER_SCALE, 1.0)
         self.assertGreater(cs._HHMMSS_MID_Y_SVG, cs._DATE_BASELINE_Y_SVG)
@@ -202,10 +211,22 @@ class ClockSaverSvgTests(unittest.TestCase):
                 return_value=True,
             ):
                 self.assertFalse(clock_saver_analog())
-                (frame, rect), _ = cs.clock_saver_composite_bgra(shadow_bgr=None)
-                digital = cs.render_clock_saver_bgra(
-                    layer_opacity=1.0, prefer_digital=True
-                )
+                # The face cycles color on time.monotonic() (10 s hold, 10 s
+                # blend), shows seconds and a weather line a background fetch
+                # can fill in between two renders. Pin the cycle to a hold
+                # phase, leave weather out and retry across a wall-clock second
+                # so the equality is deterministic.
+                with patch.object(cs.time, "monotonic", return_value=5.0):
+                    for _attempt in range(3):
+                        second = int(time.time())
+                        (frame, rect), _ = cs.clock_saver_composite_bgra(
+                            shadow_bgr=None, include_weather=False
+                        )
+                        digital = cs.render_clock_saver_bgra(
+                            layer_opacity=1.0, prefer_digital=True, include_weather=False
+                        )
+                        if int(time.time()) == second:
+                            break
             self.assertEqual(frame.shape, digital.shape)
             self.assertEqual(rect, (0, 0, cs.DESIGN_W, cs.DESIGN_H))
             self.assertTrue(np.array_equal(frame, digital))

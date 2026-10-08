@@ -3116,13 +3116,15 @@ class WidgetShimmerTests(unittest.TestCase):
             "cast_info",
             "status_bar",
         )
-        hidden = _effective_zone_widgets(
+        # The selected info well stays even with no names yet (empty wells stay
+        # their widget), so the shimmer has a slot to draw in while loading.
+        idle = _effective_zone_widgets(
             has_position=True,
             cast_count=0,
             content_active=True,
             zone_widgets=zones,
         )
-        self.assertEqual(hidden[3], "")
+        self.assertEqual(idle[3], "cast_info")
         loading = _effective_zone_widgets(
             has_position=True,
             cast_count=0,
@@ -3130,8 +3132,17 @@ class WidgetShimmerTests(unittest.TestCase):
             loading_cast=True,
             zone_widgets=zones,
         )
-        self.assertEqual(loading[3], "cast_info")
+        self.assertEqual(loading, idle)
+        self.assertEqual(loading.count("cast_info"), 1)  # one slot, never a second
         self.assertEqual(loading[0], "tt_countdown_16x9")
+        # Not on screen at all without content: the shimmer slot goes with it.
+        self.assertEqual(
+            _effective_zone_widgets(
+                has_position=True, cast_count=0, content_active=False,
+                loading_cast=True, zone_widgets=zones,
+            )[3],
+            "",
+        )
 
     def test_searching_paints_shimmer_on_tt_and_cast(self) -> None:
         from pigeon.widgets import view_circles as vc

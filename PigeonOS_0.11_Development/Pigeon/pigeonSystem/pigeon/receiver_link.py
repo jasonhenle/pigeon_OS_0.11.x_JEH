@@ -39,23 +39,37 @@ class ReceiverLink:
 
     # ---- listeners (register once at boot) ----------------------------------
 
+    def _guard(self, rx: Receiver, cb: Callable) -> Callable:
+        """``cb`` only while ``rx`` is the bound receiver.
+
+        An adapter that was replaced or released can still have a poll, a
+        confirmation or a command result in flight; none of it may reach
+        listeners that now speak for a different receiver (or for none).
+        """
+
+        def call(*args):
+            if self._rx is rx:
+                return cb(*args)
+
+        return call
+
     def on_state(self, cb: StateListener) -> None:
         with self._lock:
             self._state_cbs.append(cb)
             if self._rx is not None:
-                self._rx.add_state_listener(cb)
+                self._rx.add_state_listener(self._guard(self._rx, cb))
 
     def on_volume_confirmed(self, cb: VolumeListener) -> None:
         with self._lock:
             self._volume_cbs.append(cb)
             if self._rx is not None:
-                self._rx.add_volume_confirmed_listener(cb)
+                self._rx.add_volume_confirmed_listener(self._guard(self._rx, cb))
 
     def on_command_result(self, cb: ResultListener) -> None:
         with self._lock:
             self._result_cbs.append(cb)
             if self._rx is not None:
-                self._rx.add_command_result_listener(cb)
+                self._rx.add_command_result_listener(self._guard(self._rx, cb))
 
     # ---- binding -------------------------------------------------------------
 
@@ -77,24 +91,41 @@ class ReceiverLink:
             if self._rx is not None and host == self._host and brand == self._brand:
                 return self._rx
             old, self._rx = self._rx, None
-            rx = self._factory(brand, host, full_poll_s=self._poll_s)
+            try:
+                rx = self._factory(brand, host, full_poll_s=self._poll_s)
+            except Exception:
+                self._host = self._brand = ""
+                if old is not None:
+                    old.disconnect()
+                raise
             for cb in self._state_cbs:
-                rx.add_state_listener(cb)
+                rx.add_state_listener(self._guard(rx, cb))
             for cb in self._volume_cbs:
-                rx.add_volume_confirmed_listener(cb)
+                rx.add_volume_confirmed_listener(self._guard(rx, cb))
             for cb in self._result_cbs:
-                rx.add_command_result_listener(cb)
+                rx.add_command_result_listener(self._guard(rx, cb))
             self._rx, self._host, self._brand = rx, host, brand
             self._bound_mono = time.monotonic()
         if old is not None:
             old.disconnect()
-        threading.Thread(target=rx.connect, name="receiver-connect", daemon=True).start()
+        threading.Thread(target=self._connect, args=(rx,), name="receiver-connect", daemon=True).start()
         return rx
+
+    def _connect(self, rx: Receiver) -> None:
+        """Connect ``rx`` unless it was already replaced; undo it if that happens meanwhile."""
+        if self._rx is not rx:
+            return
+        try:
+            rx.connect()
+        finally:
+            if self._rx is not rx:
+                rx.disconnect()
 
     def seconds_since_bind(self) -> float:
         return time.monotonic() - self._bound_mono if self._rx is not None else 0.0
 
     def release(self) -> None:
+        """Disconnect and forget the receiver (removed, or this location has none)."""
         with self._lock:
             old, self._rx, self._host, self._brand = self._rx, None, "", ""
         if old is not None:

@@ -228,6 +228,44 @@ class DenonTelnetHubTests(unittest.TestCase):
 
         self.assertIn("dB", telnet_hub_ingest_for_tests(b"MV575\rMUOFF\r"))
 
+    def test_ingest_stamps_power_and_volume_state_reports_it(self) -> None:
+        from pigeon.receiver_denon_telnet import (
+            _VOLUME_HUB,
+            prime_denon_telnet_hub_snapshot_for_tests,
+            telnet_hub_ingest_for_tests,
+        )
+
+        prime_denon_telnet_hub_snapshot_for_tests("10.0.4.64", {"MV": "575", "MU": "OFF"})
+        self.assertEqual(_VOLUME_HUB.volume_state("10.0.4.64")["pw_mono"], 0.0)
+        telnet_hub_ingest_for_tests(b"PWSTANDBY\r")
+        st = _VOLUME_HUB.volume_state("10.0.4.64")
+        self.assertEqual(st["pw"], "STANDBY")
+        self.assertGreater(st["pw_mono"], 0.0)
+
+    def test_release_only_stops_the_hub_while_it_is_still_on_that_host(self) -> None:
+        from pigeon.receiver_denon_telnet import (
+            denon_hub_host,
+            prime_denon_telnet_hub_snapshot_for_tests,
+            release_denon_telnet_hub,
+        )
+
+        prime_denon_telnet_hub_snapshot_for_tests("10.0.4.64", {"MV": "575"})
+        release_denon_telnet_hub("10.0.9.9")  # a newer owner is on another host
+        self.assertEqual(denon_hub_host(), "10.0.4.64")
+        release_denon_telnet_hub("10.0.4.64")
+        self.assertEqual(denon_hub_host(), "")
+
+    def test_observers_can_be_removed(self) -> None:
+        from pigeon.receiver_denon_telnet import _VOLUME_HUB, denon_hub_add_observer, denon_hub_remove_observer
+
+        def cb() -> None:
+            pass
+
+        denon_hub_add_observer(cb)
+        self.assertIn(cb, _VOLUME_HUB._observers)
+        denon_hub_remove_observer(cb)
+        self.assertNotIn(cb, _VOLUME_HUB._observers)
+
 
 class ReceiverVolumeCoalesceTests(unittest.TestCase):
     def test_telnet_wins_over_frozen_http(self) -> None:

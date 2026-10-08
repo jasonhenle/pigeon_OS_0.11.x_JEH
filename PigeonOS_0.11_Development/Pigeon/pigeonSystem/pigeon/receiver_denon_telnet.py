@@ -710,6 +710,7 @@ class _DenonTelnetHub:
         self._connected = ""
         self._mv_mono = 0.0
         self._mu_mono = 0.0
+        self._pw_mono = 0.0
         self._lines: deque[tuple[float, str]] = deque(maxlen=64)
         self._outbox: deque[_TxTicket] = deque()
         self._wake_r: socket.socket | None = None
@@ -744,6 +745,7 @@ class _DenonTelnetHub:
             self._snap = {}
             self._mv_mono = 0.0
             self._mu_mono = 0.0
+            self._pw_mono = 0.0
             self._lines.clear()
         self._last_vol = ""
         if self._wake_r is None:
@@ -818,6 +820,7 @@ class _DenonTelnetHub:
             snap = dict(self._snap)
             mv_mono = self._mv_mono
             mu_mono = self._mu_mono
+            pw_mono = self._pw_mono
         mu = str(snap.get("MU") or "").upper()
         return {
             "connected": self.is_connected(host),
@@ -827,6 +830,7 @@ class _DenonTelnetHub:
             "mu": True if mu == "ON" else False if mu == "OFF" else None,
             "mu_mono": mu_mono,
             "pw": str(snap.get("PW") or "").upper(),
+            "pw_mono": pw_mono,
         }
 
     def send(self, host: str, command: str, *, timeout: float = 0.6) -> float | None:
@@ -1040,6 +1044,8 @@ class _DenonTelnetHub:
                     self._mv_mono = now
                 if "MU" in parsed:
                     self._mu_mono = now
+                if "PW" in parsed:
+                    self._pw_mono = now
             snap = dict(self._snap)
             self._state.notify_all()
         if not parsed:
@@ -1104,6 +1110,17 @@ def denon_hub_add_observer(cb: Callable[[], None]) -> None:
     _VOLUME_HUB.add_observer(cb)
 
 
+def denon_hub_remove_observer(cb: Callable[[], None]) -> None:
+    _VOLUME_HUB.remove_observer(cb)
+
+
+def release_denon_telnet_hub(host: str) -> None:
+    """Stop the hub only if it is still bound to ``host`` (never a newer owner's)."""
+    h = _normalize_host(host)
+    if h and _VOLUME_HUB._host == h:
+        stop_denon_telnet_hub()
+
+
 def prime_denon_telnet_hub_snapshot_for_tests(
     host: str, fields: dict[str, str]
 ) -> None:
@@ -1114,6 +1131,7 @@ def prime_denon_telnet_hub_snapshot_for_tests(
     with _VOLUME_HUB._snap_lock:
         _VOLUME_HUB._snap = dict(fields)
         _VOLUME_HUB._mv_mono = time.monotonic()
+        _VOLUME_HUB._pw_mono = 0.0
     _VOLUME_HUB._connected = h
     _VOLUME_HUB._last_vol = str(fields.get("MV_DB") or "")
 

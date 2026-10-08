@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import sys
 import threading
+import time
 import unittest
 from unittest import mock
 
@@ -352,9 +353,147 @@ class DenonAdapterTests(unittest.TestCase):
         rx.get_state()
         rx._reachable = True
         tr.st["mv"] = 50.0  # remote turned it up
+        tr.st["mv_mono"] = time.monotonic()  # ...after the poll
         rx._merge(rx._from_hub(), source="hub")
         self.assertEqual(changes[-1], -30.0)
         self.assertEqual(events[-1].kind, EVT_EXTERNAL)
+
+    def test_disconnected_hub_snapshot_never_overwrites_fresh_http(self) -> None:
+        rx, tr, _ = self.make()
+        self.assertEqual(rx.get_state().volume_db, -35.0)  # fresh HTTP reading
+        rx._reachable = True
+        # Socket dropped; the snapshot still holds the last session's 20.0 (-60 dB).
+        tr.st.update(connected=False, mv=20.0, mv_mono=time.monotonic() + 1, mu=True, mu_mono=time.monotonic() + 1, pw="STANDBY")
+        self.assertIsNone(rx._from_hub())
+        self.assertEqual(rx.cached_state().volume_db, -35.0)
+        self.assertTrue(rx.cached_state().powered_on)
+
+    def test_hub_reading_older_than_the_poll_is_ignored_newer_is_taken(self) -> None:
+        rx, tr, _ = self.make()
+        rx._reachable = True
+        old = time.monotonic() - 5
+        tr.st.update(mv=20.0, mv_mono=old, mu=True, mu_mono=old, pw="STANDBY", pw_mono=old)
+        rx.get_state()  # poll started after those readings
+        merged = rx._from_hub()
+        self.assertEqual((merged.volume_db, merged.muted, merged.powered_on), (-35.0, False, True))
+        fresh = time.monotonic() + 1  # remote / front panel, after the poll
+        tr.st.update(mv=50.0, mv_mono=fresh, mu=True, mu_mono=fresh, pw="STANDBY", pw_mono=fresh)
+        merged = rx._from_hub()
+        self.assertEqual((merged.volume_db, merged.muted, merged.powered_on), (-30.0, True, False))
+
+    def test_poll_finishing_after_disconnect_is_discarded(self) -> None:
+        from pigeon.receiver_denon import ReceiverPollResult
+
+        started, release = threading.Event(), threading.Event()
+
+        def slow_poll(host, timeout):
+            started.set()
+            release.wait(5)
+            return ReceiverPollResult(True, "-35.0 dB", "dolby", "surround", {}, input_label="Apple TV")
+
+        rx, tr, _ = self.make()
+        rx._poll_fn = slow_poll
+        seen = []
+        rx.add_state_listener(lambda o, n: seen.append(n.connected))
+        t = threading.Thread(target=rx.get_state)
+        t.start()
+        self.assertTrue(started.wait(2))
+        rx.disconnect()
+        release.set()
+        t.join(5)
+        self.assertFalse(rx.cached_state().connected)
+        self.assertFalse(rx.connected)
+        self.assertNotIn(True, seen)
+
+    def test_unreachable_poll_finishing_after_disconnect_is_discarded(self) -> None:
+        from pigeon.receiver_denon import ReceiverPollResult
+
+        started, release = threading.Event(), threading.Event()
+
+        def slow_poll(host, timeout):
+            started.set()
+            release.wait(5)
+            return ReceiverPollResult(False, "", "", "")
+
+        rx, tr, _ = self.make()
+        tr.st = {}
+        rx._poll_fn = slow_poll
+        rx._reachable = True
+        t = threading.Thread(target=rx.get_state)
+        t.start()
+        self.assertTrue(started.wait(2))
+        rx.disconnect()
+        events = []
+        rx.set_event_sink(events.append)
+        release.set()
+        t.join(5)
+        self.assertEqual(events, [])  # no "no answer" timeout reported for a closed adapter
+
+    def test_poll_started_before_reconnect_cannot_commit_into_the_new_connection(self) -> None:
+        from pigeon.receiver_denon import ReceiverPollResult
+
+        started, release = threading.Event(), threading.Event()
+        results = [ReceiverPollResult(True, "-35.0 dB", "", ""), ReceiverPollResult(True, "-20.0 dB", "", "")]
+
+        def poll(host, timeout):
+            r = results.pop(0)
+            if r.volume == "-35.0 dB":
+                started.set()
+                release.wait(5)
+            return r
+
+        rx, tr, _ = self.make()
+        rx._poll_fn = poll
+        t = threading.Thread(target=rx.get_state)
+        t.start()
+        self.assertTrue(started.wait(2))
+        rx.disconnect()
+        rx._active = True
+        rx._generation += 1  # a new connection took over
+        self.assertEqual(rx.get_state().volume_db, -20.0)
+        release.set()
+        t.join(5)
+        self.assertEqual(rx.cached_state().volume_db, -20.0)
+
+    def test_disconnect_releases_worker_observer_and_hub(self) -> None:
+        from pigeon.receiver.denon import DenonReceiver
+        from pigeon.receiver_denon import ReceiverPollResult
+        from pigeon.receiver_volume import ReceiverVolumeController
+
+        class Tr(self.Transport):
+            def __init__(self) -> None:
+                super().__init__()
+                self.observers, self.released = [], []
+
+            def add_observer(self, cb): self.observers.append(cb)
+            def remove_observer(self, cb): self.observers.remove(cb)
+            def release(self, host): self.released.append(host)
+
+        tr = Tr()
+        ctrl = ReceiverVolumeController(tr)
+        rx = DenonReceiver(
+            "10.0.0.5", poll_fn=lambda h, t: ReceiverPollResult(True, "-35.0 dB", "", ""),
+            transport=tr, controller=ctrl, full_poll_s=60,
+        )
+        rx.connect()
+        self.assertTrue(rx.connected)
+        worker = rx._worker
+        self.assertTrue(worker.is_alive())
+        self.assertEqual(len(tr.observers), 2)  # adapter wake + controller
+        rx.disconnect()
+        worker.join(3)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(tr.observers, [])
+        self.assertEqual(tr.released, ["10.0.0.5"])
+        self.assertFalse(rx.step_volume(1))
+        # A late command confirmation from the old session reaches nobody.
+        heard = []
+        rx.add_volume_confirmed_listener(heard.append)
+        rx._on_confirmed("10.0.0.5", "-30.0 dB")
+        self.assertEqual(heard, [])
+        rx.connect()  # the same adapter can be brought back
+        self.assertTrue(rx._worker.is_alive())
+        rx.disconnect()
 
     def test_commands_use_existing_command_path(self) -> None:
         rx, tr, ctrl = self.make()
