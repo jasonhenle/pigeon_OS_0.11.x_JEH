@@ -1438,7 +1438,7 @@ class DiscClockTests(unittest.TestCase):
         # Clock ink bottom is above the number's top edge, both inside the disc.
         number_dy = widget._disc_number_dy(number_h)
         self.assertLess(bottom, cy + number_dy - number_h / 2.0)
-        clock_h = vc._disc_clock_ink_h(vc._header_digital7_size_px())
+        clock_h = vc._disc_clock_ink_h()
         self.assertGreater(bottom - clock_h, cy - vc.VOLUME_INNER_R)
         # The header band over zone 3 no longer carries the clock.
         when = datetime(2026, 9, 7, 22, 23, 0)
