@@ -4608,10 +4608,13 @@ class ViewCirclesWidget:
 
         TT logo color first, then the poster (backdrops are often production
         stills that miss the title's palette), then the settings UI color.
-        White / black / gray art has no hue and falls through.
+        White / black / gray art has no hue and falls through. While TMDb is
+        still being searched, the settings UI color holds (the previous
+        title's art must not color the new one); the art's hue takes over
+        once it arrives.
         """
         base = np_theme_from_settings()
-        if not _NP_UI_FROM_TT:
+        if not _NP_UI_FROM_TT or self._state.searching:
             return base
         tt, poster = self._theme_sources()
         sid = (
