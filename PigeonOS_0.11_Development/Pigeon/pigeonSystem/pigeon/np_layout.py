@@ -901,7 +901,7 @@ NP_HEADER_BASELINE_NUDGE_PX = 15.0
 MUSIC_TITLE_BAND_INSET_PX = 8.0
 # Header TRT over the volume disc: gap above its ink and between it and the ring.
 NP_HEADER_TRT_MARGIN_PX = 14.0
-NP_HEADER_TRT_SCALE = 0.9  # TRT box vs. the full band above the volume ring
+NP_HEADER_TRT_SCALE = 0.8  # TRT box vs. the full band above the volume ring
 
 
 def zone6_1x1_album_art_rect() -> tuple[float, float, float, float]:
