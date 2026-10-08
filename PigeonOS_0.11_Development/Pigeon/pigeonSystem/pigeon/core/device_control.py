@@ -958,31 +958,9 @@ def _apple_tv_auto_poll_tick(*, APPLE_TV_FAIL_POLL_MAX_MS, APPLE_TV_IDLE_POLL_MS
                         ),
                     ):
                         needs_spawn = False
-                    _gate_sig = (query, prefer, bool(needs_spawn), bool(content_changed))
-                    if apple_tv_auto_state.get("_tmdb_gate_log") != _gate_sig:
-                        apple_tv_auto_state["_tmdb_gate_log"] = _gate_sig
-                        sys.stderr.write(
-                            f"pigeon: tmdb gate query={query!r} prefer={prefer!r} "
-                            f"needs_spawn={bool(needs_spawn)} content_changed={content_changed} "
-                            f"content_key={content_key!r} prev_key={prev_key!r} "
-                            f"tmdb_key={apple_tv_auto_state.get('tmdb_key')!r} "
-                            f"active_key={active_tmdb_title_key[0]!r} "
-                            f"in_flight={bool(apple_tv_auto_state.get('tmdb_fetch_in_flight'))} "
-                            f"missing_art={bool(apple_tv_auto_state.get('tmdb_missing_art'))}\n"
-                        )
                     if needs_spawn:
                         spawn_tmdb_poster_fetch(
                             query, prefer=prefer, force=content_changed
-                        )
-                else:
-                    _gate_sig = ("skip", query, bool(content_key))
-                    if apple_tv_auto_state.get("_tmdb_gate_log") != _gate_sig:
-                        apple_tv_auto_state["_tmdb_gate_log"] = _gate_sig
-                        sys.stderr.write(
-                            f"pigeon: tmdb gate SKIPPED query={query!r} "
-                            f"degenerate={is_degenerate_tmdb_query(query) if query else None} "
-                            f"content_idle={_atv_metadata_is_content_idle(md_for_spawn)} "
-                            f"device_state={md_for_spawn.get('device_state')!r}\n"
                         )
                 if ok_w:
                     _return_to_landing_if_atv_idle(md_for_spawn)
