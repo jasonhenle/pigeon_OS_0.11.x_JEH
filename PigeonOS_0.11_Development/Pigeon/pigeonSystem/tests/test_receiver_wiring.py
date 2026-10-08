@@ -73,6 +73,129 @@ class LinkTests(unittest.TestCase):
         self.assertIsNone(link.bind(""))
 
 
+    def test_release_disconnects_and_empties_state(self) -> None:
+        link, made = self.make()
+        rx = link.bind("10.0.0.5")
+        wait_for(lambda: rx.connected)
+        link.release()
+        self.assertFalse(rx.connected)
+        self.assertIsNone(link.receiver)
+        self.assertEqual(link.host, "")
+        self.assertEqual(link.state(), ReceiverState())
+        self.assertFalse(link.readout_superseded("-30.0 dB"))
+        self.assertIsNot(link.bind("10.0.0.5"), rx)  # a later bind starts clean
+
+    def test_callbacks_from_a_replaced_or_released_receiver_are_dropped(self) -> None:
+        class Capturing(FakeReceiver):
+            def __init__(self) -> None:
+                super().__init__()
+                self.state_cbs, self.vol_cbs, self.res_cbs = [], [], []
+
+            def add_state_listener(self, cb): self.state_cbs.append(cb)
+            def add_volume_confirmed_listener(self, cb): self.vol_cbs.append(cb)
+            def add_command_result_listener(self, cb): self.res_cbs.append(cb)
+
+        made = []
+
+        def factory(brand, host, **opts):
+            r = Capturing()
+            made.append(r)
+            return r
+
+        link = ReceiverLink(factory)
+        seen = []
+        link.on_state(lambda o, n: seen.append(("state", n)))
+        link.on_volume_confirmed(lambda line: seen.append(("vol", line)))
+        link.on_command_result(lambda ok, msg: seen.append(("res", msg)))
+        first = link.bind("10.0.0.5")
+        wait_for(lambda: first.connected)
+        first.vol_cbs[0]("-30.0 dB")
+        self.assertEqual(seen, [("vol", "-30.0 dB")])
+        seen.clear()
+        second = link.bind("10.0.0.9")  # replaced while old callbacks are still pending
+        first.vol_cbs[0]("-10.0 dB")
+        first.state_cbs[0](ReceiverState(), ReceiverState(volume_db=-10.0))
+        first.res_cbs[0](True, "old")
+        self.assertEqual(seen, [])
+        second.vol_cbs[0]("-45.0 dB")
+        self.assertEqual(seen, [("vol", "-45.0 dB")])
+        seen.clear()
+        link.release()
+        second.vol_cbs[0]("-5.0 dB")
+        second.res_cbs[0](True, "removed")
+        self.assertEqual(seen, [])
+
+    def test_connect_pending_when_replaced_never_goes_live(self) -> None:
+        gate, entered, finished = threading.Event(), threading.Event(), threading.Event()
+
+        class Slow(FakeReceiver):
+            def connect(self) -> None:
+                entered.set()
+                gate.wait(5)
+                super().connect()
+                finished.set()
+
+        made = []
+
+        def factory(brand, host, **opts):
+            r = Slow() if not made else FakeReceiver()
+            made.append(r)
+            return r
+
+        link = ReceiverLink(factory)
+        first = link.bind("10.0.0.5")
+        self.assertTrue(entered.wait(2))
+        second = link.bind("10.0.0.9")  # replace while the first connect is still blocked
+        gate.set()
+        self.assertTrue(finished.wait(2))  # the stale connect ran to completion...
+        self.assertTrue(wait_for(lambda: second.connected))
+        self.assertTrue(wait_for(lambda: not first._session))  # ...and was undone
+        self.assertFalse(first.connected)
+        self.assertIs(link.receiver, second)
+
+    def test_connect_pending_when_released_never_goes_live(self) -> None:
+        gate, entered, finished = threading.Event(), threading.Event(), threading.Event()
+
+        class Slow(FakeReceiver):
+            def connect(self) -> None:
+                entered.set()
+                gate.wait(5)
+                super().connect()
+                finished.set()
+
+        link = ReceiverLink(lambda brand, host, **o: Slow())
+        rx = link.bind("10.0.0.5")
+        self.assertTrue(entered.wait(2))
+        link.release()
+        gate.set()
+        self.assertTrue(finished.wait(2))
+        self.assertTrue(wait_for(lambda: not rx._session))
+        self.assertIsNone(link.receiver)
+
+    def test_connect_not_started_when_already_replaced(self) -> None:
+        link = ReceiverLink(lambda brand, host, **o: FakeReceiver())
+        rx = FakeReceiver()
+        link._connect(rx)  # never bound: must not connect
+        self.assertFalse(rx._session)
+
+    def test_factory_failure_does_not_leak_the_old_receiver(self) -> None:
+        made = []
+
+        def factory(brand, host, **opts):
+            if made:
+                raise RuntimeError("boom")
+            made.append(FakeReceiver())
+            return made[0]
+
+        link = ReceiverLink(factory)
+        rx = link.bind("10.0.0.5")
+        wait_for(lambda: rx.connected)
+        with self.assertRaises(RuntimeError):
+            link.bind("10.0.0.9")
+        self.assertFalse(rx.connected)
+        self.assertIsNone(link.receiver)
+
+
 class DeviceControlTests(unittest.TestCase):
     def setUp(self) -> None:
         self.rx = FakeReceiver()
@@ -129,6 +252,84 @@ class DeviceControlTests(unittest.TestCase):
         self.assertEqual(holders["receiver_standby_holder"], [False])
 
 
+    def test_no_saved_receiver_releases_the_link(self) -> None:
+        self.bound()
+        with mock.patch.object(dc, "read_saved_av_receiver", return_value=None):
+            dc._bind_receiver_volume_hub("")
+        self.assertIsNone(self.link.receiver)
+        self.assertFalse(self.rx.connected)
+        self.assertEqual(dc._receiver_audio_fallback(), ("", ""))
+        self.assertEqual(dc._resolve_receiver_input_label(receiver_overlay_state={}, receiver_standby_holder=[False]), "")
+
+    def test_unreadable_settings_keep_the_receiver(self) -> None:
+        self.bound()
+        with mock.patch.object(dc, "read_saved_av_receiver", side_effect=OSError("settings busy")):
+            dc._bind_receiver_volume_hub("")
+        self.assertIs(self.link.receiver, self.rx)
+        self.assertTrue(self.rx.connected)
+
+    def test_release_clears_receiver_derived_display_state(self) -> None:
+        self.bound()
+        cache = {"effective": "-40.0 dB", "np_hold": "-40.0 dB", "mono_usable": 5.0, "bound_host": "10.0.0.5"}
+        overlay = {"incoming": "dolby", "config": "x", "volume": "-40.0 dB", "input": "TV"}
+        standby, debug = [True], [{"a": "b"}]
+        dc._release_receiver(denon_vol_cache=cache, receiver_overlay_state=overlay,
+                             receiver_standby_holder=standby, receiver_debug_holder=debug)
+        self.assertIsNone(self.link.receiver)
+        self.assertEqual(cache, {"effective": "", "np_hold": "", "mono_usable": 0.0, "bound_host": ""})
+        self.assertEqual(set(overlay.values()), {""})
+        self.assertEqual((standby, debug), ([False], [{}]))
+
+    def test_switching_to_a_location_without_a_receiver_releases_it(self) -> None:
+        self.bound()
+        cache = {"effective": "-40.0 dB", "np_hold": "-40.0 dB", "mono_usable": 5.0}
+        overlay = {"incoming": "dolby", "config": "x", "volume": "-40.0 dB", "input": "TV"}
+        names = dc._apply_persisted_location_to_runtime.__code__
+        kw = {n: mock.Mock() for n in names.co_varnames[:names.co_kwonlyargcount]}
+        kw.update(
+            avr_slot_holder=[{"address": "10.0.0.5"}], streaming_slot_holder=[None],
+            receiver_http_host={"host": "10.0.0.5"}, current_apple_tv={}, apple_tv_auto_state={},
+            apple_tv_playback_clock={}, apple_tv_dashboard_track={}, last_atv_interaction_mono=[0.0],
+            _atv_ix_sig_ds=[""], _atv_ix_sig_ck=[None], _atv_ix_pos=[None], _atv_ix_pos_mono=[0.0],
+            _atv_ix_extrap_playing=[False], _atv_ix_prev_idle=[True], skip_cache=[None],
+            playback_overlay_widget=None, denon_vol_cache=cache, receiver_overlay_state=overlay,
+            receiver_standby_holder=[False], receiver_debug_holder=[{}],
+        )
+        with mock.patch.object(dc, "read_saved_streaming_device", return_value=None), \
+             mock.patch.object(dc, "read_saved_av_receiver", return_value=None), \
+             mock.patch.object(dc, "clear_last_apple_tv"), mock.patch.object(dc, "clear_last_receiver"):
+            dc._apply_persisted_location_to_runtime(**kw)
+        self.assertEqual(kw["receiver_http_host"]["host"], "")
+        self.assertIsNone(self.link.receiver)
+        self.assertFalse(self.rx.connected)
+        self.assertEqual(cache["effective"], "")
+        self.assertEqual(overlay["volume"], "")
+
+    def test_switching_between_receivers_rebinds_and_old_callbacks_are_dropped(self) -> None:
+        made = []
+
+        def factory(brand, host, **o):
+            r = FakeReceiver()
+            made.append(r)
+            return r
+
+        link = ReceiverLink(factory)
+        seen = []
+        link.on_volume_confirmed(seen.append)
+        with mock.patch.object(dc, "get_receiver_link", return_value=link):
+            with mock.patch.object(dc, "read_saved_av_receiver", return_value={"address": "10.0.0.5"}):
+                dc._bind_receiver_volume_hub("")
+            wait_for(lambda: made[0].connected)
+            with mock.patch.object(dc, "read_saved_av_receiver", return_value={"address": "10.0.0.9"}):
+                dc._bind_receiver_volume_hub("10.0.0.9")
+            wait_for(lambda: made[1].connected)
+        self.assertFalse(made[0].connected)
+        made[0].step_volume(1)  # old receiver still finishing a command
+        self.assertEqual(seen, [])
+        made[1].step_volume(1)
+        self.assertEqual(len(seen), 1)
+
+
 class PollTickTests(unittest.TestCase):
     """``_receiver_poll_tick`` end to end: receiver state in, overlay state out."""
 
@@ -175,7 +376,7 @@ class PollTickTests(unittest.TestCase):
         real_thread = threading.Thread
 
         def run_inline(target=None, **k):
-            t = real_thread(target=target)
+            t = real_thread(target=target, args=k.get("args", ()))
             threads.append(t)
             return t
 
@@ -228,6 +429,40 @@ class PollTickTests(unittest.TestCase):
         self.assertEqual(kw["receiver_http_host"]["host"], "10.0.0.77")
         self.assertEqual(self.link.host, "10.0.0.77")
         self.assertEqual(saved[0]["address"], "10.0.0.77")
+
+
+    def test_tick_without_a_saved_receiver_releases_and_blanks_display(self) -> None:
+        with mock.patch.object(dc, "read_saved_av_receiver", return_value=None):
+            kw = self.run_tick(
+                receiver_overlay_state={"incoming": "x", "config": "y", "volume": "-40.0 dB", "input": "TV"},
+                denon_vol_cache={"effective": "-40.0 dB", "np_hold": "-40.0 dB"},
+                receiver_http_host={"host": "10.0.0.5"},
+            )
+        self.assertIsNone(self.link.receiver)
+        self.assertFalse(self.rx.connected)
+        self.assertEqual(kw["receiver_http_host"]["host"], "")
+        self.assertIsNone(kw["avr_slot_holder"][0])
+        self.assertEqual(set(kw["receiver_overlay_state"].values()), {""})
+        self.assertEqual(kw["denon_vol_cache"]["effective"], "")
+
+    def test_tick_with_unreadable_settings_keeps_the_receiver(self) -> None:
+        with mock.patch.object(dc, "read_saved_av_receiver", side_effect=OSError("busy")):
+            kw = self.run_tick()
+        self.assertIs(self.link.receiver, self.rx)
+        self.assertTrue(self.rx.connected)
+        self.assertEqual(kw["receiver_overlay_state"]["incoming"], "dolby digital")
+
+    def test_poll_result_for_a_removed_receiver_does_not_repaint(self) -> None:
+        host = {"host": "10.0.0.5"}
+
+        def removed_mid_poll():
+            host["host"] = ""  # the receiver is removed while the worker thread runs
+            return ReceiverState(connected=True, volume_db=-40.0)
+
+        with mock.patch.object(self.link, "state", side_effect=removed_mid_poll):
+            kw = self.run_tick(receiver_http_host=host)
+        self.assertEqual(kw["receiver_overlay_state"], {})
+        self.assertFalse(kw["receiver_poll_busy"]["active"])
 
 
 if __name__ == "__main__":

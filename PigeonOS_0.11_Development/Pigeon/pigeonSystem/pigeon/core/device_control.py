@@ -154,16 +154,41 @@ def _receiver_readout_superseded(line: str) -> bool:
         return False
 
 
+def _release_receiver(*, denon_vol_cache=None, receiver_overlay_state=None, receiver_standby_holder=None, receiver_debug_holder=None) -> None:
+    """No receiver is selected: drop the link and everything derived from the old one."""
+    try:
+        get_receiver_link().release()
+    except Exception:
+        pass
+    if denon_vol_cache is not None:
+        denon_vol_cache["effective"] = ""
+        denon_vol_cache["np_hold"] = ""
+        denon_vol_cache["mono_usable"] = 0.0
+        denon_vol_cache["bound_host"] = ""
+    if receiver_overlay_state is not None:
+        for key in ("incoming", "config", "volume", "input"):
+            receiver_overlay_state[key] = ""
+    if receiver_standby_holder is not None:
+        receiver_standby_holder[0] = False
+    if receiver_debug_holder is not None:
+        receiver_debug_holder[0] = {}
+
+
 def _bind_receiver_volume_hub(host: str) -> None:
-    """Make sure the receiver link is bound to ``host`` (or the saved AV receiver)."""
+    """Make sure the receiver link is bound to ``host`` (or the saved AV receiver).
+
+    A saved location with no receiver releases the link; a failure to *read* the
+    settings is temporary and leaves whatever is bound alone.
+    """
     h = str(host or "").strip()
     if not h:
         try:
             row = read_saved_av_receiver()
-            h = str((row or {}).get("address") or "").strip()
         except Exception:
-            h = ""
+            return
+        h = str((row or {}).get("address") or "").strip()
     if not h:
+        _release_receiver()
         return
     try:
         get_receiver_link().bind(h)
@@ -1226,7 +1251,7 @@ def set_current_apple_tv(row: dict[str, str], *, persist: bool, _atv_ix_extrap_p
     _schedule_refresh_pairing_leds()
 
 
-def _apply_persisted_location_to_runtime(*, _atv_ix_extrap_playing, _atv_ix_pos, _atv_ix_pos_mono, _atv_ix_prev_idle, _atv_ix_sig_ck, _atv_ix_sig_ds, _clear_reported_position_stall_stamp, _rebuild_paired_devices_panel, _reset_clock_saver_device_signal_baseline, _schedule_refresh_pairing_leds, _start_location_toast, _sync_status_bar_visibility_for_playback, _warm_playback_overlay_blits, apple_tv_auto_state, apple_tv_dashboard_track, apple_tv_playback_clock, avr_slot_holder, current_apple_tv, describe_current_apple_tv, last_atv_interaction_mono, playback_overlay_widget, receiver_http_host, render_once, skip_cache, streaming_slot_holder) -> None:
+def _apply_persisted_location_to_runtime(*, _atv_ix_extrap_playing, _atv_ix_pos, _atv_ix_pos_mono, _atv_ix_prev_idle, _atv_ix_sig_ck, _atv_ix_sig_ds, _clear_reported_position_stall_stamp, _rebuild_paired_devices_panel, _reset_clock_saver_device_signal_baseline, _schedule_refresh_pairing_leds, _start_location_toast, _sync_status_bar_visibility_for_playback, _warm_playback_overlay_blits, apple_tv_auto_state, apple_tv_dashboard_track, apple_tv_playback_clock, avr_slot_holder, current_apple_tv, describe_current_apple_tv, last_atv_interaction_mono, playback_overlay_widget, receiver_http_host, render_once, skip_cache, streaming_slot_holder, denon_vol_cache=None, receiver_overlay_state=None, receiver_standby_holder=None, receiver_debug_holder=None) -> None:
     """Reload holders and runtime targets from the persisted current location."""
     streaming_slot_holder[0] = read_saved_streaming_device()
     avr_slot_holder[0] = read_saved_av_receiver()
@@ -1285,19 +1310,24 @@ def _apply_persisted_location_to_runtime(*, _atv_ix_extrap_playing, _atv_ix_pos,
     _atv_ix_extrap_playing[0] = False
     _atv_ix_prev_idle[0] = True
     _reset_clock_saver_device_signal_baseline()
-    if av2:
-        adr = str(av2.get("address") or "").strip()
-        if adr:
-            write_last_receiver(
-                host=adr,
-                name=str(av2.get("name") or "").strip() or None,
-                label=str(av2.get("label") or "").strip() or None,
-                device_id=str(av2.get("identifier") or "").strip() or None,
-            )
-            receiver_http_host["host"] = adr
+    adr = str((av2 or {}).get("address") or "").strip()
+    if adr:
+        write_last_receiver(
+            host=adr,
+            name=str(av2.get("name") or "").strip() or None,
+            label=str(av2.get("label") or "").strip() or None,
+            device_id=str(av2.get("identifier") or "").strip() or None,
+        )
+        receiver_http_host["host"] = adr
     else:
         clear_last_receiver()
         receiver_http_host["host"] = ""
+        _release_receiver(
+            denon_vol_cache=denon_vol_cache,
+            receiver_overlay_state=receiver_overlay_state,
+            receiver_standby_holder=receiver_standby_holder,
+            receiver_debug_holder=receiver_debug_holder,
+        )
     if playback_overlay_widget is not None:
         playback_overlay_widget.clear_cache()
     try:
@@ -1339,10 +1369,23 @@ def _receiver_poll_tick(*, RECEIVER_POLL_MS, _PIGEON_EXT, _bind_receiver_volume_
     # Re-read from disk so an updated AVR IP (DHCP/move) applies without restart.
     try:
         _av_disk = read_saved_av_receiver()
+        _av_read_ok = True
     except Exception:
         _av_disk = None
-    if _av_disk:
+        _av_read_ok = False  # temporary: keep whatever is bound
+    if _av_disk and str(_av_disk.get("address") or "").strip():
         avr_slot_holder[0] = _av_disk
+    elif _av_read_ok:
+        # Readable settings, no receiver at this location: let go of the old one.
+        avr_slot_holder[0] = None
+        receiver_http_host["host"] = ""
+        _release_receiver(
+            denon_vol_cache=denon_vol_cache,
+            receiver_overlay_state=receiver_overlay_state,
+            receiver_standby_holder=receiver_standby_holder,
+            receiver_debug_holder=receiver_debug_holder,
+        )
+        return
     _av_row = avr_slot_holder[0]
     if _av_row:
         _slot_adr = str(_av_row.get("address") or "").strip()
@@ -1438,7 +1481,12 @@ def _receiver_poll_tick(*, RECEIVER_POLL_MS, _PIGEON_EXT, _bind_receiver_volume_
 
         link = get_receiver_link()
         healed_host = ""
-        if host:
+        origin_host = host
+
+        def still_selected() -> bool:
+            return str(receiver_http_host.get("host") or "").strip() == origin_host
+
+        if host and still_selected():
             try:
                 rx = link.bind(host)
                 if not link.state().connected and link.seconds_since_bind() > 8.0:
@@ -1458,7 +1506,7 @@ def _receiver_poll_tick(*, RECEIVER_POLL_MS, _PIGEON_EXT, _bind_receiver_volume_
                         found = str(
                             rx.relocate(avr_slot_holder[0], sweep=sweep_due) or ""
                         ).strip()
-                        if found and found != host:
+                        if found and found != host and still_selected():
                             healed_host = found
                             host = found
                             link.bind(host)
@@ -1523,6 +1571,10 @@ def _receiver_poll_tick(*, RECEIVER_POLL_MS, _PIGEON_EXT, _bind_receiver_volume_
                 receiver_poll_busy["active"] = False
 
         def _apply_body(rpl: object) -> None:
+            if not still_selected():
+                # Receiver removed or replaced while this poll ran: its result
+                # must not repaint the display.
+                return
             if healed_host:
                 receiver_http_host["host"] = healed_host
                 denon_vol_cache["bound_host"] = healed_host

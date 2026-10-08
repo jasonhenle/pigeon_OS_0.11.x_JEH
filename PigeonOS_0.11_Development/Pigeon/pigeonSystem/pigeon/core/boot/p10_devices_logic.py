@@ -208,6 +208,10 @@ def run(ctx) -> None:
         render_once=_late(lambda: ctx.render_once, "render_once"),
         root=root,
         skip_cache=skip_cache,
+        denon_vol_cache=denon_vol_cache,
+        receiver_overlay_state=receiver_overlay_state,
+        receiver_standby_holder=receiver_standby_holder,
+        receiver_debug_holder=ctx.receiver_debug_holder,
     )
 
     _paired_box_close_button = _bind_deps(
@@ -339,6 +343,10 @@ def run(ctx) -> None:
         render_once=_late(lambda: ctx.render_once, "render_once"),
         skip_cache=skip_cache,
         streaming_slot_holder=streaming_slot_holder,
+        denon_vol_cache=denon_vol_cache,
+        receiver_overlay_state=receiver_overlay_state,
+        receiver_standby_holder=receiver_standby_holder,
+        receiver_debug_holder=ctx.receiver_debug_holder,
     )
     ctx._apply_persisted_location_to_runtime = _apply_persisted_location_to_runtime
 

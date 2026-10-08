@@ -813,7 +813,7 @@ def _remove_streaming_device_at(for_location_id: str, index: int, *, _clear_repo
     _schedule_refresh_pairing_leds()
 
 
-def _remove_receiver_device_at(for_location_id: str, index: int, *, _rebuild_paired_devices_panel, _schedule_refresh_pairing_leds, apple_tv_busy, avr_slot_holder, describe_current_apple_tv, playback_overlay_widget, receiver_http_host, render_once, root, skip_cache) -> None:
+def _remove_receiver_device_at(for_location_id: str, index: int, *, _rebuild_paired_devices_panel, _schedule_refresh_pairing_leds, apple_tv_busy, avr_slot_holder, describe_current_apple_tv, playback_overlay_widget, receiver_http_host, render_once, root, skip_cache, denon_vol_cache=None, receiver_overlay_state=None, receiver_standby_holder=None, receiver_debug_holder=None) -> None:
     if apple_tv_busy["active"]:
         describe_current_apple_tv(suffix="busy")
         return
@@ -831,6 +831,14 @@ def _remove_receiver_device_at(for_location_id: str, index: int, *, _rebuild_pai
         if avr_slot_holder[0] is None:
             clear_last_receiver()
             receiver_http_host["host"] = ""
+            from pigeon.core.device_control import _release_receiver
+
+            _release_receiver(
+                denon_vol_cache=denon_vol_cache,
+                receiver_overlay_state=receiver_overlay_state,
+                receiver_standby_holder=receiver_standby_holder,
+                receiver_debug_holder=receiver_debug_holder,
+            )
         else:
             av2 = avr_slot_holder[0]
             adr = str(av2.get("address") or "").strip()

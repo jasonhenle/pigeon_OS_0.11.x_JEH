@@ -30,7 +30,11 @@ class BindMethodDepsTests(unittest.TestCase):
         self.assertEqual(seen, [1])
 
     def test_partial_would_not(self) -> None:
-        self.assertFalse(hasattr(functools.partial, "__get__"))
+        if hasattr(functools.partial, "__get__"):
+            # Python 3.14 made partial a method descriptor, so on a class it
+            # binds self by itself and the premise of this test no longer holds.
+            # bind_method_deps stays correct there (see the other tests).
+            self.skipTest("functools.partial binds self on Python >= 3.14")
         W = self._cls()
         W.pack = bind_deps(_patched, _orig=W.pack, _after=lambda: None)
         with self.assertRaises(TypeError):

@@ -800,6 +800,33 @@ class TelnetHubTests(unittest.TestCase):
         self.assertLessEqual(len(mv_cmds), 3, mv_cmds)
         self.assertEqual(mv_cmds[-1], "MV55")
 
+class ControllerStopTests(unittest.TestCase):
+    def test_stop_ends_the_worker_drops_work_and_detaches(self) -> None:
+        class Tr:
+            def __init__(self) -> None:
+                self.observers: list = []
+
+            def add_observer(self, cb): self.observers.append(cb)
+            def remove_observer(self, cb): self.observers.remove(cb)
+            def state(self, host): return {}
+            def send(self, host, command, *, timeout): return None
+            def http_send(self, host, command): return False
+
+        tr = Tr()
+        c = ReceiverVolumeController(tr)
+        t = threading.Thread(target=c.run_forever, daemon=True)
+        t.start()
+        deadline = time.monotonic() + 2
+        while not tr.observers and time.monotonic() < deadline:
+            time.sleep(0.005)
+        self.assertEqual(len(tr.observers), 1)
+        c.stop()
+        t.join(3)
+        self.assertFalse(t.is_alive())
+        self.assertEqual(tr.observers, [])
+        self.assertFalse(c.has_work())
+
+
 
 if __name__ == "__main__":
     unittest.main()
