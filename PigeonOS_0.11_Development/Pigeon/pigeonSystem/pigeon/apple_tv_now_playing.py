@@ -447,6 +447,13 @@ def youtube_video_id_from_metadata(metadata: dict[str, object] | None) -> str | 
     """Best-effort 11-char YouTube video id from pyatv extras / URLs."""
     if not isinstance(metadata, dict):
         return None
+    # A bare 11-character token is only a video id when the app could be
+    # YouTube. Other apps' ids (e.g. the TV app's "A0005902003") match the
+    # same pattern and must not turn a show into a YouTube video.
+    app_blob = (
+        f"{metadata.get('app_name') or ''} {metadata.get('app_id') or ''}"
+    ).strip().lower()
+    bare_ids_ok = (not app_blob) or ("youtube" in app_blob)
     for key in (
         "content_identifier",
         "hash",
@@ -461,7 +468,11 @@ def youtube_video_id_from_metadata(metadata: dict[str, object] | None) -> str | 
         if url_hit:
             return url_hit.group(1)
         # Bare ids only from identifier-like fields — titles are usually prose.
-        if key in ("content_identifier", "hash", "itunes_store_identifier"):
+        if bare_ids_ok and key in (
+            "content_identifier",
+            "hash",
+            "itunes_store_identifier",
+        ):
             token = raw.rsplit(":", 1)[-1].rsplit("/", 1)[-1].strip()
             if _YOUTUBE_ID_RE.match(token):
                 return token
