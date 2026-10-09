@@ -480,6 +480,34 @@ def _send_player_play_pause_hotkey(*, _PIGEON_EXT, apple_tv_busy, current_apple_
     return True
 
 
+_RENDER_PENDING = [False]
+
+
+def _request_render(root, render_once) -> None:
+    """Paint once for a burst of receiver volume events.
+
+    A full render costs ~200 ms on the Pi; one per confirmation and one per state
+    change queue up behind a spinning encoder and the widget trails it by seconds.
+    State is committed by the caller first, so the single render that runs sees
+    the newest level.
+    """
+    if _RENDER_PENDING[0]:
+        return
+    _RENDER_PENDING[0] = True
+
+    def run() -> None:
+        _RENDER_PENDING[0] = False
+        try:
+            render_once()
+        except Exception:
+            pass
+
+    try:
+        root.after_idle(run)
+    except Exception:
+        _RENDER_PENDING[0] = False
+
+
 def _commit_receiver_volume(vol: str, *, _clock_saver_volume, _note_volume_graphics, _remember_clock_saver_volume, denon_vol_cache, receiver_overlay_state) -> bool:
     """Write the box-3 AVR level into the widgets. True if it changed."""
     line = str(vol or "").strip()
@@ -539,10 +567,7 @@ def _on_receiver_volume_changed(line: str, *, _clock_saver_for_compose, _commit_
                 _sync_now_playing_screen_state()
         except Exception:
             pass
-        try:
-            render_once()
-        except Exception:
-            pass
+        _request_render(root, render_once)
 
     try:
         root.after(0, apply)
@@ -1093,10 +1118,7 @@ def _register_receiver_callbacks(*, _clock_saver_volume, _note_volume_graphics, 
                 _note_volume_graphics(v)
             except Exception:
                 pass
-            try:
-                render_once()
-            except Exception:
-                pass
+            _request_render(root, render_once)
 
         try:
             root.after(0, _apply_confirmed_volume)
