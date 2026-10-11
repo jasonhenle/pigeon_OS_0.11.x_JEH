@@ -574,10 +574,25 @@ def _quick_receiver_volume_poll(*, _clock_saver_for_compose, _commit_receiver_vo
         pass
 
 
+# Longest a metadata poll may run before the worker is considered hung.
+_APPLE_TV_POLL_STALL_S = 60.0
+
+
 def _apple_tv_auto_poll_tick(*, APPLE_TV_FAIL_POLL_MAX_MS, APPLE_TV_IDLE_POLL_MS, APPLE_TV_POLL_MS, RECEIVER_POLL_MS, _PIGEON_EXT, _apple_tv_auto_poll_tick, _apple_tv_scan_timeout_s, _atv_metadata_is_content_idle, _bump_clock_saver_significant_device, _bump_clock_saver_significant_device_from_metadata, _clear_displayed_tmdb_art_for_content_change, _content_key_from_metadata, _idle_audio_meter_active, _pyatv_install_hint, _refresh_content_indicator, _refresh_observed_pairing_led_rows, _return_to_landing_if_atv_idle, _schedule_hdmi_frame_check_from_poll, _seed_current_apple_tv_from_streaming_slot, _store_music_artwork_from_metadata, _sync_status_bar_visibility_for_playback, _sync_streaming_badge_from_playback_sources, _tmdb_pref_from_metadata, _tmdb_spawn_identity_changed, _update_atv_interaction_from_poll_metadata, _update_status_bar_from_metadata, _warm_playback_overlay_blits, active_tmdb_title_key, apple_tv_auto_state, apple_tv_busy, apple_tv_dashboard_track, current_apple_tv, denon_vol_cache, playback_overlay_widget, receiver_overlay_state, receiver_standby_holder, render_once, resolve_metadata_tmdb_query, root, skip_cache, spawn_tmdb_poster_fetch, streaming_slot_holder) -> None:
     if apple_tv_auto_state.get("running"):
-        root.after(APPLE_TV_POLL_MS, _apple_tv_auto_poll_tick)
-        return
+        stalled_s = time.monotonic() - float(
+            apple_tv_auto_state.get("running_since") or time.monotonic()
+        )
+        if stalled_s < _APPLE_TV_POLL_STALL_S:
+            root.after(APPLE_TV_POLL_MS, _apple_tv_auto_poll_tick)
+            return
+        # A hung worker would otherwise block every later poll, so the display
+        # never sees another title. Abandon it; its late ``finish`` is ignored.
+        sys.stderr.write(
+            f"pigeon: apple_tv poll stalled {stalled_s:.0f}s; abandoning worker\n"
+        )
+        sys.stderr.flush()
+        apple_tv_auto_state["running"] = False
     # Avoid overlapping pyatv scan/connect with discover / pairing / probe — reduces spurious TV pairing prompts.
     if apple_tv_busy["active"]:
         root.after(APPLE_TV_POLL_MS, _apple_tv_auto_poll_tick)
@@ -595,10 +610,14 @@ def _apple_tv_auto_poll_tick(*, APPLE_TV_FAIL_POLL_MAX_MS, APPLE_TV_IDLE_POLL_MS
         root.after(APPLE_TV_POLL_MS, _apple_tv_auto_poll_tick)
         return
     apple_tv_auto_state["running"] = True
+    apple_tv_auto_state["running_since"] = time.monotonic()
+    poll_gen = int(apple_tv_auto_state.get("poll_gen") or 0) + 1
+    apple_tv_auto_state["poll_gen"] = poll_gen
+    next_poll_holder = [APPLE_TV_POLL_MS]
     device_identifier = current_apple_tv.get("identifier", "")
     device_address = current_apple_tv.get("address", "")
 
-    def worker() -> None:
+    def _poll_worker_body() -> None:
         try:
             from pigeon.apple_tv_now_playing import fetch_now_playing_info_for_device
 
@@ -675,12 +694,12 @@ def _apple_tv_auto_poll_tick(*, APPLE_TV_FAIL_POLL_MAX_MS, APPLE_TV_IDLE_POLL_MS
                 except Exception:
                     wk_roku_title = None
 
-        def finish() -> None:
-            apple_tv_auto_state["running"] = False
+        def _finish_body() -> None:
             meter_up = bool(_idle_audio_meter_active())
             pyatv_ok = bool(ok_w and isinstance(metadata_w, dict))
             md_for_status: dict[str, object] | None = metadata_w if pyatv_ok else None
             next_poll_ms = APPLE_TV_POLL_MS
+            next_poll_holder[0] = next_poll_ms
             if current_apple_tv.get("identifier"):
                 if pyatv_ok:
                     apple_tv_dashboard_track["last_poll_ok"] = True
@@ -1067,9 +1086,46 @@ def _apple_tv_auto_poll_tick(*, APPLE_TV_FAIL_POLL_MAX_MS, APPLE_TV_IDLE_POLL_MS
                     _schedule_hdmi_frame_check_from_poll()
                 except Exception:
                     pass
-            root.after(max(APPLE_TV_POLL_MS, int(next_poll_ms)), _apple_tv_auto_poll_tick)
+            next_poll_holder[0] = int(next_poll_ms)
+
+        def finish() -> None:
+            if apple_tv_auto_state.get("poll_gen") != poll_gen:
+                return  # superseded by the stall watchdog
+            apple_tv_auto_state["running"] = False
+            try:
+                _finish_body()
+            except Exception as e:
+                sys.stderr.write(f"pigeon: apple_tv poll finish failed: {e!r}\n")
+                sys.stderr.flush()
+            finally:
+                # One failed poll must never end polling for good.
+                root.after(
+                    max(APPLE_TV_POLL_MS, int(next_poll_holder[0])),
+                    _apple_tv_auto_poll_tick,
+                )
 
         root.after(0, finish)
+
+    def worker() -> None:
+        try:
+            _poll_worker_body()
+        except Exception as e:
+            sys.stderr.write(f"pigeon: apple_tv poll worker failed: {e!r}\n")
+            sys.stderr.flush()
+
+            def _recover() -> None:
+                if apple_tv_auto_state.get("poll_gen") != poll_gen:
+                    return
+                apple_tv_auto_state["running"] = False
+                root.after(
+                    max(APPLE_TV_POLL_MS, APPLE_TV_FAIL_POLL_MAX_MS),
+                    _apple_tv_auto_poll_tick,
+                )
+
+            try:
+                root.after(0, _recover)
+            except Exception:
+                pass
 
     threading.Thread(target=worker, daemon=True).start()
 
