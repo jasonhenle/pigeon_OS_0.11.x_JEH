@@ -1235,6 +1235,29 @@ def _volume_audio_cfg_baseline_y(cy: float) -> float:
     return float(cy) - float(_RING_OUTER_R) - float(_WIDGET_LABEL_BASELINE_GAP_PX)
 
 
+# Widest readout the disc has to hold; every level is drawn at the size that fits it.
+_VOLUME_SIZE_REFERENCE_TEXT = "-88.8"
+
+
+@lru_cache(maxsize=16)
+def _volume_readout_size_px(usable_r: float, hi: int) -> int:
+    """Largest Digital-7 size whose widest readout fits the disc (same for every level)."""
+    pad = 2  # matches ``_text_patch_digital7``
+    lo = 16
+    best = 16
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        _patch, w, h = _text_patch_digital7(_VOLUME_SIZE_REFERENCE_TEXT, size_px=mid, fill_rgb=None)
+        ink_w = max(0.0, float(w) - 2.0 * pad)
+        ink_h = max(0.0, float(h) - 2.0 * pad)
+        if (ink_w * 0.5) ** 2 + (ink_h * 0.5) ** 2 <= usable_r ** 2:
+            best = mid
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    return best
+
+
 def _volume_readout_patch(
     text: str,
     *,
@@ -1242,35 +1265,19 @@ def _volume_readout_patch(
     max_size_px: int | None = None,
     fill_rgb: tuple[int, int, int] | None = None,
 ) -> tuple[np.ndarray, int, int]:
-    """Digital-7 volume number fitted inside the inner disc, as large as it can be."""
+    """Digital-7 volume number inside the inner disc.
+
+    The size is fitted once to the widest readout, not to each string, so a step
+    from ``-22`` to ``-21.5`` does not change the font size or move the labels
+    placed from its height.
+    """
     label = str(text or "").strip()
     if not label:
         return np.zeros((1, 1, 4), dtype=np.uint8), 0, 0
-    pad = 2  # matches ``_text_patch_digital7``
     usable_r = max(12.0, float(inner_r) * float(_VOLUME_TEXT_INNER_FIT))
     hi = int(max_size_px) if max_size_px is not None else int(round(usable_r * 2.0))
-    hi = max(18, hi)
-    lo = 16
-    best: tuple[np.ndarray, int, int] | None = None
-
-    def _fits(w: int, h: int) -> bool:
-        ink_w = max(0.0, float(w) - 2.0 * pad)
-        ink_h = max(0.0, float(h) - 2.0 * pad)
-        return (ink_w * 0.5) ** 2 + (ink_h * 0.5) ** 2 <= usable_r ** 2
-
-    while lo <= hi:
-        mid = (lo + hi) // 2
-        patch, w, h = _text_patch_digital7(
-            label, size_px=mid, fill_rgb=fill_rgb
-        )
-        if _fits(w, h):
-            best = (patch, w, h)
-            lo = mid + 1
-        else:
-            hi = mid - 1
-    if best is None:
-        return _text_patch_digital7(label, size_px=16, fill_rgb=fill_rgb)
-    return best
+    size = _volume_readout_size_px(round(usable_r, 3), max(18, hi))
+    return _text_patch_digital7(label, size_px=size, fill_rgb=fill_rgb)
 
 
 def _disc_clock_patch(label: str, fill_rgb: tuple[int, int, int]) -> np.ndarray:
@@ -3931,6 +3938,7 @@ class ViewCirclesWidget:
         self._ticking_under: np.ndarray | None = None
         self._ticking_under_sig: tuple[object, ...] | None = None
         self._svg_chrome_by_key: dict[tuple[object, ...], np.ndarray] = {}
+        self._static_base: tuple[tuple[object, ...], np.ndarray, list] | None = None
         self._bar_overlay_layer: np.ndarray | None = None
         # Union of everything the last _draw_status_bar painted (x0, y0, x1, y1);
         # the timecodes sit below the zone box, so the zone rect alone misses them.
@@ -3971,8 +3979,13 @@ class ViewCirclesWidget:
     def content_mode(self) -> str:
         return _normalize_content_mode(self._state.content_mode)
 
-    def clear_cache(self) -> None:
+    def clear_cache(self, *, keep_base: bool = False) -> None:
+        """Drop the rendered frame. ``keep_base`` keeps the volume-independent layers,
+        which are keyed on the cache signature and so rebuild themselves on any change
+        the signature sees; callers that change something it cannot see leave it False."""
         self._cached_bgra = None
+        if not keep_base:
+            self._static_base = None
         self._cached_sig = None
         self._static_bgr = None
         self._ticking_under = None
@@ -4012,7 +4025,7 @@ class ViewCirclesWidget:
         """Show the volume widget in zone 3 and restart the hold timer."""
         t = time.monotonic() if now is None else float(now)
         self._volume_takeover_until = t + float(ZONE3_VOLUME_TAKEOVER_S)
-        self.clear_cache()
+        self.clear_cache(keep_base=True)
 
     def volume_takeover_active(self, now: float | None = None) -> bool:
         t = time.monotonic() if now is None else float(now)
@@ -4330,7 +4343,7 @@ class ViewCirclesWidget:
             chrome = True
         self._sync_meter_content_key()
         if chrome:
-            self.clear_cache()
+            self.clear_cache(keep_base=True)
         return chrome or ticking
 
     def _sync_meter_content_key(self) -> None:
@@ -4640,7 +4653,7 @@ class ViewCirclesWidget:
             button_hex=base.button_hex,
         )
 
-    def _cache_sig(self, *, ticking: bool = True) -> tuple[object, ...]:
+    def _cache_sig(self, *, ticking: bool = True, volume: bool = True) -> tuple[object, ...]:
         st = self._state
         cast_sig = tuple(st.cast[:21])
         poster_id = id(self._poster_bgra) if self._poster_bgra is not None else None
@@ -4663,9 +4676,9 @@ class ViewCirclesWidget:
             round(st.progress, 6) if ticking else 0.0,
             st.elapsed_text if ticking else "",
             st.remaining_text if ticking else "",
-            st.volume,
-            round(vol_disp, 5),
-            st.volume_muted and not st.searching,
+            st.volume if volume else None,
+            round(vol_disp, 5) if volume else None,
+            (st.volume_muted and not st.searching) if volume else None,
             st.incoming,
             st.config,
             st.chrome_visible,
@@ -5345,6 +5358,18 @@ class ViewCirclesWidget:
         self._header_slot_patch_cache = (key, fitted)
         return fitted
 
+    def _paste_disc_clock(self, out: np.ndarray, now: datetime) -> bool:
+        """Stamp the clock in the zone-3 volume disc. False when it isn't showing."""
+        disc = self._disc_clock_geometry()
+        if disc is None:
+            return False
+        cx, bottom, _nh = disc
+        patch = _disc_clock_patch(now_playing_header_clock_text(now), _look_chrome_rgb())
+        if patch.size:
+            ph, pw = patch.shape[:2]
+            _paste_patch_bgra(out, patch, int(round(cx - pw / 2.0)), int(round(bottom - ph)))
+        return True
+
     def _draw_header_clock(self, out: np.ndarray, now: datetime) -> None:
         """Header chrome centered on the wide TT / album (clock, or album when music)."""
         if not _header_clock_enabled():
@@ -5355,21 +5380,8 @@ class ViewCirclesWidget:
             # Digital-7 clock over zone 3; zone 6's header slot holds the TRT.
             z3 = NOW_PLAYING_ZONES[3]
             cx = float(z3.x) + float(z3.w) * 0.5
-            disc = self._disc_clock_geometry()
-            if disc is not None:
+            if self._paste_disc_clock(out, now):
                 # Volume readout showing in zone 3: the clock sits in the disc above it.
-                cx, bottom, _nh = disc
-                patch = _disc_clock_patch(
-                    now_playing_header_clock_text(now), _look_chrome_rgb()
-                )
-                if patch.size:
-                    ph, pw = patch.shape[:2]
-                    _paste_patch_bgra(
-                        out,
-                        patch,
-                        int(round(cx - pw / 2.0)),
-                        int(round(bottom - ph)),
-                    )
                 return
             self._paste_header_digital7(
                 out,
@@ -5378,6 +5390,8 @@ class ViewCirclesWidget:
                 fill_rgb=_look_chrome_rgb(),
             )
             return
+        # Album title in the header slot; the clock still sits in the volume disc.
+        self._paste_disc_clock(out, now)
         fitted = self._header_slot_fitted(now)
         if fitted is None:
             return
@@ -5711,14 +5725,19 @@ class ViewCirclesWidget:
         """Deprecated separator between in-ring volume/config — no-op."""
         return
 
+    def _disc_clock_enabled(self) -> bool:
+        """The disc clock follows the header-clock setting. Unlike the header slot
+        it does not give way to the album title, so the music layout has one too."""
+        return _header_clock_enabled() and not _zone_clock_hides_header(self._assignments())
+
     def _clock_in_volume_disc(self, vol_zone: int | None = None) -> bool:
-        """True when the digital header clock sits inside the zone-3 volume disc,
-        above the number (a readout is showing and the header slot is a clock)."""
+        """True when the digital clock sits inside the zone-3 volume disc, above the
+        number (a readout is showing and the header clock is enabled)."""
         if vol_zone is None:
             vol_zone = _zone_for_widget(self._assignments(), "volume")
         if vol_zone is None or int(vol_zone) != 3:
             return False
-        if not self._header_slot_ticks():
+        if not self._disc_clock_enabled():
             return False
         vol_value = volume_widget_value_text(self._state.volume)
         muted = vol_value.strip().lower() in ("mute", "muted", "off") or self._state.volume_muted
@@ -6549,20 +6568,30 @@ class ViewCirclesWidget:
             )
             _paste_patch_bgra(out, clock, 0, 0)
             return out
-        out = _fallback_base_bgra()
         theme = self._effective_np_theme()
-        has_poster = self._poster_bgra is not None and self._poster_bgra.size > 0
-        if self._state.content_active and has_poster and not self._state.searching:
-            blur = self._ensure_artwork_blur_bgra()
-            if blur is not None:
-                _paste_patch_bgra(out, blur, 0, 0)
-        elif _NP_NO_POSTER_UI_WASH and self._state.content_active and not has_poster:
-            # No TMDb poster to blur: wash the page in the UI color instead.
-            _paste_patch_bgra(out, self._ui_color_wash_bgra(theme), 0, 0)
-        # Poster/album under play overlay; SVG chrome sits in sibling zones.
-        self._draw_poster(out)
-        self._draw_play_overlay(out)
-        _paste_patch_bgra(out, self._render_svg_base(now), 0, 0)
+        # Everything up to the SVG chrome is independent of the volume level, and
+        # pasting those full-frame layers is most of a rebuild (~140 ms on the Pi).
+        # A volume step reuses them and redraws only what depends on the level.
+        base_key = self._cache_sig(ticking=False, volume=False)
+        cached_base = self._static_base
+        if cached_base is not None and cached_base[0] == base_key:
+            out = cached_base[1].copy()
+            self._shimmer_rects = list(cached_base[2])
+        else:
+            out = _fallback_base_bgra()
+            has_poster = self._poster_bgra is not None and self._poster_bgra.size > 0
+            if self._state.content_active and has_poster and not self._state.searching:
+                blur = self._ensure_artwork_blur_bgra()
+                if blur is not None:
+                    _paste_patch_bgra(out, blur, 0, 0)
+            elif _NP_NO_POSTER_UI_WASH and self._state.content_active and not has_poster:
+                # No TMDb poster to blur: wash the page in the UI color instead.
+                _paste_patch_bgra(out, self._ui_color_wash_bgra(theme), 0, 0)
+            # Poster/album under play overlay; SVG chrome sits in sibling zones.
+            self._draw_poster(out)
+            self._draw_play_overlay(out)
+            _paste_patch_bgra(out, self._render_svg_base(now), 0, 0)
+            self._static_base = (base_key, out.copy(), list(self._shimmer_rects))
         vol_zone = _zone_for_widget(assignments, "volume")
         if vol_zone is not None:
             vol_frac = self._volume_fraction_for_display()

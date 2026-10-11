@@ -85,6 +85,7 @@ class DenonReceiver:
         self._meta_dbg: dict[str, str] = {}  # last telnet snapshot that carried audio metadata
         self._last_cmd_mono = 0.0
         self._wake = threading.Event()
+        self._poll_stop = threading.Event()
         self._monitor: threading.Thread | None = None
         self._worker: threading.Thread | None = None
         self._observing = False
@@ -103,6 +104,7 @@ class DenonReceiver:
             return
         with self._lock:
             self._active = True
+            self._poll_stop = threading.Event()
             self._generation += 1
             gen = self._generation
         self._emit(EVT_CONNECTION, f"connecting to {self.host}")
@@ -128,6 +130,11 @@ class DenonReceiver:
             target=self._monitor_loop, args=(gen,), name="denon-receiver-monitor", daemon=True
         )
         self._monitor.start()
+        # The full poll takes 0.6-1.2 s on an X-series AVR. On its own thread it
+        # cannot hold up the hub merges that carry a live volume change.
+        threading.Thread(
+            target=self._poll_loop, args=(gen,), name="denon-receiver-poll", daemon=True
+        ).start()
         self.get_state()
 
     def disconnect(self) -> None:
@@ -135,6 +142,7 @@ class DenonReceiver:
             self._active = False
             self._generation += 1
             self._reachable = False
+            self._poll_stop.set()
             observing, self._observing = self._observing, False
             worker, self._worker = self._worker, None
         self._wake.set()
@@ -199,6 +207,21 @@ class DenonReceiver:
         vol = _volume_db_value(r.volume)
         if vol is None:
             vol = cur.volume_db  # muted/blank readout: keep last level
+        else:
+            # The poll runs beside the hub, so a level the hub reported after this
+            # poll began is newer than the poll's own reading.
+            try:
+                hub = self.transport.state(self.host) or {}
+                mv, mv_mono = hub.get("mv"), hub.get("mv_mono")
+                if (
+                    hub.get("connected")
+                    and isinstance(mv, (int, float))
+                    and isinstance(mv_mono, (int, float))
+                    and float(mv_mono) > poll_start
+                ):
+                    vol = float(mv) - 80.0
+            except Exception:
+                pass
         dbg = getattr(r, "telnet_debug", None) or {}
         incoming, config, label = r.incoming, r.config, r.input_label
         if r.ok and r.standby:
@@ -415,17 +438,20 @@ class DenonReceiver:
             powered_on=(pw == "ON") if use_pw else cur.powered_on,
         )
 
+    def _poll_loop(self, gen: int) -> None:
+        stop = self._poll_stop
+        while self._active and gen == self._generation:
+            stop.wait(timeout=self._full_poll_s)
+            if not (self._active and gen == self._generation):
+                return
+            self.get_state()
+
     def _monitor_loop(self, gen: int) -> None:
-        last_full = time.monotonic()
         while self._active and gen == self._generation:
             self._wake.wait(timeout=0.5)
             self._wake.clear()
             if not (self._active and gen == self._generation):
                 return
-            if time.monotonic() - last_full >= self._full_poll_s:
-                last_full = time.monotonic()
-                self.get_state()
-                continue
             new = self._from_hub()
             if new is not None and self._reachable:
                 self._merge(new, source="hub", gen=gen)
