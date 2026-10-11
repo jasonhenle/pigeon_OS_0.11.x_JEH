@@ -51,21 +51,31 @@ _ZONE8_Y = 34.0
 _ZONE8_W = 1190.0
 _ZONE8_H = (525.5 + 130.0) - _ZONE8_Y  # through the bottom of zone 4
 
+# Zone 11 is zones 1–3 combined (full portrait row, left edge of 1 to right edge of 3).
+_ZONE11_X = 44.5
+_ZONE11_Y = 34.0
+_ZONE11_W = (840.0 + _ZONE_PORTRAIT_W) - _ZONE11_X
+_ZONE11_H = _ZONE_PORTRAIT_H
+
 # index → zone. Restrictions: if this zone is on, listed zones must be off.
 NOW_PLAYING_ZONES: dict[int, NowPlayingZone] = {
-    1: NowPlayingZone(1, 44.5, 34.0, _ZONE_PORTRAIT_W, _ZONE_PORTRAIT_H, (6, 8, 10)),
-    2: NowPlayingZone(2, 442.5, 34.0, _ZONE_PORTRAIT_W, _ZONE_PORTRAIT_H, (6, 7, 8, 10)),
-    3: NowPlayingZone(3, 840.0, 34.0, _ZONE_PORTRAIT_W, _ZONE_PORTRAIT_H, (7, 8, 10)),
+    1: NowPlayingZone(1, 44.5, 34.0, _ZONE_PORTRAIT_W, _ZONE_PORTRAIT_H, (6, 8, 10, 11)),
+    2: NowPlayingZone(2, 442.5, 34.0, _ZONE_PORTRAIT_W, _ZONE_PORTRAIT_H, (6, 7, 8, 10, 11)),
+    3: NowPlayingZone(3, 840.0, 34.0, _ZONE_PORTRAIT_W, _ZONE_PORTRAIT_H, (7, 8, 10, 11)),
     4: NowPlayingZone(4, 44.5, 525.5, 1190.0, 130.0, (8, 9, 10)),
     5: NowPlayingZone(5, 44.5, 636.0, 1190.0, 130.0, (9, 10)),
-    6: NowPlayingZone(6, 44.5, 34.0, 793.0, _ZONE_PORTRAIT_H, (1, 2, 8, 10)),
-    7: NowPlayingZone(7, 442.5, 34.0, 793.0, _ZONE_PORTRAIT_H, (2, 3, 8, 10)),
-    8: NowPlayingZone(8, _ZONE8_X, _ZONE8_Y, _ZONE8_W, _ZONE8_H, (1, 2, 3, 4, 6, 7, 10)),
+    6: NowPlayingZone(6, 44.5, 34.0, 793.0, _ZONE_PORTRAIT_H, (1, 2, 8, 10, 11)),
+    7: NowPlayingZone(7, 442.5, 34.0, 793.0, _ZONE_PORTRAIT_H, (2, 3, 8, 10, 11)),
+    8: NowPlayingZone(8, _ZONE8_X, _ZONE8_Y, _ZONE8_W, _ZONE8_H, (1, 2, 3, 4, 6, 7, 10, 11)),
     # Idle clock saver: whole design frame (digital clocksaver / centered clock widget).
-    9: NowPlayingZone(9, 0.0, 0.0, float(DESIGN_W), float(DESIGN_H), (1, 2, 3, 4, 5, 6, 7, 8, 10)),
+    9: NowPlayingZone(9, 0.0, 0.0, float(DESIGN_W), float(DESIGN_H), (1, 2, 3, 4, 5, 6, 7, 8, 10, 11)),
     # Pausesaver: full display, covering zones 0–9.
     10: NowPlayingZone(
-        10, 0.0, 0.0, float(DESIGN_W), float(DESIGN_H), (1, 2, 3, 4, 5, 6, 7, 8, 9)
+        10, 0.0, 0.0, float(DESIGN_W), float(DESIGN_H), (1, 2, 3, 4, 5, 6, 7, 8, 9, 11)
+    ),
+    # Zones 1–3 combined: one wide slot across the whole portrait row.
+    11: NowPlayingZone(
+        11, _ZONE11_X, _ZONE11_Y, _ZONE11_W, _ZONE11_H, (1, 2, 3, 6, 7, 8, 9, 10)
     ),
 }
 
