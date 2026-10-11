@@ -67,6 +67,34 @@ class NpThemeFromTtTests(unittest.TestCase):
         w.set_backdrop_bgr(np.full((90, 160, 3), (0, 200, 0), dtype=np.uint8))
         self.assertEqual(w._effective_np_theme().ui_hex, np_theme_from_settings().ui_hex)
 
+    def test_settings_color_holds_while_searching_tmdb(self) -> None:
+        # A red TT is on screen from the last title; the new one is still being
+        # searched, so the settings color holds until the art arrives.
+        w = _widget(tt_bgra=_logo((20, 20, 220)))
+        w.set_backdrop_bgr(np.full((90, 160, 3), (0, 200, 0), dtype=np.uint8))
+        self.assertNotEqual(w._effective_np_theme().ui_hex, np_theme_from_settings().ui_hex)
+        w.update_state(
+            progress=0.3,
+            elapsed_text="0:10:00",
+            remaining_text="0:40:00",
+            volume_text="-25.0 dB",
+            content_active=True,
+            content_mode="video",
+            searching=True,
+        )
+        self.assertEqual(w._effective_np_theme().ui_hex, np_theme_from_settings().ui_hex)
+        w.update_state(
+            progress=0.3,
+            elapsed_text="0:10:00",
+            remaining_text="0:40:00",
+            volume_text="-25.0 dB",
+            content_active=True,
+            content_mode="video",
+            searching=False,
+            tt_bgra=_logo((20, 20, 220)),
+        )
+        self.assertNotEqual(w._effective_np_theme().ui_hex, np_theme_from_settings().ui_hex)
+
     def _music(self, **state) -> ViewCirclesWidget:
         w = ViewCirclesWidget(assets_dir=_ASSETS)
         w.update_state(
