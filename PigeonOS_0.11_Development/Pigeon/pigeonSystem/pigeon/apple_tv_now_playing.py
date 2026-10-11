@@ -1694,6 +1694,10 @@ async def _async_fetch_now_playing_info_for_device(
     return False, "No now playing metadata available.", None
 
 
+# Upper bound for one full scan + connect + read cycle.
+_FETCH_NOW_PLAYING_TIMEOUT_S = 45.0
+
+
 def fetch_now_playing_info_for_device(
     *,
     device_identifier: str,
@@ -1705,13 +1709,23 @@ def fetch_now_playing_info_for_device(
         _ensure_pyatv()
     except ImportError:
         return False, "The `pyatv` package is not installed. From Pigeon_python: pip install pyatv", None
-    return _new_loop_run(
-        _async_fetch_now_playing_info_for_device(
-            device_identifier=device_identifier,
-            device_address=device_address,
-            scan_timeout_s=scan_timeout_s,
-        )
-    )
+    async def _bounded():
+        # pyatv connect / playing() have no timeout of their own; a wedged
+        # Apple TV would otherwise hold the poll worker (and every later poll)
+        # forever.
+        try:
+            return await asyncio.wait_for(
+                _async_fetch_now_playing_info_for_device(
+                    device_identifier=device_identifier,
+                    device_address=device_address,
+                    scan_timeout_s=scan_timeout_s,
+                ),
+                timeout=_FETCH_NOW_PLAYING_TIMEOUT_S,
+            )
+        except asyncio.TimeoutError:
+            return False, "Apple TV metadata poll timed out.", None
+
+    return _new_loop_run(_bounded())
 
 
 async def _async_atv_remote_close_session() -> None:
