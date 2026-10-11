@@ -1208,12 +1208,18 @@ def _handle_main_settings_action(action: str, *, _apply_persisted_location_to_ru
                     st.update_available = bool(update_check_state.get("update_available"))
                     st.update_remote_version = update_check_state.get("remote_version")
                     st.update_github_branch = update_check_state.get("github_branch")
+                    if st.update_available:
+                        st.show_known_update_for_install()
                     st.set_update_popup_focus("update")
             except Exception:
                 pass
         st.update_local_version = version_string()
         main_settings_widget.invalidate()
         skip_cache[0] = None
+        if action == "update_popup:open" and not st.update_checking:
+            # An update was already found: the next click confirms installing
+            # it; re-checking here would just make the user wait again.
+            return
 
         def worker_ms_update_check() -> None:
             try:
@@ -1246,6 +1252,20 @@ def _handle_main_settings_action(action: str, *, _apply_persisted_location_to_ru
                 st.update_remote_version = getattr(result, "remote_version", None)
                 st.update_github_branch = getattr(result, "github_branch", None)
                 st.update_error = getattr(result, "error", None)
+                if st.update_error:
+                    # The popup only shows a red bar; keep the reason readable.
+                    msg_err = (
+                        f"update check failed (local {st.update_local_version}): "
+                        f"{str(st.update_error)[:300]}"
+                    )
+                    sys.stderr.write(f"pigeon: {msg_err}\n")
+                    sys.stderr.flush()
+                    try:
+                        from pigeon.pi_diagnostics import append_pigeon_log
+
+                        append_pigeon_log(msg_err)
+                    except Exception:
+                        pass
                 available = bool(getattr(result, "update_available", False))
                 st.update_available = available and not st.update_error
                 # Confirmed current: pull version_update until the next visit.

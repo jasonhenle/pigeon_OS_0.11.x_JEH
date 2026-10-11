@@ -85,6 +85,27 @@ class UpdatePopupFocusTests(unittest.TestCase):
         self.assertTrue(st.update_checking)
         self.assertEqual(st.update_popup_focused_choice, "update")
 
+    def test_open_with_known_update_skips_check_and_empties_bar(self) -> None:
+        from pigeon.widgets.update_popup import update_status_cells
+
+        st = MainSettingsState()
+        st.update_available = True
+        st.update_remote_version = "0.11.99"
+        st.open_update_popup()
+        self.assertFalse(st.update_checking)
+        self.assertEqual(st.update_popup_focused_choice, "update")
+        self.assertEqual(update_status_cells(st)[0], 0)
+        # Not checking + update known: the next click on UPDATE installs it
+        # (``activate`` returns ``update_popup:now``) instead of re-checking.
+        self.assertTrue(st.update_available)
+
+    def test_open_after_failed_check_checks_again(self) -> None:
+        st = MainSettingsState()
+        st.update_available = True
+        st.update_error = "Could not reach GitHub"
+        st.open_update_popup()
+        self.assertTrue(st.update_checking)
+
 
 class UpdatePopupLayerTests(unittest.TestCase):
     def test_update_container_follows_focus(self) -> None:

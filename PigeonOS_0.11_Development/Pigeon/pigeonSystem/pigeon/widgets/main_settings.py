@@ -1315,19 +1315,32 @@ class MainSettingsState:
         return f"preferences_widget:{focused}"
 
     def open_update_popup(self) -> None:
-        """Show the update screen and start a fresh GitHub check.
+        """Show the update screen.
 
-        The last known result (background poll / settings entry prefetch) stays
-        up while the check runs, so a found update shows its build number and
-        red badge immediately. The check result replaces it.
+        Nothing known yet: start a GitHub check (the icon click *is* the
+        check). An update already found by the badge prefetch / background
+        poll: no re-check — the screen opens with an empty bar so the next
+        click confirms installing that update.
         """
         self.show_update_popup = True
         self.update_applying = False
         self.update_progress = 0.0
         self.update_local_version = self.version_string
         self.update_latest_confirmed = False
-        self.begin_update_check()
+        if self.update_available and not self.update_error:
+            self.show_known_update_for_install()
+        else:
+            self.begin_update_check()
         self.set_update_popup_focus("update")
+
+    def show_known_update_for_install(self) -> None:
+        """Ready to install the update already found: no check, empty bar."""
+        from pigeon.widgets.update_popup import DEFAULT_CHANGELOG
+
+        self.update_checking = False
+        self.update_error = None
+        self.update_progress = 0.0
+        self.update_changelog = DEFAULT_CHANGELOG
 
     def begin_update_check(self) -> None:
         self.update_checking = True
