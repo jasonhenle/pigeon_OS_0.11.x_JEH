@@ -133,12 +133,8 @@ class SearchBarTests(unittest.TestCase):
             st.focus_ring[-2:], ("main_search_button", "main_search_clear_button")
         )
 
-    def test_search_yields_to_lists_and_status_bar(self) -> None:
+    def test_search_yields_to_lists(self) -> None:
         st = self._state()
-        st.np_status_bar_up = True
-        st.ensure_focus_ring()
-        self.assertNotIn("main_search_button", st.focus_ring)
-        st.np_status_bar_up = False
         st.show_location_picker = True
         st.ensure_focus_ring()
         self.assertNotIn("main_search_button", st.focus_ring)

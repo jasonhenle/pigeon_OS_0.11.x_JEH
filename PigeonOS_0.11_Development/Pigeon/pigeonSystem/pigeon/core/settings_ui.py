@@ -1816,7 +1816,7 @@ def _schedule_periodic_update_check(*, _UPDATE_CHECK_INTERVAL_S, _check_for_upda
 
 
 def _composite_settings_on_canvas(canvas: np.ndarray, *, _nav_coalescer_holder, _show_paused_row_overlay, _something_playing_now, _sync_now_playing_screen_state, _sync_preferences_now_playing_progress, _sync_settings_zone2_tt, main_settings_widget, view_circles_widget) -> None:
-    """Paint settings, then the NP status bar on settings_main while content is up."""
+    """Paint settings (no NP status bar overlay)."""
     if main_settings_widget is None:
         return
     coalescer = _nav_coalescer_holder[0]
@@ -1827,47 +1827,8 @@ def _composite_settings_on_canvas(canvas: np.ndarray, *, _nav_coalescer_holder, 
             _sync_settings_zone2_tt()
         except Exception:
             pass
-    playing = False
-    try:
-        playing = bool(_something_playing_now() or _show_paused_row_overlay())
-    except Exception:
-        playing = False
-    try:
-        st_ms = main_settings_widget.state
-        pigeon_page = bool(st_ms.show_pigeon_settings)
-        # The NP status bar sits where the SEARCH bar lives; yield to it.
-        bar_up = bool(playing and not pigeon_page)
-        if bool(getattr(st_ms, "np_status_bar_up", False)) != bar_up:
-            st_ms.np_status_bar_up = bar_up
-            main_settings_widget.invalidate()
-    except Exception:
-        pass
+    # No NP status bar on settings_main: the SEARCH bar owns that strip.
     main_settings_widget.render(canvas)
-    try:
-        st_ms = main_settings_widget.state
-        pigeon_page = bool(st_ms.show_pigeon_settings)
-    except Exception:
-        return
-    from pigeon.widgets.view_circles import settings_main_keeps_np_status_bar
-
-    if not settings_main_keeps_np_status_bar(
-        show_pigeon_settings=pigeon_page,
-        content_playing=playing,
-    ):
-        return
-    if view_circles_widget is None:
-        return
-    # Keep the bar on every nav paint. Skipping it while the coalescer
-    # is hot made the track vanish and pop back on each Left/Right.
-    if not nav_hot:
-        try:
-            _sync_now_playing_screen_state()
-        except Exception:
-            pass
-    try:
-        view_circles_widget.overlay_status_bar(canvas)
-    except Exception:
-        pass
 
 
 def _refresh_location_selector(*, _apply_persisted_location_to_runtime, _refresh_location_selector, delete_location_btn, location_menu_var, location_name_entry, location_name_var, location_om_frame, location_option_holder, rename_name_btn, root) -> None:

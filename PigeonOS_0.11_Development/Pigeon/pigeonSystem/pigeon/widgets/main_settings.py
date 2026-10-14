@@ -518,9 +518,6 @@ class MainSettingsState:
     manual_device_entry: ManualDeviceEntry | None = None
     # Title pinned from the SEARCH button (persisted by ``pigeon.manual_search``).
     manual_search_title: str = ""
-    # NP status bar is overlaid on settings_main (content playing) — it owns the
-    # strip the SEARCH bar uses.
-    np_status_bar_up: bool = False
     box2_ip_invalid: bool = False
     box3_ip_invalid: bool = False
     show_pigeon_settings: bool = False
@@ -977,8 +974,6 @@ class MainSettingsState:
     def search_bar_visible(self) -> bool:
         """SEARCH bar shares the columns' rows, so it yields to any list view."""
         if not self.wifi_configured or self.wifi_connecting or self.wifi_scanning:
-            return False
-        if self.np_status_bar_up:
             return False
         if self.show_location_picker or self.show_network_picker:
             return False
