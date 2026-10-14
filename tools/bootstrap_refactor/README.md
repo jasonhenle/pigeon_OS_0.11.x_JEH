@@ -6,7 +6,7 @@ notes below that say `pigeon_0_11.py` describe the same file under its old name.
 Dev-only scripts used to move nested helpers out of `bootstrap()` in
 `pigeonSystem/pigeon_0_11.py` into `pigeon/core/`. Not shipped.
 
-Run from `PigeonOS_0.11_Development/Pigeon/pigeonSystem` with Python 3.10+:
+Run from `PigeonOS_0.12_Development/Pigeon/pigeonSystem` with Python 3.10+:
 
 ```bash
 T=../../../tools/bootstrap_refactor
