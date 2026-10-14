@@ -1052,6 +1052,23 @@ def _handle_main_settings_action(action: str, *, _apply_persisted_location_to_ru
         return
     st = main_settings_widget.state
 
+    if action == "manual_search:set":
+        # Pinned title: show it in now playing unless content is auto-detected.
+        try:
+            from pigeon import manual_search
+
+            manual_search.show_in_now_playing()
+        except Exception:
+            pass
+        main_settings_widget.invalidate()
+        skip_cache[0] = None
+        return
+
+    if action in ("manual_search:clear", "keyboard_open:search"):
+        main_settings_widget.invalidate()
+        skip_cache[0] = None
+        return
+
     if action == "pigeon_settings":
         # Entered settings_pigeon — seed update badge and refresh in background.
         def _prefetch_pigeon_update_badge() -> None:
@@ -1810,17 +1827,27 @@ def _composite_settings_on_canvas(canvas: np.ndarray, *, _nav_coalescer_holder, 
             _sync_settings_zone2_tt()
         except Exception:
             pass
+    playing = False
+    try:
+        playing = bool(_something_playing_now() or _show_paused_row_overlay())
+    except Exception:
+        playing = False
+    try:
+        st_ms = main_settings_widget.state
+        pigeon_page = bool(st_ms.show_pigeon_settings)
+        # The NP status bar sits where the SEARCH bar lives; yield to it.
+        bar_up = bool(playing and not pigeon_page)
+        if bool(getattr(st_ms, "np_status_bar_up", False)) != bar_up:
+            st_ms.np_status_bar_up = bar_up
+            main_settings_widget.invalidate()
+    except Exception:
+        pass
     main_settings_widget.render(canvas)
     try:
         st_ms = main_settings_widget.state
         pigeon_page = bool(st_ms.show_pigeon_settings)
     except Exception:
         return
-    playing = False
-    try:
-        playing = bool(_something_playing_now() or _show_paused_row_overlay())
-    except Exception:
-        playing = False
     from pigeon.widgets.view_circles import settings_main_keeps_np_status_bar
 
     if not settings_main_keeps_np_status_bar(
